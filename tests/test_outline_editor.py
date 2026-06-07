@@ -1,6 +1,7 @@
 """Integration tests for OutlineEditorView widget."""
 import pytest
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QApplication, QLabel
 
 from app.storage.models import Project
@@ -221,6 +222,63 @@ def test_on_save_writes_all_volumes_to_disk(editor):
     widget._on_save()
 
     assert len(saved_emitted) == 1
-    # Verify files exist
     vol_files = list((proj_dir / "outline").glob("*.yaml"))
     assert len(vol_files) == 2
+
+
+# ── Heatmap tests ──────────────────────────────────────────────────────────
+
+def test_heatmap_marks_chapter_red_when_no_hooks(editor):
+    """When heatmap is toggled on, chapter with no hook scenes shows red."""
+    widget, proj_dir = editor
+
+    widget._on_add_volume()
+    widget._tree.setCurrentItem(widget._tree.topLevelItem(0))
+    widget._on_add_chapter()
+    root = widget._tree.topLevelItem(0)
+    chapter_item = root.child(0)
+
+    # Add a scene without an ending hook
+    widget._tree.setCurrentItem(chapter_item)
+    widget._on_add_scene()
+    root = widget._tree.topLevelItem(0)
+    chapter_item = root.child(0)
+    scene_item = chapter_item.child(0)
+    widget._tree.setCurrentItem(scene_item)
+    widget._scene_ending_hook.setPlainText("")
+    widget._gather_current_form()
+
+    # Toggle heatmap on
+    widget._heatmap_btn.setChecked(True)
+
+    root = widget._tree.topLevelItem(0)
+    chapter_item = root.child(0)
+    bg = chapter_item.background(0)
+    assert bg.color() == QColor("#e74c3c")
+
+
+def test_heatmap_marks_chapter_green_when_has_hook(editor):
+    """Chapter with at least one scene that has an ending hook shows green."""
+    widget, proj_dir = editor
+
+    widget._on_add_volume()
+    widget._tree.setCurrentItem(widget._tree.topLevelItem(0))
+    widget._on_add_chapter()
+    root = widget._tree.topLevelItem(0)
+    chapter_item = root.child(0)
+
+    widget._tree.setCurrentItem(chapter_item)
+    widget._on_add_scene()
+    root = widget._tree.topLevelItem(0)
+    chapter_item = root.child(0)
+    scene_item = chapter_item.child(0)
+    widget._tree.setCurrentItem(scene_item)
+    widget._scene_ending_hook.setPlainText("悬念!")
+    widget._gather_current_form()
+
+    widget._heatmap_btn.setChecked(True)
+
+    root = widget._tree.topLevelItem(0)
+    chapter_item = root.child(0)
+    bg = chapter_item.background(0)
+    assert bg.color() == QColor("#27ae60")
