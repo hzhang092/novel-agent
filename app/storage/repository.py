@@ -35,3 +35,28 @@ class Repository:
         """Update style guide on disk."""
         from app.storage.project_files import save_style_guide as _save_style
         _save_style(Path(project_dir), style)
+
+    def save_character(self, project_dir: Path, character) -> None:
+        """Write a character to characters/<id>.yaml."""
+        from app.storage.project_files import save_character as _save_char
+        _save_char(Path(project_dir), character)
+
+    def load_character(self, project_dir: Path, character_id: str):
+        """Load a single character from disk."""
+        from app.storage.project_files import load_character as _load_char
+        return _load_char(Path(project_dir), character_id)
+
+    def delete_character(self, project_dir: Path, character_id: str) -> None:
+        """Delete a character YAML file."""
+        from app.storage.project_files import delete_character as _del_char
+        _del_char(Path(project_dir), character_id)
+
+    def list_character_ids(self, project_dir: Path) -> list[str]:
+        """List all character IDs in the project."""
+        from app.storage.project_files import list_character_ids as _list_ids
+        return _list_ids(Path(project_dir))
+
+    def load_all_characters(self, project_dir: Path) -> list:
+        """Load all characters from the project."""
+        from app.storage.project_files import load_all_characters as _load_all
+        return _load_all(Path(project_dir))
