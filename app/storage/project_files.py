@@ -9,6 +9,7 @@ from pathlib import Path
 import yaml
 
 from app.storage.models import Project, StyleGuide, WorldSetting
+from app.storage.models import Character, CharacterCore, CharacterState
 
 
 PROJECT_YAML = "project.yaml"
@@ -207,3 +208,84 @@ def save_style_guide(project_dir: Path, style: StyleGuide) -> None:
     project.updated_at = datetime.now(timezone.utc)
     _write_project_yaml(project_dir, project)
     _write_style_yaml(project_dir, style)
+
+
+# ── Character I/O ──────────────────────────────────────────────────────────
+
+def save_character(project_dir: Path, character: Character) -> None:
+    """Write a character to characters/<id>.yaml.
+
+    The YAML file contains both core and state sections.
+    """
+    char_dir = project_dir / "characters"
+    char_dir.mkdir(exist_ok=True)
+
+    data = {
+        "core": character.core.model_dump(mode="json"),
+        "state": character.state.model_dump(mode="json"),
+    }
+    filepath = char_dir / f"{character.core.id}.yaml"
+    with open(filepath, "w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+
+
+def load_character(project_dir: Path, character_id: str) -> Character:
+    """Load a single character from characters/<id>.yaml.
+
+    Raises:
+        FileNotFoundError: If the character file does not exist.
+        ValueError: If the YAML is invalid or fails model validation.
+    """
+    filepath = project_dir / "characters" / f"{character_id}.yaml"
+    if not filepath.exists():
+        raise FileNotFoundError(f"Character not found: {filepath}")
+
+    with open(filepath, "r", encoding="utf-8") as f:
+        try:
+            raw = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            raise ValueError(f"Invalid YAML in {filepath}: {e}") from e
+
+    if raw is None:
+        raise ValueError(f"Empty character file: {filepath}")
+
+    try:
+        core = CharacterCore.model_validate(raw.get("core", {}))
+        state = CharacterState.model_validate(raw.get("state", {}))
+    except Exception as e:
+        raise ValueError(f"Invalid character data in {filepath}: {e}") from e
+
+    return Character(core=core, state=state)
+
+
+def delete_character(project_dir: Path, character_id: str) -> None:
+    """Delete a character YAML file. No-op if the file does not exist."""
+    filepath = project_dir / "characters" / f"{character_id}.yaml"
+    if filepath.exists():
+        filepath.unlink()
+
+
+def list_character_ids(project_dir: Path) -> list[str]:
+    """Return all character IDs found in the characters/ directory."""
+    char_dir = project_dir / "characters"
+    if not char_dir.exists():
+        return []
+    ids = []
+    for filepath in char_dir.glob("*.yaml"):
+        ids.append(filepath.stem)
+    return ids
+
+
+def load_all_characters(project_dir: Path) -> list[Character]:
+    """Load all characters from the characters/ directory."""
+    char_dir = project_dir / "characters"
+    if not char_dir.exists():
+        return []
+    characters = []
+    for filepath in sorted(char_dir.glob("*.yaml")):
+        try:
+            characters.append(load_character(project_dir, filepath.stem))
+        except (ValueError, FileNotFoundError):
+            # Skip corrupt files - don't crash the whole load
+            continue
+    return characters
