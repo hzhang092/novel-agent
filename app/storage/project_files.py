@@ -55,9 +55,62 @@ def _write_project_yaml(proj_path: Path, project: Project) -> None:
 
 
 def _write_world_md(proj_path: Path, world: WorldSetting) -> None:
-    text = f"# 世界观\n\n{world.geography}\n"
+    lines = ["# 世界观", ""]
+    lines.append(f"## 地理\n\n{world.geography}\n")
+
+    if world.power_system:
+        lines.append("## 修炼体系\n")
+        ps = world.power_system
+        if ps.realms:
+            lines.append("### 境界")
+            for r in ps.realms:
+                lines.append(f"- {r}")
+            lines.append("")
+        if ps.abilities:
+            lines.append("### 能力")
+            for realm, desc in ps.abilities.items():
+                lines.append(f"- **{realm}**: {desc}")
+            lines.append("")
+        if ps.limitations:
+            lines.append(f"### 限制\n" + "\n".join(f"- {x}" for x in ps.limitations) + "\n")
+        if ps.costs:
+            lines.append(f"### 代价\n" + "\n".join(f"- {x}" for x in ps.costs) + "\n")
+        if ps.rare_resources:
+            lines.append(f"### 稀有资源\n" + "\n".join(f"- {x}" for x in ps.rare_resources) + "\n")
+        if ps.forbidden_methods:
+            lines.append(f"### 禁忌之术\n" + "\n".join(f"- {x}" for x in ps.forbidden_methods) + "\n")
+
+    if world.factions:
+        lines.append("## 势力\n")
+        for f in world.factions:
+            name = f.get("name", "")
+            desc = f.get("description", "")
+            goals = f.get("goals", "")
+            lines.append(f"### {name}\n{desc}\n\n**目标**: {goals}\n")
+
+    if world.history:
+        lines.append(f"## 历史\n\n{world.history}\n")
+
+    if world.rules:
+        lines.append(f"## 规则\n" + "\n".join(f"- {x}" for x in world.rules) + "\n")
+
+    if world.taboos:
+        lines.append(f"## 禁忌\n" + "\n".join(f"- {x}" for x in world.taboos) + "\n")
+
+    if world.technology_level:
+        lines.append(f"## 科技水平\n\n{world.technology_level}\n")
+
+    if world.social_structure:
+        lines.append(f"## 社会结构\n\n{world.social_structure}\n")
+
+    if world.terminology:
+        lines.append("## 术语表\n")
+        for term, defn in world.terminology.items():
+            lines.append(f"- **{term}**: {defn}")
+        lines.append("")
+
     with open(proj_path / WORLD_MD, "w", encoding="utf-8") as f:
-        f.write(text)
+        f.write("\n".join(lines))
 
 
 def _write_style_yaml(proj_path: Path, style: StyleGuide) -> None:
@@ -114,3 +167,43 @@ def delete_project(project_dir: Path) -> None:
     """Remove an entire project directory."""
     if project_dir.exists():
         shutil.rmtree(project_dir)
+
+
+def save_world_setting(project_dir: Path, world: WorldSetting) -> None:
+    """Update the world setting in project.yaml and rewrite world.md.
+
+    Args:
+        project_dir: Path to an existing project directory.
+        world: The updated WorldSetting model.
+
+    Raises:
+        FileNotFoundError: If project_dir is not a valid project.
+        ValueError: If the project YAML is corrupt.
+    """
+    from datetime import datetime, timezone
+
+    project = load_project(project_dir)
+    project.world_setting = world
+    project.updated_at = datetime.now(timezone.utc)
+    _write_project_yaml(project_dir, project)
+    _write_world_md(project_dir, world)
+
+
+def save_style_guide(project_dir: Path, style: StyleGuide) -> None:
+    """Update the style guide in project.yaml and rewrite style.yaml.
+
+    Args:
+        project_dir: Path to an existing project directory.
+        style: The updated StyleGuide model.
+
+    Raises:
+        FileNotFoundError: If project_dir is not a valid project.
+        ValueError: If the project YAML is corrupt.
+    """
+    from datetime import datetime, timezone
+
+    project = load_project(project_dir)
+    project.style_guide = style
+    project.updated_at = datetime.now(timezone.utc)
+    _write_project_yaml(project_dir, project)
+    _write_style_yaml(project_dir, style)

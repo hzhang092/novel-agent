@@ -144,3 +144,51 @@ def test_full_round_trip_with_world_and_style(tmp_path):
     # Verify .gitignore excludes exports/
     gitignore = (proj_dir / ".gitignore").read_text(encoding="utf-8")
     assert "exports/" in gitignore
+
+
+def test_save_world_setting_preserves_other_fields(tmp_path):
+    from app.storage.models import PowerSystem, WorldSetting, Project as P
+    from app.storage.project_files import save_world_setting
+
+    project = P(title="测试", genre="玄幻")
+    proj_dir = create_project(tmp_path, project)
+
+    new_world = WorldSetting(
+        geography="新地理描述",
+        power_system=PowerSystem(realms=["炼气", "筑基"]),
+        rules=["新规则"],
+    )
+    save_world_setting(proj_dir, new_world)
+
+    loaded = load_project(proj_dir)
+    assert loaded.title == "测试"
+    assert loaded.world_setting.geography == "新地理描述"
+    assert len(loaded.world_setting.power_system.realms) == 2
+    assert loaded.world_setting.rules == ["新规则"]
+
+    md_content = (proj_dir / "world.md").read_text(encoding="utf-8")
+    assert "新地理描述" in md_content
+    assert "炼气" in md_content
+
+
+def test_save_style_guide_preserves_other_fields(tmp_path):
+    from app.storage.models import StyleGuide, Project as P
+    from app.storage.project_files import save_style_guide
+
+    project = P(title="测试", genre="玄幻")
+    proj_dir = create_project(tmp_path, project)
+
+    new_style = StyleGuide(
+        pacing="快节奏",
+        tone="热血",
+        taboo_patterns=["禁止灌水"],
+        reference_passages=["参考段落一"],
+    )
+    save_style_guide(proj_dir, new_style)
+
+    loaded = load_project(proj_dir)
+    assert loaded.title == "测试"
+    assert loaded.style_guide.pacing == "快节奏"
+    assert loaded.style_guide.tone == "热血"
+    assert loaded.style_guide.taboo_patterns == ["禁止灌水"]
+    assert loaded.style_guide.reference_passages == ["参考段落一"]
