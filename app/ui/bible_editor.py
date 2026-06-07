@@ -127,22 +127,22 @@ class BibleEditorView(QWidget):
 
         # Rules
         form.addWidget(QLabel("<b>规则</b>"))
-        self._rules_list = _StringListEditor()
+        self._rules_list = StringListEditor()
         form.addWidget(self._rules_list)
 
         # Taboos
         form.addWidget(QLabel("<b>禁忌</b>"))
-        self._taboos_list = _StringListEditor()
+        self._taboos_list = StringListEditor()
         form.addWidget(self._taboos_list)
 
         # Factions
         form.addWidget(QLabel("<b>势力</b>"))
-        self._factions_table = _KeyValueTable(["势力名称", "描述", "目标"])
+        self._factions_table = KeyValueTable(["势力名称", "描述", "目标"])
         form.addWidget(self._factions_table)
 
         # Terminology
         form.addWidget(QLabel("<b>术语表</b>"))
-        self._term_table = _KeyValueTable(["术语", "定义"])
+        self._term_table = KeyValueTable(["术语", "定义"])
         form.addWidget(self._term_table)
 
         # Power System
@@ -150,27 +150,27 @@ class BibleEditorView(QWidget):
         ps_layout = QVBoxLayout(ps_group)
 
         ps_layout.addWidget(QLabel("<b>境界</b>"))
-        self._realms_list = _StringListEditor()
+        self._realms_list = StringListEditor()
         ps_layout.addWidget(self._realms_list)
 
         ps_layout.addWidget(QLabel("<b>能力</b>（境界 → 能力描述）"))
-        self._abilities_table = _KeyValueTable(["境界", "能力描述"])
+        self._abilities_table = KeyValueTable(["境界", "能力描述"])
         ps_layout.addWidget(self._abilities_table)
 
         ps_layout.addWidget(QLabel("<b>限制</b>"))
-        self._limitations_list = _StringListEditor()
+        self._limitations_list = StringListEditor()
         ps_layout.addWidget(self._limitations_list)
 
         ps_layout.addWidget(QLabel("<b>代价</b>"))
-        self._costs_list = _StringListEditor()
+        self._costs_list = StringListEditor()
         ps_layout.addWidget(self._costs_list)
 
         ps_layout.addWidget(QLabel("<b>稀有资源</b>"))
-        self._resources_list = _StringListEditor()
+        self._resources_list = StringListEditor()
         ps_layout.addWidget(self._resources_list)
 
         ps_layout.addWidget(QLabel("<b>禁忌之术</b>"))
-        self._forbidden_list = _StringListEditor()
+        self._forbidden_list = StringListEditor()
         ps_layout.addWidget(self._forbidden_list)
 
         form.addWidget(ps_group)
@@ -222,11 +222,11 @@ class BibleEditorView(QWidget):
 
         # Pattern lists
         form.addWidget(QLabel("<b>禁忌模式</b>"))
-        self._taboo_patterns_list = _StringListEditor()
+        self._taboo_patterns_list = StringListEditor()
         form.addWidget(self._taboo_patterns_list)
 
         form.addWidget(QLabel("<b>偏好模式</b>"))
-        self._preferred_patterns_list = _StringListEditor()
+        self._preferred_patterns_list = StringListEditor()
         form.addWidget(self._preferred_patterns_list)
 
         # Reference passages
@@ -378,65 +378,9 @@ class BibleEditorView(QWidget):
         self._populate_style_tab(style)
 
 
-# ── Reusable Editor Widgets ────────────────────────────────────────────────
-
-class _StringListEditor(StringListEditor):
-    """Editable list of strings with add/remove buttons."""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self._list = QListWidget()
-        self._list.setMaximumHeight(100)
-        layout.addWidget(self._list)
-        btn_row = QHBoxLayout()
-        add_btn = QPushButton("+")
-        add_btn.setFixedWidth(30)
-        add_btn.clicked.connect(self._on_add)
-        btn_row.addWidget(add_btn)
-        del_btn = QPushButton("-")
-        del_btn.setFixedWidth(30)
-        del_btn.clicked.connect(self._on_remove)
-        btn_row.addWidget(del_btn)
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
-
-    def _on_add(self) -> None:
-        item = QListWidgetItem("")
-        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-        self._list.addItem(item)
-        self._list.editItem(item)
-
-    def _on_remove(self) -> None:
-        for item in self._list.selectedItems():
-            self._list.takeItem(self._list.row(item))
-
-    def set_items(self, items: list[str]) -> None:
-        self._list.clear()
-        for text in items:
-            item = QListWidgetItem(text)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-            self._list.addItem(item)
-
-    def get_items(self) -> list[str]:
-        result = []
-        for i in range(self._list.count()):
-            text = self._list.item(i).text().strip()
-            if text:
-                result.append(text)
-        return result
-
-
-class _KeyValueTable(KeyValueTable):
-    pass
-
 # ── Helpers ────────────────────────────────────────────────────────────────
 
-# _cell → use read_table_cell from widgets
+def _cell(table, row: int, col: int) -> str:
+    """Read a table cell — delegates to shared widget helper."""
+    return read_table_cell(table, row, col)
 
-
-# _set_combo → use set_combo from widgets
-
-
-# _combo_val → use combo_val from widgets
