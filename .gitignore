@@ -1,3 +1,17 @@
+# 
+.superpowers/
+.agents/
+.claude/
+.codex/
+CLAUDE.md
+AGENTS.md
+docs/
+BACKLOG.md
+CONTEXT.md
+PRD.md
+skills-lock.json
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -216,3 +230,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# NovelForge exports
+exports/
