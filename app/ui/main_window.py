@@ -111,6 +111,12 @@ class MainWindow(QMainWindow):
             if isinstance(bible, BibleEditorView) and bible._project_dir is not None:
                 bible._on_save()
 
+        # Auto-save Outline editor when navigating away from it
+        if self._previous_tab_index == 2:  # Outline tab index
+            outline = self.views["outline"]
+            if isinstance(outline, OutlineEditorView) and outline._project_dir is not None:
+                outline._on_save()
+
         self._previous_tab_index = index
 
         item = self.sidebar.item(index)
@@ -157,6 +163,10 @@ class MainWindow(QMainWindow):
         if isinstance(bible, BibleEditorView):
             bible.load_project_dir(proj_dir)
 
+        outline = self.views["outline"]
+        if isinstance(outline, OutlineEditorView):
+            outline.load_project_dir(proj_dir)
+
         QMessageBox.information(
             self, "创建成功", f"项目「{project.title}」已创建\n{proj_dir}"
         )
@@ -186,6 +196,10 @@ class MainWindow(QMainWindow):
         bible = self.views["bible"]
         if isinstance(bible, BibleEditorView):
             bible.load_project_dir(Path(dir_path))
+
+        outline = self.views["outline"]
+        if isinstance(outline, OutlineEditorView):
+            outline.load_project_dir(Path(dir_path))
 
     def _set_nav_items_enabled(self, enabled: bool) -> None:
         """Enable or disable all non-dashboard sidebar items."""
