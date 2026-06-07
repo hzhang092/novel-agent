@@ -60,3 +60,28 @@ class Repository:
         """Load all characters from the project."""
         from app.storage.project_files import load_all_characters as _load_all
         return _load_all(Path(project_dir))
+
+    def save_volume(self, project_dir: Path, volume) -> None:
+        """Write a volume to outline/<id>.yaml."""
+        from app.storage.project_files import save_volume_outline as _save_vol
+        _save_vol(Path(project_dir), volume)
+
+    def load_volume(self, project_dir: Path, volume_id: str):
+        """Load a single volume from disk."""
+        from app.storage.project_files import load_volume_outline as _load_vol
+        return _load_vol(Path(project_dir), volume_id)
+
+    def delete_volume(self, project_dir: Path, volume_id: str) -> None:
+        """Delete a volume YAML file."""
+        from app.storage.project_files import delete_volume_outline as _del_vol
+        _del_vol(Path(project_dir), volume_id)
+
+    def list_volume_ids(self, project_dir: Path) -> list[str]:
+        """List all volume IDs in the project."""
+        from app.storage.project_files import list_volume_ids as _list_ids
+        return _list_ids(Path(project_dir))
+
+    def load_all_volumes(self, project_dir: Path) -> list:
+        """Load all volumes from the project."""
+        from app.storage.project_files import load_all_volumes as _load_all
+        return _load_all(Path(project_dir))
