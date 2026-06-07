@@ -107,3 +107,40 @@ def test_create_project_duplicate_raises(tmp_path):
     create_project(tmp_path, project)
     with pytest.raises(FileExistsError):
         create_project(tmp_path, project)
+
+
+def test_full_round_trip_with_world_and_style(tmp_path):
+    """End-to-end: create a full project, load it back, verify all fields."""
+    from app.storage.models import PowerSystem, StyleGuide, WorldSetting
+
+    project = Project(
+        title="修仙之路",
+        genre="玄幻",
+        llm_provider="ollama",
+        world_setting=WorldSetting(
+            geography="东荒大陆",
+            power_system=PowerSystem(realms=["炼气", "筑基", "金丹"]),
+            rules=["修士不可对凡人出手"],
+        ),
+        style_guide=StyleGuide(
+            pacing="快节奏",
+            tone="热血",
+        ),
+    )
+    proj_dir = create_project(tmp_path, project)
+
+    # Verify all subdirectories exist
+    for sub in ["characters", "outline", "scenes", "canon", "exports"]:
+        assert (proj_dir / sub).is_dir()
+
+    # Load and verify
+    loaded = load_project(proj_dir)
+    assert loaded.title == project.title
+    assert loaded.world_setting.geography == "东荒大陆"
+    assert loaded.world_setting.power_system is not None
+    assert len(loaded.world_setting.power_system.realms) == 3
+    assert loaded.style_guide.tone == "热血"
+
+    # Verify .gitignore excludes exports/
+    gitignore = (proj_dir / ".gitignore").read_text(encoding="utf-8")
+    assert "exports/" in gitignore
