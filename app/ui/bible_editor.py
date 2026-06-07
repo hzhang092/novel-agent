@@ -297,23 +297,23 @@ class BibleEditorView(QWidget):
 
         factions = []
         for row in range(self._factions_table.rowCount()):
-            name = _cell(self._factions_table, row, 0)
-            desc = _cell(self._factions_table, row, 1)
-            goals = _cell(self._factions_table, row, 2)
+            name = _cell(self._factions_table._table, row, 0)
+            desc = _cell(self._factions_table._table, row, 1)
+            goals = _cell(self._factions_table._table, row, 2)
             if name or desc or goals:
                 factions.append({"name": name, "description": desc, "goals": goals})
 
         terminology = {}
         for row in range(self._term_table.rowCount()):
-            term = _cell(self._term_table, row, 0)
-            defn = _cell(self._term_table, row, 1)
+            term = _cell(self._term_table._table, row, 0)
+            defn = _cell(self._term_table._table, row, 1)
             if term:
                 terminology[term] = defn
 
         abilities = {}
         for row in range(self._abilities_table.rowCount()):
-            realm = _cell(self._abilities_table, row, 0)
-            desc = _cell(self._abilities_table, row, 1)
+            realm = _cell(self._abilities_table._table, row, 0)
+            desc = _cell(self._abilities_table._table, row, 1)
             if realm:
                 abilities[realm] = desc
 
