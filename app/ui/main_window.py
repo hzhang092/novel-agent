@@ -1,23 +1,27 @@
-"""Main window with left sidebar navigation and stacked content views.
-
-This is the initial skeleton — Task 6 will add the menu bar and project
-create/open actions.
-"""
+"""Main window with left sidebar navigation and stacked content views."""
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
+    QFileDialog,
     QHBoxLayout,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMessageBox,
     QSplitter,
     QStackedWidget,
     QWidget,
 )
 
+from app.storage.models import Project as ProjectModel
+from app.storage.repository import Repository
 from app.ui.bible_editor import BibleEditorView
+from app.ui.create_project_dialog import CreateProjectDialog
 from app.ui.dashboard import DashboardView
 from app.ui.outline_editor import OutlineEditorView
 from app.ui.scene_workspace import SceneWorkspaceView
@@ -36,6 +40,26 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("NovelForge")
         self.resize(1200, 800)
 
+        self._repo = Repository(Path.home() / "NovelForge")
+        self._current_project: ProjectModel | None = None
+
+        self._setup_menu()
+        self._setup_ui()
+
+    def _setup_menu(self) -> None:
+        menubar = self.menuBar()
+
+        file_menu = menubar.addMenu("文件(&F)")
+
+        new_action = QAction("新建项目(&N)", self)
+        new_action.triggered.connect(self._on_new_project)
+        file_menu.addAction(new_action)
+
+        open_action = QAction("打开项目(&O)", self)
+        open_action.triggered.connect(self._on_open_project)
+        file_menu.addAction(open_action)
+
+    def _setup_ui(self) -> None:
         central = QWidget()
         self.setCentralWidget(central)
 
@@ -82,3 +106,51 @@ class MainWindow(QMainWindow):
         key = item.data(Qt.ItemDataRole.UserRole)
         if key in self.views:
             self.stack.setCurrentWidget(self.views[key])
+
+    # ── Actions ───────────────────────────────────────────────────────────
+
+    def _on_new_project(self) -> None:
+        dialog = CreateProjectDialog(self)
+        if not dialog.exec():
+            return
+
+        result = dialog.get_result()
+        if result is None:
+            return
+
+        project = ProjectModel(
+            title=result["title"],
+            genre=result["genre"],
+            llm_provider=result["llm_provider"],
+        )
+
+        try:
+            proj_dir = self._repo.create(project)
+        except FileExistsError:
+            QMessageBox.warning(self, "错误", f"项目「{result['title']}」已存在")
+            return
+
+        self._current_project = project
+        self.setWindowTitle(f"NovelForge — {project.title}")
+        QMessageBox.information(
+            self, "创建成功", f"项目「{project.title}」已创建\n{proj_dir}"
+        )
+
+    def _on_open_project(self) -> None:
+        dir_path = QFileDialog.getExistingDirectory(
+            self, "打开项目", str(Path.home() / "NovelForge")
+        )
+        if not dir_path:
+            return
+
+        try:
+            project = self._repo.open(Path(dir_path))
+        except FileNotFoundError:
+            QMessageBox.warning(self, "错误", "所选目录不是有效项目")
+            return
+        except ValueError as e:
+            QMessageBox.warning(self, "错误", f"项目文件无效:\n{e}")
+            return
+
+        self._current_project = project
+        self.setWindowTitle(f"NovelForge — {project.title}")
