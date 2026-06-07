@@ -25,3 +25,13 @@ class Repository:
     def exists(self, project_dir: Path) -> bool:
         """Check if a path is a valid project directory."""
         return project_exists(Path(project_dir))
+
+    def save_world_setting(self, project_dir: Path, world) -> None:
+        """Update world setting on disk."""
+        from app.storage.project_files import save_world_setting as _save_world
+        _save_world(Path(project_dir), world)
+
+    def save_style_guide(self, project_dir: Path, style) -> None:
+        """Update style guide on disk."""
+        from app.storage.project_files import save_style_guide as _save_style
+        _save_style(Path(project_dir), style)
