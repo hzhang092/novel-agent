@@ -30,7 +30,7 @@ from app.storage.project_files import (
     load_character,
     save_character,
 )
-from app.ui.bible_editor import _KeyValueTable, _StringListEditor
+from app.ui.widgets import KeyValueTable, StringListEditor, read_table_cell
 
 TIER_COLORS = {
     CharacterTier.MAJOR: QColor("#e74c3c"),
@@ -142,7 +142,7 @@ class CharacterEditorView(QWidget):
 
         # Aliases
         form.addWidget(QLabel("<b>别称</b>"))
-        self._core_aliases = _StringListEditor()
+        self._core_aliases = StringListEditor()
         form.addWidget(self._core_aliases)
 
         # Identity
@@ -198,12 +198,12 @@ class CharacterEditorView(QWidget):
 
         # Core skills
         form.addWidget(QLabel("<b>核心技能</b>"))
-        self._core_skills = _StringListEditor()
+        self._core_skills = StringListEditor()
         form.addWidget(self._core_skills)
 
         # Core weaknesses
         form.addWidget(QLabel("<b>核心弱点</b>"))
-        self._core_weaknesses = _StringListEditor()
+        self._core_weaknesses = StringListEditor()
         form.addWidget(self._core_weaknesses)
 
         form.addStretch()
@@ -244,17 +244,17 @@ class CharacterEditorView(QWidget):
 
         # Current relationships
         form.addWidget(QLabel("<b>当前关系</b>（角色名 → 关系描述）"))
-        self._state_relationships = _KeyValueTable(["角色名", "关系描述"])
+        self._state_relationships = KeyValueTable(["角色名", "关系描述"])
         form.addWidget(self._state_relationships)
 
         # Current knowledge
         form.addWidget(QLabel("<b>已知信息</b>"))
-        self._state_knowledge = _StringListEditor()
+        self._state_knowledge = StringListEditor()
         form.addWidget(self._state_knowledge)
 
         # Current secrets
         form.addWidget(QLabel("<b>隐藏秘密</b>"))
-        self._state_secrets = _StringListEditor()
+        self._state_secrets = StringListEditor()
         form.addWidget(self._state_secrets)
 
         # Current status
@@ -404,8 +404,8 @@ class CharacterEditorView(QWidget):
     def _gather_state(self, char_id: str) -> CharacterState:
         relationships: dict[str, str] = {}
         for row in range(self._state_relationships.rowCount()):
-            name = _cell(self._state_relationships._table, row, 0)
-            desc = _cell(self._state_relationships._table, row, 1)
+            name = read_table_cell(self._state_relationships._table, row, 0)
+            desc = read_table_cell(self._state_relationships._table, row, 1)
             if name:
                 relationships[name] = desc
 
@@ -505,9 +505,3 @@ class CharacterEditorView(QWidget):
         except Exception as e:
             QMessageBox.warning(self, "保存失败", str(e))
 
-
-def _cell(table, row: int, col: int) -> str:
-    """Read a cell from a QTableWidget."""
-    from PyQt6.QtWidgets import QTableWidget
-    item = table.item(row, col)
-    return item.text().strip() if item else ""

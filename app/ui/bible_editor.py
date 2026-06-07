@@ -34,6 +34,7 @@ from app.storage.project_files import (
     save_world_setting,
 )
 from app.ui.character_editor import CharacterEditorView
+from app.ui.widgets import KeyValueTable, StringListEditor, read_table_cell, set_combo as _set_combo, combo_val as _combo_val
 from app.utils.xianxia_template import get_xianxia_template
 
 
@@ -379,7 +380,7 @@ class BibleEditorView(QWidget):
 
 # ── Reusable Editor Widgets ────────────────────────────────────────────────
 
-class _StringListEditor(QWidget):
+class _StringListEditor(StringListEditor):
     """Editable list of strings with add/remove buttons."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -427,75 +428,15 @@ class _StringListEditor(QWidget):
         return result
 
 
-class _KeyValueTable(QWidget):
-    """Editable key-value table with add/remove row buttons."""
-
-    def __init__(self, headers: list[str], parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self._headers = headers
-        self._table = QTableWidget(0, len(headers))
-        self._table.setHorizontalHeaderLabels(headers)
-        self._table.horizontalHeader().setStretchLastSection(True)
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self._table.setMaximumHeight(120)
-        layout.addWidget(self._table)
-        btn_row = QHBoxLayout()
-        add_btn = QPushButton("+ 行")
-        add_btn.clicked.connect(self._on_add_row)
-        btn_row.addWidget(add_btn)
-        del_btn = QPushButton("- 行")
-        del_btn.clicked.connect(self._on_remove_row)
-        btn_row.addWidget(del_btn)
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
-
-    def _on_add_row(self) -> None:
-        row = self._table.rowCount()
-        self._table.insertRow(row)
-        for col in range(len(self._headers)):
-            self._table.setItem(row, col, QTableWidgetItem(""))
-
-    def _on_remove_row(self) -> None:
-        rows = set(idx.row() for idx in self._table.selectedIndexes())
-        for row in sorted(rows, reverse=True):
-            self._table.removeRow(row)
-
-    def set_rows(self, rows: list[list[str]]) -> None:
-        self._table.setRowCount(0)
-        for row_data in rows:
-            row = self._table.rowCount()
-            self._table.insertRow(row)
-            for col, text in enumerate(row_data[: len(self._headers)]):
-                self._table.setItem(row, col, QTableWidgetItem(text))
-
-    def rowCount(self) -> int:
-        return self._table.rowCount()
-
+class _KeyValueTable(KeyValueTable):
+    pass
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
-def _cell(table: QTableWidget, row: int, col: int) -> str:
-    item = table.item(row, col)
-    return item.text().strip() if item else ""
+# _cell → use read_table_cell from widgets
 
 
-def _set_combo(layout: QHBoxLayout, value: str) -> None:
-    """Set a combo box inside a labeled row layout by its text value."""
-    for i in range(layout.count()):
-        w = layout.itemAt(i).widget()
-        if isinstance(w, QComboBox):
-            idx = w.findText(value)
-            if idx >= 0:
-                w.setCurrentIndex(idx)
-            return
+# _set_combo → use set_combo from widgets
 
 
-def _combo_val(layout: QHBoxLayout) -> str:
-    """Get the current text from a combo box inside a labeled row layout."""
-    for i in range(layout.count()):
-        w = layout.itemAt(i).widget()
-        if isinstance(w, QComboBox):
-            return w.currentText()
-    return ""
+# _combo_val → use combo_val from widgets
