@@ -33,6 +33,7 @@ from app.storage.project_files import (
     save_style_guide,
     save_world_setting,
 )
+from app.ui.character_editor import CharacterEditorView
 from app.utils.xianxia_template import get_xianxia_template
 
 
@@ -58,6 +59,7 @@ class BibleEditorView(QWidget):
         project = load_project(project_dir)
         self._populate_world_tab(project.world_setting)
         self._populate_style_tab(project.style_guide)
+        self._character_tab.load_project_dir(project_dir)
 
     # ── UI Setup ───────────────────────────────────────────────────────────
 
@@ -82,8 +84,10 @@ class BibleEditorView(QWidget):
         self._tabs = QTabWidget()
         self._world_tab = self._build_world_tab()
         self._style_tab = self._build_style_tab()
+        self._character_tab = CharacterEditorView()
         self._tabs.addTab(self._world_tab, "世界设定")
         self._tabs.addTab(self._style_tab, "写作风格")
+        self._tabs.addTab(self._character_tab, "角色")
         layout.addWidget(self._tabs)
 
     # ── World Tab ──────────────────────────────────────────────────────────
@@ -362,6 +366,7 @@ class BibleEditorView(QWidget):
         try:
             save_world_setting(self._project_dir, self._gather_world())
             save_style_guide(self._project_dir, self._gather_style())
+            self._character_tab._on_save()
             self.saved.emit()
         except Exception as e:
             QMessageBox.warning(self, "保存失败", str(e))
