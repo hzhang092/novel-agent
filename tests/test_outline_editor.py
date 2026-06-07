@@ -97,3 +97,68 @@ def test_move_down_disabled_on_last_item(editor):
     widget._on_add_volume()
     widget._tree.setCurrentItem(widget._tree.topLevelItem(1))
     assert not widget._down_btn.isEnabled()
+
+
+# ── Detail form tests ──────────────────────────────────────────────────────
+
+def test_select_volume_shows_detail(editor):
+    """Selecting a volume populates the volume detail form."""
+    widget, proj_dir = editor
+    widget._on_add_volume()
+    widget._tree.setCurrentItem(widget._tree.topLevelItem(0))
+    assert widget._detail_stack.currentWidget() is widget._volume_form
+
+
+def test_select_scene_shows_detail_fields(editor):
+    """Selecting a scene populates the scene detail form with all fields."""
+    widget, proj_dir = editor
+    widget._on_add_volume()
+    widget._tree.setCurrentItem(widget._tree.topLevelItem(0))
+    widget._on_add_chapter()
+    root = widget._tree.topLevelItem(0)
+    chapter_item = root.child(0)
+    widget._tree.setCurrentItem(chapter_item)
+    widget._on_add_scene()
+    root = widget._tree.topLevelItem(0)
+    scene_item = root.child(0).child(0)
+    widget._tree.setCurrentItem(scene_item)
+    assert widget._detail_stack.currentWidget() is widget._scene_form
+
+
+def test_scene_ending_hook_label(editor):
+    """The ending hook field must be labeled 断章."""
+    widget, proj_dir = editor
+    labels = widget._scene_form.findChildren(QLabel)
+    label_texts = [l.text() for l in labels]
+    assert any("断章" in t for t in label_texts)
+
+
+def test_gather_scene_from_form(editor):
+    """After populating and editing a scene form, _gather_scene returns correct data."""
+    widget, proj_dir = editor
+    widget._on_add_volume()
+    widget._tree.setCurrentItem(widget._tree.topLevelItem(0))
+    widget._on_add_chapter()
+    root = widget._tree.topLevelItem(0)
+    chapter_item = root.child(0)
+    widget._tree.setCurrentItem(chapter_item)
+    widget._on_add_scene()
+    root = widget._tree.topLevelItem(0)
+    scene_item = root.child(0).child(0)
+    widget._tree.setCurrentItem(scene_item)
+
+    # Edit form fields
+    widget._scene_title.setText("测试场景")
+    widget._scene_location.setText("广场")
+    widget._scene_time.setText("清晨")
+    widget._scene_goal.setPlainText("通过考核")
+    widget._scene_conflict.setPlainText("嘲笑与反击")
+    widget._scene_ending_hook.setPlainText("考核官意味深长的笑容")
+
+    sc = widget._gather_scene(widget._selected_node_id)
+    assert sc.title == "测试场景"
+    assert sc.location == "广场"
+    assert sc.time == "清晨"
+    assert sc.scene_goal == "通过考核"
+    assert sc.conflict == "嘲笑与反击"
+    assert sc.ending_hook == "考核官意味深长的笑容"

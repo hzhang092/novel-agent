@@ -13,7 +13,6 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QPushButton,
     QScrollArea,
     QSplitter,
@@ -103,7 +102,7 @@ class OutlineEditorView(QWidget):
         toolbar.addWidget(self._save_btn)
         layout.addLayout(toolbar)
 
-        # Splitter: tree | detail placeholder
+        # Splitter: tree | detail
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # Tree
@@ -118,19 +117,235 @@ class OutlineEditorView(QWidget):
         tree_layout.addWidget(self._tree)
         splitter.addWidget(tree_container)
 
-        # Detail placeholder
-        self._detail_label = QLabel("选择一个节点查看详情")
-        self._detail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        splitter.addWidget(self._detail_label)
+        # Detail forms stacked widget
+        self._detail_stack = QStackedWidget()
+
+        self._volume_form = self._build_volume_form()
+        self._detail_stack.addWidget(self._volume_form)
+
+        self._chapter_form = self._build_chapter_form()
+        self._detail_stack.addWidget(self._chapter_form)
+
+        self._scene_form = self._build_scene_form()
+        self._detail_stack.addWidget(self._scene_form)
+
+        self._empty_detail = QLabel("选择一个节点查看详情")
+        self._empty_detail.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._detail_stack.addWidget(self._empty_detail)
+        self._detail_stack.setCurrentWidget(self._empty_detail)
+
+        splitter.addWidget(self._detail_stack)
 
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 2)
         layout.addWidget(splitter)
 
+    # ── Volume Detail Form ─────────────────────────────────────────────────
+
+    def _build_volume_form(self) -> QScrollArea:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        container = QWidget()
+        form = QVBoxLayout(container)
+
+        form.addWidget(QLabel("<b>卷标题</b>"))
+        self._vol_title = QLineEdit()
+        form.addWidget(self._vol_title)
+
+        form.addWidget(QLabel("<b>卷概要</b>"))
+        self._vol_summary = QTextEdit()
+        self._vol_summary.setMaximumHeight(100)
+        form.addWidget(self._vol_summary)
+
+        form.addStretch()
+        scroll.setWidget(container)
+        return scroll
+
+    def _populate_volume_form(self, vol) -> None:
+        self._vol_title.setText(vol.title)
+        self._vol_summary.setPlainText(vol.summary)
+
+    # ── Chapter Detail Form ────────────────────────────────────────────────
+
+    def _build_chapter_form(self) -> QScrollArea:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        container = QWidget()
+        form = QVBoxLayout(container)
+
+        form.addWidget(QLabel("<b>章节标题</b>"))
+        self._ch_title = QLineEdit()
+        form.addWidget(self._ch_title)
+
+        form.addWidget(QLabel("<b>章节概要</b>"))
+        self._ch_summary = QTextEdit()
+        self._ch_summary.setMaximumHeight(100)
+        form.addWidget(self._ch_summary)
+
+        form.addWidget(QLabel("<b>目标字数</b>"))
+        self._ch_word_count = QLineEdit()
+        self._ch_word_count.setPlaceholderText("3000")
+        form.addWidget(self._ch_word_count)
+
+        form.addStretch()
+        scroll.setWidget(container)
+        return scroll
+
+    def _populate_chapter_form(self, ch) -> None:
+        self._ch_title.setText(ch.title)
+        self._ch_summary.setPlainText(ch.summary)
+        self._ch_word_count.setText(str(ch.target_word_count))
+
+    # ── Scene Detail Form ──────────────────────────────────────────────────
+
+    def _build_scene_form(self) -> QScrollArea:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        container = QWidget()
+        form = QVBoxLayout(container)
+
+        form.addWidget(QLabel("<b>场景标题</b>"))
+        self._scene_title = QLineEdit()
+        form.addWidget(self._scene_title)
+
+        row1 = QHBoxLayout()
+        row1.addWidget(QLabel("地点:"))
+        self._scene_location = QLineEdit()
+        row1.addWidget(self._scene_location)
+        row1.addWidget(QLabel("时间:"))
+        self._scene_time = QLineEdit()
+        row1.addWidget(self._scene_time)
+        form.addLayout(row1)
+
+        row2 = QHBoxLayout()
+        row2.addWidget(QLabel("视角角色:"))
+        self._scene_pov = QComboBox()
+        self._scene_pov.setEditable(True)
+        row2.addWidget(self._scene_pov)
+        form.addLayout(row2)
+
+        form.addWidget(QLabel("<b>参与角色</b>（多选）"))
+        self._scene_participants = QListWidget()
+        self._scene_participants.setSelectionMode(
+            QListWidget.SelectionMode.MultiSelection
+        )
+        self._scene_participants.setMaximumHeight(100)
+        form.addWidget(self._scene_participants)
+
+        form.addWidget(QLabel("<b>场景目标</b>"))
+        self._scene_goal = QTextEdit()
+        self._scene_goal.setMaximumHeight(60)
+        form.addWidget(self._scene_goal)
+
+        form.addWidget(QLabel("<b>冲突</b>"))
+        self._scene_conflict = QTextEdit()
+        self._scene_conflict.setMaximumHeight(60)
+        form.addWidget(self._scene_conflict)
+
+        form.addWidget(QLabel("<b>情节节拍</b>"))
+        self._scene_beats = StringListEditor()
+        form.addWidget(self._scene_beats)
+
+        form.addWidget(QLabel("<b>情绪转折</b>"))
+        self._scene_emotional = QLineEdit()
+        self._scene_emotional.setPlaceholderText("如：紧张→对峙→爆发→余波")
+        form.addWidget(self._scene_emotional)
+
+        form.addWidget(QLabel("<b>断章（结尾钩子）</b>"))
+        self._scene_ending_hook = QTextEdit()
+        self._scene_ending_hook.setMaximumHeight(60)
+        self._scene_ending_hook.setPlaceholderText("本章结尾的悬念钩子，用于吸引读者继续阅读")
+        form.addWidget(self._scene_ending_hook)
+
+        form.addWidget(QLabel("<b>约束条件</b>"))
+        self._scene_constraints = StringListEditor()
+        form.addWidget(self._scene_constraints)
+
+        form.addStretch()
+        scroll.setWidget(container)
+        return scroll
+
+    def _populate_scene_form(self, sc) -> None:
+        self._scene_title.setText(sc.title)
+        self._scene_location.setText(sc.location)
+        self._scene_time.setText(sc.time)
+
+        self._refresh_character_dropdowns()
+        idx = self._scene_pov.findText(sc.pov_character)
+        if idx >= 0:
+            self._scene_pov.setCurrentIndex(idx)
+
+        for i in range(self._scene_participants.count()):
+            item = self._scene_participants.item(i)
+            if item.text() in sc.participating_characters:
+                item.setSelected(True)
+            else:
+                item.setSelected(False)
+
+        self._scene_goal.setPlainText(sc.scene_goal)
+        self._scene_conflict.setPlainText(sc.conflict)
+        self._scene_beats.set_items(sc.required_plot_beats)
+        self._scene_emotional.setText(sc.emotional_turn)
+        self._scene_ending_hook.setPlainText(sc.ending_hook)
+        self._scene_constraints.set_items(sc.constraints)
+
+    def _refresh_character_dropdowns(self) -> None:
+        if self._project_dir is None:
+            return
+
+        from app.storage.project_files import load_all_characters
+
+        chars = load_all_characters(self._project_dir)
+        names = [c.core.name for c in chars]
+
+        current_pov = self._scene_pov.currentText()
+        self._scene_pov.clear()
+        self._scene_pov.addItems(names)
+        if current_pov:
+            idx = self._scene_pov.findText(current_pov)
+            if idx >= 0:
+                self._scene_pov.setCurrentIndex(idx)
+
+        current_selected = {
+            self._scene_participants.item(i).text()
+            for i in range(self._scene_participants.count())
+            if self._scene_participants.item(i).isSelected()
+        }
+        self._scene_participants.clear()
+        for name in names:
+            item = QListWidgetItem(name)
+            if name in current_selected:
+                item.setSelected(True)
+            self._scene_participants.addItem(item)
+
+    def _gather_scene(self, sc_id: str):
+        from app.storage.models import SceneOutline
+
+        pov = self._scene_pov.currentText().strip()
+        participants = [
+            self._scene_participants.item(i).text()
+            for i in range(self._scene_participants.count())
+            if self._scene_participants.item(i).isSelected()
+        ]
+
+        return SceneOutline(
+            id=sc_id,
+            title=self._scene_title.text().strip(),
+            location=self._scene_location.text().strip(),
+            time=self._scene_time.text().strip(),
+            pov_character=pov,
+            participating_characters=participants,
+            scene_goal=self._scene_goal.toPlainText().strip(),
+            conflict=self._scene_conflict.toPlainText().strip(),
+            required_plot_beats=self._scene_beats.get_items(),
+            emotional_turn=self._scene_emotional.text().strip(),
+            ending_hook=self._scene_ending_hook.toPlainText().strip(),
+            constraints=self._scene_constraints.get_items(),
+        )
+
     # ── Tree Management ────────────────────────────────────────────────────
 
     def _rebuild_tree(self) -> None:
-        """Rebuild the tree from self._volumes."""
         self._tree.blockSignals(True)
         self._tree.clear()
         for vol in self._volumes:
@@ -159,6 +374,7 @@ class OutlineEditorView(QWidget):
             return
         self._delete_btn.setEnabled(True)
         self._selected_node_id = current.data(0, ROLE_NODE_ID)
+        node_type = current.data(0, ROLE_NODE_TYPE)
 
         parent = current.parent()
         if parent is None:
@@ -169,6 +385,28 @@ class OutlineEditorView(QWidget):
             total = parent.childCount()
         self._up_btn.setEnabled(idx > 0)
         self._down_btn.setEnabled(idx < total - 1)
+
+        # Populate detail form based on node type
+        if node_type == "volume":
+            vol = self._find_volume(self._selected_node_id)
+            if vol:
+                self._populate_volume_form(vol)
+            self._detail_stack.setCurrentWidget(self._volume_form)
+        elif node_type == "chapter":
+            for vol in self._volumes:
+                for ch in vol.chapters:
+                    if ch.id == self._selected_node_id:
+                        self._populate_chapter_form(ch)
+                        break
+            self._detail_stack.setCurrentWidget(self._chapter_form)
+        elif node_type == "scene":
+            for vol in self._volumes:
+                for ch in vol.chapters:
+                    for sc in ch.scenes:
+                        if sc.id == self._selected_node_id:
+                            self._populate_scene_form(sc)
+                            break
+            self._detail_stack.setCurrentWidget(self._scene_form)
 
     # ── CRUD Actions ──────────────────────────────────────────────────────
 
