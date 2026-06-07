@@ -101,6 +101,9 @@ class MainWindow(QMainWindow):
         self.sidebar.currentRowChanged.connect(self._on_nav_changed)
         self.sidebar.setCurrentRow(0)
 
+        # Disable non-dashboard sidebar items until a project is loaded
+        self._set_nav_items_enabled(False)
+
     def _on_nav_changed(self, index: int) -> None:
         # Auto-save Bible editor when navigating away from it
         if self._previous_tab_index == 1:  # Bible tab index
@@ -112,6 +115,10 @@ class MainWindow(QMainWindow):
 
         item = self.sidebar.item(index)
         if item is None:
+            return
+        # Block navigation to disabled items
+        if not (item.flags() & Qt.ItemFlag.ItemIsEnabled):
+            self.sidebar.setCurrentRow(0)
             return
         key = item.data(Qt.ItemDataRole.UserRole)
         if key in self.views:
@@ -144,6 +151,8 @@ class MainWindow(QMainWindow):
         self._current_project_dir = proj_dir
         self.setWindowTitle(f"NovelForge — {project.title}")
 
+        self._set_nav_items_enabled(True)
+
         bible = self.views["bible"]
         if isinstance(bible, BibleEditorView):
             bible.load_project_dir(proj_dir)
@@ -172,6 +181,22 @@ class MainWindow(QMainWindow):
         self._current_project_dir = Path(dir_path)
         self.setWindowTitle(f"NovelForge — {project.title}")
 
+        self._set_nav_items_enabled(True)
+
         bible = self.views["bible"]
         if isinstance(bible, BibleEditorView):
             bible.load_project_dir(Path(dir_path))
+
+    def _set_nav_items_enabled(self, enabled: bool) -> None:
+        """Enable or disable all non-dashboard sidebar items."""
+        for i in range(1, self.sidebar.count()):
+            item = self.sidebar.item(i)
+            if item is not None:
+                flags = item.flags()
+                if enabled:
+                    flags |= Qt.ItemFlag.ItemIsEnabled
+                    flags |= Qt.ItemFlag.ItemIsSelectable
+                else:
+                    flags &= ~Qt.ItemFlag.ItemIsEnabled
+                    flags &= ~Qt.ItemFlag.ItemIsSelectable
+                item.setFlags(flags)
