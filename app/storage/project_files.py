@@ -8,8 +8,15 @@ from pathlib import Path
 
 import yaml
 
-from app.storage.models import Project, StyleGuide, WorldSetting
-from app.storage.models import Character, CharacterCore, CharacterState
+from app.storage.models import (
+    Character,
+    CharacterCore,
+    CharacterState,
+    Project,
+    StyleGuide,
+    VolumeOutline,
+    WorldSetting,
+)
 
 
 PROJECT_YAML = "project.yaml"
@@ -289,3 +296,76 @@ def load_all_characters(project_dir: Path) -> list[Character]:
             # Skip corrupt files - don't crash the whole load
             continue
     return characters
+
+
+# ── Outline I/O ────────────────────────────────────────────────────────────
+
+def save_volume_outline(project_dir: Path, volume: VolumeOutline) -> None:
+    """Write a volume with its nested chapters and scenes to outline/<id>.yaml."""
+    outline_dir = project_dir / "outline"
+    outline_dir.mkdir(exist_ok=True)
+
+    data = volume.model_dump(mode="json")
+    filepath = outline_dir / f"{volume.id}.yaml"
+    with open(filepath, "w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+
+
+def load_volume_outline(project_dir: Path, volume_id: str) -> VolumeOutline:
+    """Load a single volume from outline/<id>.yaml.
+
+    Raises:
+        FileNotFoundError: If the volume file does not exist.
+        ValueError: If the YAML is invalid or fails model validation.
+    """
+    filepath = project_dir / "outline" / f"{volume_id}.yaml"
+    if not filepath.exists():
+        raise FileNotFoundError(f"Volume not found: {filepath}")
+
+    with open(filepath, "r", encoding="utf-8") as f:
+        try:
+            raw = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            raise ValueError(f"Invalid YAML in {filepath}: {e}") from e
+
+    if raw is None:
+        raise ValueError(f"Empty volume file: {filepath}")
+
+    try:
+        volume = VolumeOutline.model_validate(raw)
+    except Exception as e:
+        raise ValueError(f"Invalid volume data in {filepath}: {e}") from e
+
+    return volume
+
+
+def delete_volume_outline(project_dir: Path, volume_id: str) -> None:
+    """Delete a volume YAML file. No-op if the file does not exist."""
+    filepath = project_dir / "outline" / f"{volume_id}.yaml"
+    if filepath.exists():
+        filepath.unlink()
+
+
+def list_volume_ids(project_dir: Path) -> list[str]:
+    """Return all volume IDs found in the outline/ directory."""
+    outline_dir = project_dir / "outline"
+    if not outline_dir.exists():
+        return []
+    ids = []
+    for filepath in outline_dir.glob("*.yaml"):
+        ids.append(filepath.stem)
+    return ids
+
+
+def load_all_volumes(project_dir: Path) -> list[VolumeOutline]:
+    """Load all volumes from the outline/ directory, sorted by filename."""
+    outline_dir = project_dir / "outline"
+    if not outline_dir.exists():
+        return []
+    volumes = []
+    for filepath in sorted(outline_dir.glob("*.yaml")):
+        try:
+            volumes.append(load_volume_outline(project_dir, filepath.stem))
+        except (ValueError, FileNotFoundError):
+            continue
+    return volumes
