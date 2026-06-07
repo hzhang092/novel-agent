@@ -162,3 +162,65 @@ def test_gather_scene_from_form(editor):
     assert sc.scene_goal == "通过考核"
     assert sc.conflict == "嘲笑与反击"
     assert sc.ending_hook == "考核官意味深长的笑容"
+
+
+# ── Save/Load tests ────────────────────────────────────────────────────────
+
+def test_save_and_reload_preserves_data(editor, qtbot):
+    """Save outline, create a new editor, load — data is preserved."""
+    widget, proj_dir = editor
+
+    # Create a volume with a chapter and scene
+    widget._on_add_volume()
+    widget._tree.setCurrentItem(widget._tree.topLevelItem(0))
+    widget._on_add_chapter()
+    root = widget._tree.topLevelItem(0)
+    chapter = root.child(0)
+    widget._tree.setCurrentItem(chapter)
+    widget._on_add_scene()
+
+    # Edit the scene
+    root = widget._tree.topLevelItem(0)
+    scene_item = root.child(0).child(0)
+    widget._tree.setCurrentItem(scene_item)
+    widget._scene_title.setText("考核日")
+    widget._scene_ending_hook.setPlainText("悬念结尾")
+
+    # Save
+    widget._on_save()
+
+    # Create a new editor and load the same project
+    from app.ui.outline_editor import OutlineEditorView
+    widget2 = OutlineEditorView()
+    qtbot.addWidget(widget2)
+    widget2.load_project_dir(proj_dir)
+
+    # Verify data survived
+    assert widget2._tree.topLevelItemCount() == 1
+    root2 = widget2._tree.topLevelItem(0)
+    assert root2.childCount() == 1
+    ch2 = root2.child(0)
+    assert ch2.childCount() == 1
+    sc2 = ch2.child(0)
+
+    widget2._tree.setCurrentItem(sc2)
+    assert widget2._scene_title.text() == "考核日"
+    assert widget2._scene_ending_hook.toPlainText() == "悬念结尾"
+
+
+def test_on_save_writes_all_volumes_to_disk(editor):
+    """_on_save writes volume YAML files and emits the saved signal."""
+    widget, proj_dir = editor
+
+    widget._on_add_volume()
+    widget._on_add_volume()
+
+    saved_emitted = []
+    widget.saved.connect(lambda: saved_emitted.append(True))
+
+    widget._on_save()
+
+    assert len(saved_emitted) == 1
+    # Verify files exist
+    vol_files = list((proj_dir / "outline").glob("*.yaml"))
+    assert len(vol_files) == 2

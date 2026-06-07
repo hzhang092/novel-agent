@@ -367,6 +367,9 @@ class OutlineEditorView(QWidget):
         self._tree.blockSignals(False)
 
     def _on_tree_selection_changed(self, current, _previous) -> None:
+        # Gather unsaved changes from the previous selection
+        self._gather_current_form()
+
         if current is None:
             self._delete_btn.setEnabled(False)
             self._up_btn.setEnabled(False)
@@ -615,6 +618,62 @@ class OutlineEditorView(QWidget):
                     ch_item.setBackground(0, QBrush())
                     ch_item.setText(0, ch_item.text(0).replace("⚠ ", ""))
 
+    # ── Save ───────────────────────────────────────────────────────────────
+
+    def _gather_current_form(self) -> None:
+        """Gather data from the currently visible detail form into the data model."""
+        if self._selected_node_id is None:
+            return
+        current = self._tree.currentItem()
+        if current is None:
+            return
+        node_type = current.data(0, ROLE_NODE_TYPE)
+
+        if node_type == "volume":
+            vol = self._find_volume(self._selected_node_id)
+            if vol:
+                vol.title = self._vol_title.text().strip()
+                vol.summary = self._vol_summary.toPlainText().strip()
+        elif node_type == "chapter":
+            for vol in self._volumes:
+                for ch in vol.chapters:
+                    if ch.id == self._selected_node_id:
+                        ch.title = self._ch_title.text().strip()
+                        ch.summary = self._ch_summary.toPlainText().strip()
+                        try:
+                            ch.target_word_count = int(self._ch_word_count.text().strip())
+                        except ValueError:
+                            ch.target_word_count = 3000
+                        break
+        elif node_type == "scene":
+            for vol in self._volumes:
+                for ch in vol.chapters:
+                    for sc in ch.scenes:
+                        if sc.id == self._selected_node_id:
+                            gathered = self._gather_scene(self._selected_node_id)
+                            sc.title = gathered.title
+                            sc.location = gathered.location
+                            sc.time = gathered.time
+                            sc.pov_character = gathered.pov_character
+                            sc.participating_characters = gathered.participating_characters
+                            sc.scene_goal = gathered.scene_goal
+                            sc.conflict = gathered.conflict
+                            sc.required_plot_beats = gathered.required_plot_beats
+                            sc.emotional_turn = gathered.emotional_turn
+                            sc.ending_hook = gathered.ending_hook
+                            sc.constraints = gathered.constraints
+                            break
+
     def _on_save(self) -> None:
-        """Save all volumes to disk."""
-        pass
+        """Persist all volumes to disk."""
+        if self._project_dir is None:
+            return
+
+        self._gather_current_form()
+
+        from app.storage.project_files import save_volume_outline
+
+        for vol in self._volumes:
+            save_volume_outline(self._project_dir, vol)
+
+        self.saved.emit()
