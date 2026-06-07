@@ -42,6 +42,8 @@ class MainWindow(QMainWindow):
 
         self._repo = Repository(Path.home() / "NovelForge")
         self._current_project: ProjectModel | None = None
+        self._current_project_dir: Path | None = None
+        self._previous_tab_index: int = 0
 
         self._setup_menu()
         self._setup_ui()
@@ -100,6 +102,14 @@ class MainWindow(QMainWindow):
         self.sidebar.setCurrentRow(0)
 
     def _on_nav_changed(self, index: int) -> None:
+        # Auto-save Bible editor when navigating away from it
+        if self._previous_tab_index == 1:  # Bible tab index
+            bible = self.views["bible"]
+            if isinstance(bible, BibleEditorView) and bible._project_dir is not None:
+                bible._on_save()
+
+        self._previous_tab_index = index
+
         item = self.sidebar.item(index)
         if item is None:
             return
@@ -131,7 +141,13 @@ class MainWindow(QMainWindow):
             return
 
         self._current_project = project
+        self._current_project_dir = proj_dir
         self.setWindowTitle(f"NovelForge — {project.title}")
+
+        bible = self.views["bible"]
+        if isinstance(bible, BibleEditorView):
+            bible.load_project_dir(proj_dir)
+
         QMessageBox.information(
             self, "创建成功", f"项目「{project.title}」已创建\n{proj_dir}"
         )
@@ -153,4 +169,9 @@ class MainWindow(QMainWindow):
             return
 
         self._current_project = project
+        self._current_project_dir = Path(dir_path)
         self.setWindowTitle(f"NovelForge — {project.title}")
+
+        bible = self.views["bible"]
+        if isinstance(bible, BibleEditorView):
+            bible.load_project_dir(Path(dir_path))
