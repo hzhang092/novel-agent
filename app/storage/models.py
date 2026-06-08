@@ -18,6 +18,15 @@ class CharacterTier(str, Enum):
     BACKGROUND = "background"
 
 
+class AgentStepId(str, Enum):
+    """Pipeline steps that can be routed to different providers."""
+    PLANNER = "planner"
+    CHARACTERS = "characters"
+    WRITER = "writer"
+    REVIEWER = "reviewer"
+    FACT_EXTRACTOR = "fact_extractor"
+
+
 class CharacterCore(BaseModel):
     """Immutable or very-slowly-changing traits."""
     id: str = Field(default_factory=lambda: str(uuid4()))
@@ -200,3 +209,21 @@ class Project(BaseModel):
     updated_at: datetime = Field(default_factory=datetime.now)
     world_setting: WorldSetting = Field(default_factory=WorldSetting)
     style_guide: StyleGuide = Field(default_factory=StyleGuide)
+
+
+# ── Provider Config ────────────────────────────────────────────────────────
+
+class ProviderConfig(BaseModel):
+    """App-level LLM provider settings, persisted via QSettings."""
+    ollama_host: str = "http://localhost:11434"
+    ollama_model: str = "qwen:14b"
+    deepseek_model: str = "deepseek-chat"
+    deepseek_base_url: str = "https://api.deepseek.com/v1"
+    deepseek_api_key: str = ""
+    routing: dict[str, str] = Field(default_factory=lambda: {
+        "planner": "ollama",
+        "characters": "ollama",
+        "writer": "ollama",
+        "reviewer": "ollama",
+        "fact_extractor": "ollama",
+    })
