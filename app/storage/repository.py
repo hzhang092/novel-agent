@@ -85,3 +85,23 @@ class Repository:
         """Load all volumes from the project."""
         from app.storage.project_files import load_all_volumes as _load_all
         return _load_all(Path(project_dir))
+
+    def save_canon_facts(self, project_dir: Path, facts: list) -> None:
+        """Write all canon facts to canon/facts.yaml."""
+        from app.storage.project_files import save_canon_facts as _save
+        _save(Path(project_dir), facts)
+
+    def load_canon_facts(self, project_dir: Path) -> list:
+        """Load all canon facts from canon/facts.yaml."""
+        from app.storage.project_files import load_canon_facts as _load
+        return _load(Path(project_dir))
+
+    def save_scene_summaries(self, project_dir: Path, summaries: list) -> None:
+        """Write all scene summaries to canon/summaries.yaml."""
+        from app.storage.project_files import save_scene_summaries as _save
+        _save(Path(project_dir), summaries)
+
+    def load_scene_summaries(self, project_dir: Path) -> list:
+        """Load all scene summaries from canon/summaries.yaml."""
+        from app.storage.project_files import load_scene_summaries as _load
+        return _load(Path(project_dir))
