@@ -369,3 +369,99 @@ def load_all_volumes(project_dir: Path) -> list[VolumeOutline]:
         except (ValueError, FileNotFoundError):
             continue
     return volumes
+
+
+# ── Canon Facts I/O ────────────────────────────────────────────────────────
+
+CANON_FACTS_YAML = "canon/facts.yaml"
+
+
+def save_canon_facts(project_dir: Path, facts: list) -> None:
+    """Write all canon facts to canon/facts.yaml, overwriting previous content."""
+    canon_dir = project_dir / "canon"
+    canon_dir.mkdir(exist_ok=True)
+
+    data = [f.model_dump(mode="json") for f in facts]
+    filepath = canon_dir / "facts.yaml"
+    with open(filepath, "w", encoding="utf-8") as fh:
+        yaml.safe_dump(data, fh, allow_unicode=True, sort_keys=False)
+
+
+def load_canon_facts(project_dir: Path) -> list:
+    """Load all canon facts from canon/facts.yaml.
+
+    Returns:
+        List of CanonFact models. Empty list if no facts file exists or is empty.
+
+    Raises:
+        ValueError: If the YAML is invalid or fails model validation.
+    """
+    from app.storage.models import CanonFact
+
+    filepath = project_dir / CANON_FACTS_YAML
+    if not filepath.exists():
+        return []
+
+    with open(filepath, "r", encoding="utf-8") as fh:
+        try:
+            raw = yaml.safe_load(fh)
+        except yaml.YAMLError as e:
+            raise ValueError(f"Invalid YAML in {filepath}: {e}") from e
+
+    if raw is None:
+        return []
+
+    try:
+        facts = [CanonFact.model_validate(item) for item in raw]
+    except Exception as e:
+        raise ValueError(f"Invalid canon fact data in {filepath}: {e}") from e
+
+    return facts
+
+
+# ── Scene Summaries I/O ────────────────────────────────────────────────────
+
+SCENE_SUMMARIES_YAML = "canon/summaries.yaml"
+
+
+def save_scene_summaries(project_dir: Path, summaries: list) -> None:
+    """Write all scene summaries to canon/summaries.yaml, overwriting."""
+    canon_dir = project_dir / "canon"
+    canon_dir.mkdir(exist_ok=True)
+
+    data = [s.model_dump(mode="json") for s in summaries]
+    filepath = canon_dir / "summaries.yaml"
+    with open(filepath, "w", encoding="utf-8") as fh:
+        yaml.safe_dump(data, fh, allow_unicode=True, sort_keys=False)
+
+
+def load_scene_summaries(project_dir: Path) -> list:
+    """Load all scene summaries from canon/summaries.yaml.
+
+    Returns:
+        List of SceneSummary models. Empty list if no file exists or is empty.
+
+    Raises:
+        ValueError: If the YAML is invalid or fails model validation.
+    """
+    from app.storage.models import SceneSummary
+
+    filepath = project_dir / SCENE_SUMMARIES_YAML
+    if not filepath.exists():
+        return []
+
+    with open(filepath, "r", encoding="utf-8") as fh:
+        try:
+            raw = yaml.safe_load(fh)
+        except yaml.YAMLError as e:
+            raise ValueError(f"Invalid YAML in {filepath}: {e}") from e
+
+    if raw is None:
+        return []
+
+    try:
+        summaries = [SceneSummary.model_validate(item) for item in raw]
+    except Exception as e:
+        raise ValueError(f"Invalid scene summary data in {filepath}: {e}") from e
+
+    return summaries
