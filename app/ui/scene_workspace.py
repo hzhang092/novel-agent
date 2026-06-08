@@ -1,63 +1,150 @@
-"""Writing Workspace — hosts Context Preview panel and scene generation area."""
+"""Writing Workspace — three-pane layout with context, editor, and trace."""
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
+)
 
 from app.ui.context_preview import ContextPreviewView
+from app.ui.widgets.agent_trace import AgentTracePanel
+from app.ui.widgets.prose_editor import ProseEditorWidget
 
 
 class SceneWorkspaceView(QWidget):
-    """Writing workspace with Context Preview panel.
+    """Three-pane writing workspace for scene generation.
 
-    Emits ``enter_pressed`` when Enter key is pressed, for downstream
-    pipeline triggering (wired in later issues).
+    Left: Context Preview panel
+    Center: Prose editor with preview toggle
+    Right: Agent Trace panel
+
+    Emits ``generate_requested`` when the user clicks Generate or presses Enter.
     """
 
-    enter_pressed = pyqtSignal()
+    generate_requested = pyqtSignal(str)  # emits scene_id
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._project_dir: Path | None = None
+        self._current_scene_id: str | None = None
+        self._current_chapter_id: str | None = None
+        self._generating = False
         self._setup_ui()
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
+        layout.setSpacing(6)
 
-        # Placeholder header (shown when no scene is selected)
-        self._header = QLabel("选择大纲中的场景以查看上下文预览")
-        self._header.setStyleSheet("color: #888; font-size: 13px;")
-        self._header.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self._header)
+        # ── Toolbar ──
+        toolbar = QHBoxLayout()
 
-        # Context Preview panel (hidden until context is set)
+        self._generate_btn = QPushButton("生成")
+        self._generate_btn.setEnabled(False)
+        self._generate_btn.setStyleSheet(
+            "QPushButton { padding: 6px 20px; font-weight: bold; }"
+        )
+        self._generate_btn.clicked.connect(self._on_generate_clicked)
+        toolbar.addWidget(self._generate_btn)
+
+        self._status_label = QLabel("")
+        self._status_label.setStyleSheet("color: #888; font-size: 12px;")
+        toolbar.addWidget(self._status_label)
+
+        toolbar.addStretch()
+        layout.addLayout(toolbar)
+
+        # ── Three-pane splitter ──
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        # Left: Context Preview
+        left_pane = QWidget()
+        left_layout = QVBoxLayout(left_pane)
+        left_layout.setContentsMargins(0, 0, 4, 0)
+        left_layout.addWidget(QLabel("<b>上下文预览</b>"))
         self.context_preview = ContextPreviewView()
-        layout.addWidget(self.context_preview)
+        left_layout.addWidget(self.context_preview)
+        left_layout.addStretch()
+        splitter.addWidget(left_pane)
 
-        layout.addStretch()
+        # Center: Prose Editor
+        center_pane = QWidget()
+        center_layout = QVBoxLayout(center_pane)
+        center_layout.setContentsMargins(4, 0, 4, 0)
+        center_layout.addWidget(QLabel("<b>正文编辑器</b>"))
+        self.editor = ProseEditorWidget()
+        center_layout.addWidget(self.editor)
+        splitter.addWidget(center_pane)
+
+        # Right: Agent Trace
+        right_pane = QWidget()
+        right_layout = QVBoxLayout(right_pane)
+        right_layout.setContentsMargins(4, 0, 0, 0)
+        self.trace_panel = AgentTracePanel()
+        right_layout.addWidget(self.trace_panel)
+        splitter.addWidget(right_pane)
+
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 3)
+        splitter.setStretchFactor(2, 1)
+        splitter.setSizes([280, 500, 200])
+        layout.addWidget(splitter)
+
+    # ── Public API ────────────────────────────────────────────────────────
 
     def load_project_dir(self, project_dir: Path) -> None:
-        """Store project directory reference for context assembly."""
+        """Store project directory reference."""
         self._project_dir = project_dir
+
+    def set_scene(self, scene_id: str, chapter_id: str) -> None:
+        """Called when a scene is selected in the outline."""
+        self._current_scene_id = scene_id
+        self._current_chapter_id = chapter_id
+        self._generate_btn.setEnabled(True)
+        self._status_label.setText("就绪")
+
+    def clear_scene(self) -> None:
+        """Called when no scene is selected."""
+        self._current_scene_id = None
+        self._current_chapter_id = None
+        self._generate_btn.setEnabled(False)
 
     def show_context(self, context: dict) -> None:
         """Display assembled context in the preview panel."""
         self.context_preview.set_context(context)
-        self._header.hide()
 
     def clear_context(self) -> None:
-        """Clear the preview and show the placeholder header."""
+        """Clear the context preview."""
         self.context_preview.clear()
-        self._header.show()
+
+    def set_generating(self, generating: bool) -> None:
+        """Set the UI into generating/idle state."""
+        self._generating = generating
+        self._generate_btn.setEnabled(not generating and self._current_scene_id is not None)
+        if generating:
+            self._status_label.setText("生成中...")
+        else:
+            self._status_label.setText("就绪")
+
+    # ── Actions ────────────────────────────────────────────────────────────
+
+    def _on_generate_clicked(self) -> None:
+        if self._current_scene_id and not self._generating:
+            self.generate_requested.emit(self._current_scene_id)
 
     def keyPressEvent(self, event) -> None:
-        """Capture Enter key for pipeline trigger."""
-        if event.key() == Qt.Key.Key_Return or event.key() == Qt.Key.Key_Enter:
-            self.enter_pressed.emit()
+        """Capture Enter key to trigger generation."""
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if self._current_scene_id and not self._generating:
+                self.generate_requested.emit(self._current_scene_id)
             return
         super().keyPressEvent(event)
