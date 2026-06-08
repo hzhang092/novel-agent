@@ -105,3 +105,23 @@ class Repository:
         """Load all scene summaries from canon/summaries.yaml."""
         from app.storage.project_files import load_scene_summaries as _load
         return _load(Path(project_dir))
+
+    def save_scene_prose(self, project_dir: Path, chapter_id: str, scene_id: str, prose: str) -> None:
+        """Save scene prose to scenes/<chapter>/<scene_id>.md."""
+        from app.storage.project_files import save_scene_prose as _save
+        _save(Path(project_dir), chapter_id, scene_id, prose)
+
+    def load_scene_prose(self, project_dir: Path, chapter_id: str, scene_id: str) -> str:
+        """Load scene prose from scenes/<chapter>/<scene_id>.md."""
+        from app.storage.project_files import load_scene_prose as _load
+        return _load(Path(project_dir), chapter_id, scene_id)
+
+    def save_scene_generation_record(self, project_dir: Path, record) -> None:
+        """Save SceneGenerationRecord as JSON."""
+        from app.storage.project_files import save_scene_generation_record as _save
+        _save(Path(project_dir), record)
+
+    def load_scene_generation_record(self, project_dir: Path, scene_id: str):
+        """Load SceneGenerationRecord from JSON."""
+        from app.storage.project_files import load_scene_generation_record as _load
+        return _load(Path(project_dir), scene_id)
