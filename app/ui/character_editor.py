@@ -115,6 +115,7 @@ class CharacterEditorView(QWidget):
         self._detail_tabs.addTab(self._core_tab, "核心设定")
         self._detail_tabs.addTab(self._state_tab, "当前状态")
         splitter.addWidget(self._detail_tabs)
+        self._detail_tabs.setVisible(False)  # hidden until a character is selected
 
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
@@ -316,10 +317,12 @@ class CharacterEditorView(QWidget):
         self._current_id = char_id
         self._populate_core_tab(char.core)
         self._populate_state_tab(char.state)
+        self._detail_tabs.setVisible(True)
 
     def _clear_detail(self) -> None:
         """Clear all detail fields."""
         self._current_id = None
+        self._detail_tabs.setVisible(False)
         self._core_name.clear()
         self._core_tier.setCurrentIndex(1)  # supporting
         self._core_aliases.set_items([])

@@ -37,7 +37,7 @@ class ContextPreviewView(QWidget):
         badge_style = (
             "QPushButton { text-align: left; padding: 6px 10px; "
             "border: 1px solid #555; border-radius: 4px; "
-            "background: #2b2b2b; color: #ccc; }"
+            "background: #4a4a4a; color: #eee; }"
         )
         self._badge_button = QPushButton()
         self._badge_button.setFlat(True)
