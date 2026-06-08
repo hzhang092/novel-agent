@@ -22,6 +22,7 @@ from app.storage.models import Project as ProjectModel
 from app.storage.repository import Repository
 from app.ui.bible_editor import BibleEditorView
 from app.ui.create_project_dialog import CreateProjectDialog
+from app.ui.settings_dialog import SettingsDialog
 from app.ui.dashboard import DashboardView
 from app.ui.outline_editor import OutlineEditorView
 from app.ui.scene_workspace import SceneWorkspaceView
@@ -60,6 +61,11 @@ class MainWindow(QMainWindow):
         open_action = QAction("打开项目(&O)", self)
         open_action.triggered.connect(self._on_open_project)
         file_menu.addAction(open_action)
+
+        file_menu.addSeparator()
+        settings_action = QAction("LLM 设置(&S)...", self)
+        settings_action.triggered.connect(self._on_llm_settings)
+        file_menu.addAction(settings_action)
 
     def _setup_ui(self) -> None:
         central = QWidget()
@@ -200,6 +206,11 @@ class MainWindow(QMainWindow):
         outline = self.views["outline"]
         if isinstance(outline, OutlineEditorView):
             outline.load_project_dir(Path(dir_path))
+
+    def _on_llm_settings(self) -> None:
+        """Open the LLM provider settings dialog."""
+        dialog = SettingsDialog(self)
+        dialog.exec()
 
     def _set_nav_items_enabled(self, enabled: bool) -> None:
         """Enable or disable all non-dashboard sidebar items."""
