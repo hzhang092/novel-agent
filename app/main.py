@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 
+import qasync
 from PyQt6.QtCore import QCoreApplication
 from PyQt6.QtWidgets import QApplication
 
@@ -15,11 +17,14 @@ def main() -> None:
     QCoreApplication.setApplicationName("NovelForge")
 
     app = QApplication(sys.argv)
+    loop = qasync.QEventLoop(app)
+    asyncio.set_event_loop(loop)
 
     window = MainWindow()
     window.show()
 
-    sys.exit(app.exec())
+    with loop:
+        loop.run_forever()
 
 
 if __name__ == "__main__":

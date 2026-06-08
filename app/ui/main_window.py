@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
@@ -128,6 +129,11 @@ class MainWindow(QMainWindow):
             workspace = self.views["workspace"]
             if isinstance(workspace, SceneWorkspaceView) and self._current_project_dir is not None:
                 workspace.load_project_dir(self._current_project_dir)
+                try:
+                    workspace.generate_requested.disconnect()
+                except TypeError:
+                    pass
+                workspace.generate_requested.connect(self._on_generate_requested)
 
         self._previous_tab_index = index
 
@@ -182,7 +188,6 @@ class MainWindow(QMainWindow):
                 outline.scene_selected.disconnect()
             except TypeError:
                 pass
-            outline.scene_selected.connect(self._refresh_context_preview)
 
         QMessageBox.information(
             self, "创建成功", f"项目「{project.title}」已创建\n{proj_dir}"
@@ -221,15 +226,24 @@ class MainWindow(QMainWindow):
                 outline.scene_selected.disconnect()
             except TypeError:
                 pass
-            outline.scene_selected.connect(self._refresh_context_preview)
+            outline.scene_selected.connect(self._on_scene_selected)
+
+            workspace = self.views["workspace"]
+            if isinstance(workspace, SceneWorkspaceView):
+                workspace.load_project_dir(Path(dir_path))
+                try:
+                    workspace.generate_requested.disconnect()
+                except TypeError:
+                    pass
+                workspace.generate_requested.connect(self._on_generate_requested)
 
     def _on_llm_settings(self) -> None:
         """Open the LLM provider settings dialog."""
         dialog = SettingsDialog(self)
         dialog.exec()
 
-    def _refresh_context_preview(self, scene_id: str) -> None:
-        """Assemble and display context for the selected scene."""
+    def _on_scene_selected(self, scene_id: str) -> None:
+        """Handle scene selection: assemble context, find chapter, update workspace."""
         if self._current_project_dir is None:
             return
 
@@ -237,14 +251,96 @@ class MainWindow(QMainWindow):
         if not isinstance(workspace, SceneWorkspaceView):
             return
 
+        chapter_id = self._find_chapter_for_scene(scene_id)
+        workspace.set_scene(scene_id, chapter_id or "")
+
         try:
             from app.pipeline.context_builder import RetrievalEngine
-
             engine = RetrievalEngine()
             context = engine.assemble(self._current_project_dir, scene_id=scene_id)
             workspace.show_context(context)
         except Exception:
             workspace.clear_context()
+
+    def _on_generate_requested(self, scene_id: str) -> None:
+        """Trigger scene generation for the given scene."""
+        if self._current_project_dir is None:
+            return
+
+        workspace = self.views.get("workspace")
+        if not isinstance(workspace, SceneWorkspaceView):
+            return
+
+        from app.providers.config import get_provider_for_step, load_provider_config
+
+        config = load_provider_config()
+        provider = get_provider_for_step("writer", config)
+
+        workspace.set_generating(True)
+        workspace.editor.setPlainText("")
+        workspace.trace_panel.set_running("Writer")
+
+        from app.pipeline.pipeline import ScenePipeline
+
+        pipeline = ScenePipeline()
+
+        async def _run():
+            try:
+                async for token, result in pipeline.generate_stream(
+                    self._current_project_dir, scene_id, provider
+                ):
+                    if token is not None:
+                        workspace.editor.append(token)
+                    if result is not None:
+                        workspace.trace_panel.set_completed(
+                            "Writer",
+                            result.total_duration_ms,
+                            result.total_tokens,
+                        )
+                        workspace.set_generating(False)
+                        workspace._status_label.setText("\u5df2\u751f\u6210")
+                        self._save_generated_scene(result)
+                        return
+            except Exception as e:
+                workspace.trace_panel.set_failed("Writer", str(e))
+                workspace.set_generating(False)
+                workspace._status_label.setText("\u751f\u6210\u5931\u8d25")
+
+        asyncio.ensure_future(_run())
+
+    def _save_generated_scene(self, result) -> None:
+        """Save generated prose and generation record to disk."""
+        if self._current_project_dir is None:
+            return
+
+        chapter_id = self._find_chapter_for_scene(result.scene_id)
+        if not chapter_id:
+            return
+
+        from app.storage.project_files import save_scene_prose, save_scene_generation_record
+        from app.storage.models import SceneGenerationRecord
+
+        save_scene_prose(self._current_project_dir, chapter_id, result.scene_id, result.prose)
+
+        record = SceneGenerationRecord(
+            scene_id=result.scene_id,
+            generation_mode="standard",
+            draft_text=result.prose,
+            final_text=result.prose,
+        )
+        save_scene_generation_record(self._current_project_dir, record)
+
+    def _find_chapter_for_scene(self, scene_id: str) -> str | None:
+        """Find the chapter ID containing a scene by scanning all volumes."""
+        from app.storage.project_files import load_all_volumes
+
+        volumes = load_all_volumes(self._current_project_dir)
+        for vol in volumes:
+            for ch in vol.chapters:
+                for sc in ch.scenes:
+                    if sc.id == scene_id:
+                        return ch.id
+        return None
 
     def _set_nav_items_enabled(self, enabled: bool) -> None:
         """Enable or disable all non-dashboard sidebar items."""
@@ -259,3 +355,5 @@ class MainWindow(QMainWindow):
                     flags &= ~Qt.ItemFlag.ItemIsEnabled
                     flags &= ~Qt.ItemFlag.ItemIsSelectable
                 item.setFlags(flags)
+            outline.scene_selected.connect(self._on_scene_selected)
+
