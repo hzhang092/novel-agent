@@ -355,5 +355,4 @@ class MainWindow(QMainWindow):
                     flags &= ~Qt.ItemFlag.ItemIsEnabled
                     flags &= ~Qt.ItemFlag.ItemIsSelectable
                 item.setFlags(flags)
-            outline.scene_selected.connect(self._on_scene_selected)
 
