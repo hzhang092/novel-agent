@@ -37,6 +37,7 @@ class OutlineEditorView(QWidget):
     """
 
     saved = pyqtSignal()
+    scene_selected = pyqtSignal(str)  # emits scene_id when user clicks a scene node
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -408,6 +409,7 @@ class OutlineEditorView(QWidget):
                     for sc in ch.scenes:
                         if sc.id == self._selected_node_id:
                             self._populate_scene_form(sc)
+                            self.scene_selected.emit(sc.id)
                             break
             self._detail_stack.setCurrentWidget(self._scene_form)
 
