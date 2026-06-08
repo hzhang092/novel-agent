@@ -186,6 +186,19 @@ class RetrievalEngine:
                     filtered.append(fact)
                     continue
 
+                # Also match substrings: a tag "落云宗" should match a keyword "落云宗广场"
+                matched = False
+                for tag in fact_tags_lower:
+                    for kw in scene_kw_lower:
+                        if tag in kw or kw in tag:
+                            filtered.append(fact)
+                            matched = True
+                            break
+                    if matched:
+                        break
+                if matched:
+                    continue
+
             # Include facts with keyword match against description
             fact_text = fact.description.lower()
             for kw in scene_keywords:
