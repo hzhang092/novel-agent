@@ -3,6 +3,7 @@ creates the standard project directory layout."""
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
@@ -465,3 +466,73 @@ def load_scene_summaries(project_dir: Path) -> list:
         raise ValueError(f"Invalid scene summary data in {filepath}: {e}") from e
 
     return summaries
+
+
+# ── Scene Prose I/O ───────────────────────────────────────────────────────
+
+
+def save_scene_prose(project_dir: Path, chapter_id: str, scene_id: str, prose: str) -> None:
+    """Write scene prose to scenes/<chapter>/<scene_id>.md.
+    Creates the chapter directory if it doesn't exist.
+    """
+    chapter_dir = project_dir / "scenes" / chapter_id
+    chapter_dir.mkdir(parents=True, exist_ok=True)
+    filepath = chapter_dir / f"{scene_id}.md"
+    with open(filepath, "w", encoding="utf-8") as fh:
+        fh.write(prose)
+
+
+def load_scene_prose(project_dir: Path, chapter_id: str, scene_id: str) -> str:
+    """Load scene prose from scenes/<chapter>/<scene_id>.md.
+    Returns empty string if the file does not exist.
+    """
+    filepath = project_dir / "scenes" / chapter_id / f"{scene_id}.md"
+    if not filepath.exists():
+        return ""
+    with open(filepath, "r", encoding="utf-8") as fh:
+        return fh.read()
+
+
+# ── Scene Generation Record I/O ────────────────────────────────────────────
+
+
+def save_scene_generation_record(project_dir: Path, record) -> None:
+    """Write a SceneGenerationRecord as scenes/<chapter>/<scene_id>.gen.json."""
+    chapter_id = _find_chapter_for_scene(project_dir, record.scene_id) or "unknown"
+    chapter_dir = project_dir / "scenes" / chapter_id
+    chapter_dir.mkdir(parents=True, exist_ok=True)
+    filepath = chapter_dir / f"{record.scene_id}.gen.json"
+    with open(filepath, "w", encoding="utf-8") as fh:
+        json.dump(record.model_dump(mode="json"), fh, ensure_ascii=False, indent=2, default=str)
+
+
+def load_scene_generation_record(project_dir: Path, scene_id: str):
+    """Load a SceneGenerationRecord from scenes/*/<scene_id>.gen.json.
+    Returns None if the file does not exist.
+    """
+    from app.storage.models import SceneGenerationRecord
+
+    scenes_dir = project_dir / "scenes"
+    if not scenes_dir.exists():
+        return None
+
+    for chapter_dir in scenes_dir.iterdir():
+        if not chapter_dir.is_dir():
+            continue
+        filepath = chapter_dir / f"{scene_id}.gen.json"
+        if filepath.exists():
+            with open(filepath, "r", encoding="utf-8") as fh:
+                raw = json.load(fh)
+            return SceneGenerationRecord.model_validate(raw)
+    return None
+
+
+def _find_chapter_for_scene(project_dir: Path, scene_id: str) -> str | None:
+    """Find the chapter ID that contains the given scene, by scanning all volumes."""
+    volumes = load_all_volumes(project_dir)
+    for vol in volumes:
+        for ch in vol.chapters:
+            for sc in ch.scenes:
+                if sc.id == scene_id:
+                    return ch.id
+    return None
