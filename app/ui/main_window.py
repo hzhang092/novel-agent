@@ -123,6 +123,12 @@ class MainWindow(QMainWindow):
             if isinstance(outline, OutlineEditorView) and outline._project_dir is not None:
                 outline._on_save()
 
+        # Load workspace when navigating to it
+        if index == 3:  # Workspace tab index
+            workspace = self.views["workspace"]
+            if isinstance(workspace, SceneWorkspaceView) and self._current_project_dir is not None:
+                workspace.load_project_dir(self._current_project_dir)
+
         self._previous_tab_index = index
 
         item = self.sidebar.item(index)
@@ -172,6 +178,11 @@ class MainWindow(QMainWindow):
         outline = self.views["outline"]
         if isinstance(outline, OutlineEditorView):
             outline.load_project_dir(proj_dir)
+            try:
+                outline.scene_selected.disconnect()
+            except TypeError:
+                pass
+            outline.scene_selected.connect(self._refresh_context_preview)
 
         QMessageBox.information(
             self, "创建成功", f"项目「{project.title}」已创建\n{proj_dir}"
@@ -206,11 +217,34 @@ class MainWindow(QMainWindow):
         outline = self.views["outline"]
         if isinstance(outline, OutlineEditorView):
             outline.load_project_dir(Path(dir_path))
+            try:
+                outline.scene_selected.disconnect()
+            except TypeError:
+                pass
+            outline.scene_selected.connect(self._refresh_context_preview)
 
     def _on_llm_settings(self) -> None:
         """Open the LLM provider settings dialog."""
         dialog = SettingsDialog(self)
         dialog.exec()
+
+    def _refresh_context_preview(self, scene_id: str) -> None:
+        """Assemble and display context for the selected scene."""
+        if self._current_project_dir is None:
+            return
+
+        workspace = self.views.get("workspace")
+        if not isinstance(workspace, SceneWorkspaceView):
+            return
+
+        try:
+            from app.pipeline.context_builder import RetrievalEngine
+
+            engine = RetrievalEngine()
+            context = engine.assemble(self._current_project_dir, scene_id=scene_id)
+            workspace.show_context(context)
+        except Exception:
+            workspace.clear_context()
 
     def _set_nav_items_enabled(self, enabled: bool) -> None:
         """Enable or disable all non-dashboard sidebar items."""
