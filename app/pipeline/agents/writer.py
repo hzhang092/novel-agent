@@ -46,8 +46,10 @@ def _build_messages(context: dict) -> list[dict[str, str]]:
     """Build the messages list: system prompt + assembled context."""
     system = (
         "你是一位专业的网文作家，精通中文网络小说的写作。"
-        "你需要根据提供的场景大纲、世界观设定、角色信息和风格指南，写出场景的完整小说正文。"
-        "严格遵循大纲中的情节节拍和断章要求。使用第三人称叙述，保持文风一致。"
+        "你需要根据提供的场景规划、角色意图、世界观设定和风格指南，写出场景的完整小说正文。"
+        "严格遵循场景规划中的情节节拍和断章要求。"
+        "角色的言行必须符合其角色意图（情绪、目标、禁止行为）。"
+        "使用第三人称叙述，保持文风一致。"
         "直接输出小说正文，不要添加任何解释、标记或JSON包装。"
     )
     return [
@@ -85,6 +87,26 @@ def _build_writer_prompt(context: dict) -> str:
         constraints = scene.get("constraints", [])
         if constraints:
             lines.append(f"- 约束条件：{'；'.join(constraints)}")
+        lines.append("")
+
+    # ── Scene Plan (from Planner) ──
+    plan = context.get("scene_plan", {})
+    if plan:
+        lines.append("【场景规划（Planner 输出）】")
+        if plan.get("scene_goal"):
+            lines.append(f"- 叙事目标：{plan['scene_goal']}")
+        if plan.get("conflict"):
+            lines.append(f"- 核心冲突：{plan['conflict']}")
+        beats = plan.get("required_beats", [])
+        if beats:
+            lines.append(f"- 剧情节拍：{' → '.join(beats)}")
+        if plan.get("emotional_arc"):
+            lines.append(f"- 情绪曲线：{plan['emotional_arc']}")
+        if plan.get("ending_hook"):
+            lines.append(f"- 断章钩子：{plan['ending_hook']}")
+        constraints = plan.get("continuity_constraints", [])
+        if constraints:
+            lines.append(f"- 连续性约束：{'；'.join(constraints)}")
         lines.append("")
 
     # ── World Rules ──
@@ -137,6 +159,27 @@ def _build_writer_prompt(context: dict) -> str:
             for bc in background:
                 lines.append(f"  • {bc.get('name', '')}（背景角色）")
             lines.append("")
+
+    # ── Character Intents (from Character Intent agents) ──
+    intents = context.get("character_intents", {})
+    if intents:
+        lines.append("【角色意图（各角色的私下目标和对话意图）】")
+        for name, intent in intents.items():
+            if isinstance(intent, dict):
+                lines.append(f"\n★ {name}")
+                lines.append(f"  当前情绪：{intent.get('current_emotion', '')}")
+                lines.append(f"  真实目标：{intent.get('private_goal', '')}")
+                lines.append(f"  表面目标：{intent.get('public_goal', '')}")
+                actions = intent.get('likely_actions', [])
+                if actions:
+                    lines.append(f"  可能行动：{'；'.join(actions)}")
+                forbidden = intent.get('forbidden_actions', [])
+                if forbidden:
+                    lines.append(f"  禁止行为：{'；'.join(forbidden)}")
+                speech = intent.get('speech_style_notes', '')
+                if speech:
+                    lines.append(f"  对白风格：{speech}")
+        lines.append("")
 
     # ── Outline Context ──
     outline = context.get("outline_context", {})
@@ -200,7 +243,7 @@ def _build_writer_prompt(context: dict) -> str:
     lines.append("【写作指令】")
     lines.append("请根据以上所有信息，写出该场景的完整小说正文。")
     lines.append("要求：")
-    lines.append("1. 严格遵循场景大纲中的情节节拍顺序")
+    lines.append("1. 严格遵循场景规划中的情节节拍顺序")
     lines.append("2. 结尾必须实现指定的断章钩子")
     lines.append("3. 角色的言行必须符合其性格、情绪和目标")
     lines.append("4. 不得违反世界观设定和约束条件")
