@@ -81,6 +81,7 @@ class AgentTracePanel(QWidget):
         """Remove all trace entries."""
         self._tree.clear()
         self._tree.setVisible(False)
+        self._empty_label.setVisible(True)
         self._token_label.setText("Tokens: —")
 
     def update_trace(self, trace: list) -> None:
@@ -91,6 +92,7 @@ class AgentTracePanel(QWidget):
         """
         self._tree.clear()
         self._tree.setVisible(True)
+        self._empty_label.setVisible(False)
 
         total_tokens = 0
         for entry in trace:
@@ -103,6 +105,7 @@ class AgentTracePanel(QWidget):
         """Show a waiting state with a message."""
         self._tree.clear()
         self._tree.setVisible(False)
+        self._empty_label.setVisible(True)
         self._token_label.setText(message)
 
     def _add_tree_node(
@@ -132,7 +135,8 @@ class AgentTracePanel(QWidget):
             parts.append(tok_str)
         label = "  ".join(parts)
 
-        item = QTreeWidgetItem(parent)
+        actual_parent = self._tree if parent is None else parent
+        item = QTreeWidgetItem(actual_parent)
         item.setText(0, label)
         item.setData(0, Qt.ItemDataRole.UserRole, entry.agent_name)
         item.setExpanded(True)
