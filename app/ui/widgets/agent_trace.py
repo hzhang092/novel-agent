@@ -1,28 +1,42 @@
-"""AgentTracePanel — shows pipeline agent status, duration, and token counts."""
+"""AgentTracePanel — tree view showing live pipeline agent execution trace.
+
+Displays Planner → Character Intents (expandable children) → Writer → Reviewer
+as a collapsible tree. Each node shows status icon, name, duration, token count.
+"""
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 
-class AgentTracePanel(QWidget):
-    """Collapsible panel showing live agent execution trace.
+# Status icons
+ICONS = {
+    "pending": ("○", "#888"),
+    "running": ("⏳", "#f39c12"),
+    "completed": ("✓", "#27ae60"),
+    "failed": ("✗", "#e74c3c"),
+}
 
-    Each agent step is displayed as a row with status icon, name,
-    duration, and token count. In v1 (Issue #7) only the Writer
-    agent is shown.
+
+class AgentTracePanel(QWidget):
+    """Collapsible tree panel showing live agent execution trace.
+
+    Emits ``retry_requested`` when a user clicks the retry button on a failed agent.
     """
+
+    retry_requested = pyqtSignal(str)  # emits agent_name
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._entries: list[dict] = []
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -30,13 +44,15 @@ class AgentTracePanel(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
 
-        # Header
+        # Header with token breakdown
+        header_layout = QHBoxLayout()
         header = QLabel("<b>Agent Trace</b>")
-        layout.addWidget(header)
-
+        header_layout.addWidget(header)
+        header_layout.addStretch()
         self._token_label = QLabel("Tokens: —")
         self._token_label.setStyleSheet("color: #888; font-size: 11px;")
-        layout.addWidget(self._token_label)
+        header_layout.addWidget(self._token_label)
+        layout.addLayout(header_layout)
 
         # Separator
         sep = QFrame()
@@ -44,88 +60,89 @@ class AgentTracePanel(QWidget):
         sep.setFrameShadow(QFrame.Shadow.Sunken)
         layout.addWidget(sep)
 
-        # Entries container
-        self._entries_layout = QVBoxLayout()
-        layout.addLayout(self._entries_layout)
-        layout.addStretch()
+        # Tree widget
+        self._tree = QTreeWidget()
+        self._tree.setHeaderHidden(True)
+        self._tree.setIndentation(20)
+        self._tree.setAnimated(True)
+        self._tree.setStyleSheet(
+            "QTreeWidget { border: none; background: transparent; }"
+            "QTreeWidget::item { padding: 2px 0; }"
+        )
+        layout.addWidget(self._tree)
 
+        self._tree.setVisible(False)
         self._empty_label = QLabel("等待生成...")
         self._empty_label.setStyleSheet("color: #666; font-size: 12px;")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._entries_layout.addWidget(self._empty_label)
+        layout.addWidget(self._empty_label)
 
     def clear(self) -> None:
         """Remove all trace entries."""
-        while self._entries_layout.count():
-            item = self._entries_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        self._entries_layout.addWidget(self._empty_label)
-        self._token_label.setText("Tokens: —")
-        self._entries.clear()
-
-    def set_running(self, agent_name: str = "Writer") -> None:
-        """Show an agent as running."""
-        self.clear()
-        self._add_entry(agent_name, "running")
+        self._tree.clear()
+        self._tree.setVisible(False)
         self._token_label.setText("Tokens: —")
 
-    def set_completed(self, agent_name: str, duration_ms: int, token_count: int) -> None:
-        """Show the agent as completed with stats."""
-        self.clear()
-        self._add_entry(agent_name, "completed", duration_ms, token_count)
-        self._token_label.setText(f"Tokens: {token_count}")
+    def update_trace(self, trace: list) -> None:
+        """Rebuild the tree from the current trace list.
 
-    def set_failed(self, agent_name: str, error: str = "Generation failed") -> None:
-        """Show the agent as failed with error message."""
-        self.clear()
-        self._add_entry(agent_name, "failed")
-        err_label = QLabel(f"错误: {error}")
-        err_label.setStyleSheet("color: #e74c3c; font-size: 11px;")
-        err_label.setWordWrap(True)
-        self._entries_layout.addWidget(err_label)
-        self._token_label.setText("Tokens: —")
+        Args:
+            trace: List of AgentTraceEntry dataclass instances.
+        """
+        self._tree.clear()
+        self._tree.setVisible(True)
 
-    def _add_entry(
-        self,
-        agent_name: str,
-        status: str,
-        duration_ms: int = 0,
-        token_count: int = 0,
-    ) -> None:
-        row = QWidget()
-        row_layout = QHBoxLayout(row)
-        row_layout.setContentsMargins(4, 2, 4, 2)
+        total_tokens = 0
+        for entry in trace:
+            total_tokens += self._add_tree_node(None, entry)
 
-        # Status icon
-        icon_map = {
-            "running": ("⏳", "#f39c12"),
-            "completed": ("✓", "#27ae60"),
-            "failed": ("✗", "#e74c3c"),
-        }
-        icon, color = icon_map.get(status, ("?", "#888"))
-        icon_label = QLabel(icon)
-        icon_label.setStyleSheet(f"color: {color}; font-size: 14px;")
-        row_layout.addWidget(icon_label)
+        self._token_label.setText(f"Tokens: {total_tokens if total_tokens else '—'}")
+        self._tree.expandAll()
 
-        # Agent name
-        name_label = QLabel(agent_name)
-        name_label.setStyleSheet("font-weight: bold; color: #ddd;")
-        row_layout.addWidget(name_label)
+    def set_waiting(self, message: str) -> None:
+        """Show a waiting state with a message."""
+        self._tree.clear()
+        self._tree.setVisible(False)
+        self._token_label.setText(message)
 
-        row_layout.addStretch()
+    def _add_tree_node(
+        self, parent: QTreeWidgetItem | None, entry
+    ) -> int:
+        """Add a trace entry as a tree node. Returns token count."""
+        icon, _color = ICONS.get(entry.status, ("?", "#888"))
+        display_name = entry.agent_name
 
         # Duration
-        if duration_ms > 0:
-            dur_text = f"{duration_ms}ms" if duration_ms < 1000 else f"{duration_ms/1000:.1f}s"
-            dur_label = QLabel(dur_text)
-            dur_label.setStyleSheet("color: #888; font-size: 11px;")
-            row_layout.addWidget(dur_label)
+        dur_str = ""
+        if entry.duration_ms > 0:
+            dur_str = (
+                f"{entry.duration_ms}ms"
+                if entry.duration_ms < 1000
+                else f"{entry.duration_ms / 1000:.1f}s"
+            )
 
         # Token count
-        if token_count > 0:
-            tok_label = QLabel(f"{token_count} tokens")
-            tok_label.setStyleSheet("color: #888; font-size: 11px;")
-            row_layout.addWidget(tok_label)
+        tok_str = f"{entry.token_count} tk" if entry.token_count > 0 else ""
 
-        self._entries_layout.insertWidget(self._entries_layout.count() - 1, row)
+        # Build display text
+        parts = [f"{icon} {display_name}"]
+        if dur_str:
+            parts.append(dur_str)
+        if tok_str:
+            parts.append(tok_str)
+        label = "  ".join(parts)
+
+        item = QTreeWidgetItem(parent)
+        item.setText(0, label)
+        item.setData(0, Qt.ItemDataRole.UserRole, entry.agent_name)
+        item.setExpanded(True)
+
+        # Tooltip for failed agents
+        if entry.status == "failed":
+            item.setToolTip(0, entry.error_message or "Unknown error")
+
+        tokens = entry.token_count
+        for child in entry.children:
+            tokens += self._add_tree_node(item, child)
+
+        return tokens
