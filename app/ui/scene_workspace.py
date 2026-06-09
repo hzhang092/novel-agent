@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -17,6 +16,7 @@ from PyQt6.QtWidgets import (
 
 from app.ui.context_preview import ContextPreviewView
 from app.ui.widgets.agent_trace import AgentTracePanel
+from app.ui.widgets.planner_checkpoint import PlannerCheckpointWidget
 from app.ui.widgets.prose_editor import ProseEditorWidget
 
 
@@ -56,12 +56,25 @@ class SceneWorkspaceView(QWidget):
         self._generate_btn.clicked.connect(self._on_generate_clicked)
         toolbar.addWidget(self._generate_btn)
 
+        self._regenerate_btn = QPushButton("重新生成")
+        self._regenerate_btn.setEnabled(False)
+        self._regenerate_btn.setStyleSheet(
+            "QPushButton { padding: 6px 16px; }"
+        )
+        self._regenerate_btn.clicked.connect(self._on_regenerate_clicked)
+        toolbar.addWidget(self._regenerate_btn)
+
         self._status_label = QLabel("")
         self._status_label.setStyleSheet("color: #888; font-size: 12px;")
         toolbar.addWidget(self._status_label)
 
         toolbar.addStretch()
         layout.addLayout(toolbar)
+
+        # Planner Checkpoint (shown during plan approval)
+        self.planner_checkpoint = PlannerCheckpointWidget()
+        self.planner_checkpoint.hide()
+        layout.addWidget(self.planner_checkpoint)
 
         # ── Three-pane splitter ──
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -99,6 +112,17 @@ class SceneWorkspaceView(QWidget):
         splitter.setSizes([280, 500, 200])
         layout.addWidget(splitter)
 
+        # ── Review result bar (shown after review completes) ──
+        self._review_bar = QWidget()
+        review_layout = QHBoxLayout(self._review_bar)
+        review_layout.setContentsMargins(8, 4, 8, 4)
+        self._review_label = QLabel("")
+        self._review_label.setStyleSheet("font-size: 12px;")
+        review_layout.addWidget(self._review_label)
+        review_layout.addStretch()
+        self._review_bar.hide()
+        layout.addWidget(self._review_bar)
+
     # ── Public API ────────────────────────────────────────────────────────
 
     def load_project_dir(self, project_dir: Path) -> None:
@@ -110,6 +134,7 @@ class SceneWorkspaceView(QWidget):
         self._current_scene_id = scene_id
         self._current_chapter_id = chapter_id
         self._generate_btn.setEnabled(True)
+        self._regenerate_btn.setEnabled(True)
         self._status_label.setText("就绪")
 
     def clear_scene(self) -> None:
@@ -117,6 +142,7 @@ class SceneWorkspaceView(QWidget):
         self._current_scene_id = None
         self._current_chapter_id = None
         self._generate_btn.setEnabled(False)
+        self._regenerate_btn.setEnabled(False)
 
     def show_context(self, context: dict) -> None:
         """Display assembled context in the preview panel."""
@@ -130,14 +156,34 @@ class SceneWorkspaceView(QWidget):
         """Set the UI into generating/idle state."""
         self._generating = generating
         self._generate_btn.setEnabled(not generating and self._current_scene_id is not None)
+        self._regenerate_btn.setEnabled(not generating and self._current_scene_id is not None)
         if generating:
             self._status_label.setText("生成中...")
         else:
             self._status_label.setText("就绪")
 
+    def show_review_result(self, passed: bool, summary: str) -> None:
+        """Show the review result bar."""
+        if passed:
+            self._review_label.setText(f"✅ 审查通过 — {summary}")
+            self._review_label.setStyleSheet("color: #27ae60; font-size: 12px;")
+        else:
+            self._review_label.setText(f"⚠️ 审查发现问题 — {summary}")
+            self._review_label.setStyleSheet("color: #f39c12; font-size: 12px;")
+        self._review_bar.show()
+
+    def hide_review_result(self) -> None:
+        """Hide the review result bar."""
+        self._review_bar.hide()
+
     # ── Actions ────────────────────────────────────────────────────────────
 
     def _on_generate_clicked(self) -> None:
+        if self._current_scene_id and not self._generating:
+            self.generate_requested.emit(self._current_scene_id)
+
+    def _on_regenerate_clicked(self) -> None:
+        """Trigger regeneration — same as generate but re-runs full pipeline."""
         if self._current_scene_id and not self._generating:
             self.generate_requested.emit(self._current_scene_id)
 
