@@ -113,19 +113,19 @@ class MainWindow(QMainWindow):
 
     def _on_nav_changed(self, index: int) -> None:
         # Auto-save Bible editor when navigating away from it
-        if self._previous_tab_index == 1:  # Bible tab index
+        if self._previous_tab_index == 1:
             bible = self.views["bible"]
             if isinstance(bible, BibleEditorView) and bible._project_dir is not None:
                 bible._on_save()
 
         # Auto-save Outline editor when navigating away from it
-        if self._previous_tab_index == 2:  # Outline tab index
+        if self._previous_tab_index == 2:
             outline = self.views["outline"]
             if isinstance(outline, OutlineEditorView) and outline._project_dir is not None:
                 outline._on_save()
 
         # Load workspace when navigating to it
-        if index == 3:  # Workspace tab index
+        if index == 3:
             workspace = self.views["workspace"]
             if isinstance(workspace, SceneWorkspaceView) and self._current_project_dir is not None:
                 workspace.load_project_dir(self._current_project_dir)
@@ -140,7 +140,6 @@ class MainWindow(QMainWindow):
         item = self.sidebar.item(index)
         if item is None:
             return
-        # Block navigation to disabled items
         if not (item.flags() & Qt.ItemFlag.ItemIsEnabled):
             self.sidebar.setCurrentRow(0)
             return
@@ -243,7 +242,7 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def _on_scene_selected(self, scene_id: str) -> None:
-        """Handle scene selection: assemble context, find chapter, update workspace."""
+        """Handle scene selection: assemble context, find chapter, load prose, update workspace."""
         if self._current_project_dir is None:
             return
 
@@ -262,8 +261,15 @@ class MainWindow(QMainWindow):
         except Exception:
             workspace.clear_context()
 
+        # Load existing prose if available
+        if chapter_id:
+            from app.storage.project_files import load_scene_prose
+            prose = load_scene_prose(self._current_project_dir, chapter_id, scene_id)
+            if prose:
+                workspace.editor.setPlainText(prose)
+
     def _on_generate_requested(self, scene_id: str) -> None:
-        """Trigger scene generation for the given scene."""
+        """Trigger full pipeline generation for the given scene."""
         if self._current_project_dir is None:
             return
 
@@ -274,42 +280,92 @@ class MainWindow(QMainWindow):
         from app.providers.config import get_provider_for_step, load_provider_config
 
         config = load_provider_config()
-        provider = get_provider_for_step("writer", config)
+        planner_provider = get_provider_for_step("planner", config)
+        char_provider = get_provider_for_step("characters", config)
+        writer_provider = get_provider_for_step("writer", config)
+        reviewer_provider = get_provider_for_step("reviewer", config)
 
         workspace.set_generating(True)
         workspace.editor.setPlainText("")
-        workspace.trace_panel.set_running("Writer")
+        workspace.trace_panel.clear()
+        workspace.trace_panel.set_waiting("正在组装上下文...")
+        workspace.hide_review_result()
 
         from app.pipeline.pipeline import ScenePipeline
 
         pipeline = ScenePipeline()
 
+        import asyncio
+
+        plan_loop = asyncio.get_event_loop()
+        plan_decision: asyncio.Future[bool] | None = None
+
+        def _on_plan_approved():
+            if plan_decision is not None and not plan_decision.done():
+                plan_decision.set_result(True)
+                workspace.planner_checkpoint.hide_plan()
+
+        def _on_plan_rejected():
+            if plan_decision is not None and not plan_decision.done():
+                plan_decision.set_result(False)
+                workspace.planner_checkpoint.hide_plan()
+                workspace.set_generating(False)
+                workspace.trace_panel.clear()
+
+        workspace.planner_checkpoint.approved.connect(_on_plan_approved)
+        workspace.planner_checkpoint.rejected.connect(_on_plan_rejected)
+
+        async def on_plan_ready(plan) -> bool:
+            nonlocal plan_decision
+            plan_decision = plan_loop.create_future()
+            workspace.planner_checkpoint.show_plan(plan.model_dump(mode="json"))
+            try:
+                result = await plan_decision
+                return result
+            finally:
+                plan_decision = None
+
+        def on_trace(trace):
+            workspace.trace_panel.update_trace(trace)
+
         async def _run():
             try:
                 async for token, result in pipeline.generate_stream(
-                    self._current_project_dir, scene_id, provider
+                    self._current_project_dir,
+                    scene_id,
+                    planner_provider,
+                    char_provider,
+                    writer_provider,
+                    reviewer_provider,
+                    on_trace=on_trace,
+                    on_plan_ready=on_plan_ready,
                 ):
                     if token is not None:
                         workspace.editor.append(token)
                     if result is not None:
-                        workspace.trace_panel.set_completed(
-                            "Writer",
-                            result.total_duration_ms,
-                            result.total_tokens,
-                        )
                         workspace.set_generating(False)
-                        workspace._status_label.setText("\u5df2\u751f\u6210")
-                        self._save_generated_scene(result)
+                        if result.prose:
+                            workspace._status_label.setText("已生成")
+                            if result.review is not None:
+                                workspace.show_review_result(
+                                    result.review.overall_pass,
+                                    result.review.summary,
+                                )
+                            self._save_generated_scene(result)
+                        elif result.plan is not None:
+                            pass
+                        else:
+                            workspace._status_label.setText("生成失败")
                         return
             except Exception as e:
-                workspace.trace_panel.set_failed("Writer", str(e))
+                workspace.trace_panel.clear()
                 workspace.set_generating(False)
-                workspace._status_label.setText("\u751f\u6210\u5931\u8d25")
+                workspace._status_label.setText("生成失败")
 
         asyncio.ensure_future(_run())
 
     def _save_generated_scene(self, result) -> None:
-        """Save generated prose and generation record to disk."""
+        """Save generated prose, plan, intents, review, and generation record to disk."""
         if self._current_project_dir is None:
             return
 
@@ -317,15 +373,28 @@ class MainWindow(QMainWindow):
         if not chapter_id:
             return
 
-        from app.storage.project_files import save_scene_prose, save_scene_generation_record
+        from app.storage.project_files import save_scene_generation_record
         from app.storage.models import SceneGenerationRecord
 
-        save_scene_prose(self._current_project_dir, chapter_id, result.scene_id, result.prose)
+        version = _get_next_version(self._current_project_dir, chapter_id, result.scene_id)
+        _save_versioned_prose(
+            self._current_project_dir, chapter_id, result.scene_id, result.prose, version
+        )
+
+        plan_dict = result.plan.model_dump(mode="json") if result.plan else {}
+        intents_dict = {
+            k: v.model_dump(mode="json")
+            for k, v in result.character_intents.items()
+        }
+        review_dict = result.review.model_dump(mode="json") if result.review else None
 
         record = SceneGenerationRecord(
             scene_id=result.scene_id,
             generation_mode="standard",
+            scene_plan=plan_dict,
+            character_intents=intents_dict,
             draft_text=result.prose,
+            review=review_dict,
             final_text=result.prose,
         )
         save_scene_generation_record(self._current_project_dir, record)
@@ -356,3 +425,33 @@ class MainWindow(QMainWindow):
                     flags &= ~Qt.ItemFlag.ItemIsSelectable
                 item.setFlags(flags)
 
+
+def _get_next_version(project_dir: Path, chapter_id: str, scene_id: str) -> int:
+    """Determine the next version number for a scene by scanning existing files."""
+    chapter_dir = project_dir / "scenes" / chapter_id
+    if not chapter_dir.exists():
+        return 1
+    existing = list(chapter_dir.glob(f"{scene_id}.v*.md"))
+    if not existing:
+        return 1
+    versions = []
+    for f in existing:
+        stem = f.stem
+        parts = stem.rsplit(".v", 1)
+        if len(parts) == 2:
+            try:
+                versions.append(int(parts[1]))
+            except ValueError:
+                continue
+    return max(versions, default=0) + 1
+
+
+def _save_versioned_prose(
+    project_dir: Path, chapter_id: str, scene_id: str, prose: str, version: int
+) -> None:
+    """Write scene prose to scenes/<chapter>/<scene_id>.v{version}.md."""
+    chapter_dir = project_dir / "scenes" / chapter_id
+    chapter_dir.mkdir(parents=True, exist_ok=True)
+    filepath = chapter_dir / f"{scene_id}.v{version}.md"
+    with open(filepath, "w", encoding="utf-8") as fh:
+        fh.write(prose)
