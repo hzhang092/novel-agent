@@ -38,7 +38,7 @@ class RetrievalEngine:
             "scene_info": self._build_scene_info(scene),
             "world_rules": self._collect_world_rules(project_dir, scene),
             "characters": self._collect_characters(project_dir, scene),
-            "outline_context": self._build_outline_context(project_dir, scene_id),
+            "outline_context": self._build_outline_context(project_dir, scene),
             "recent_summaries": self._collect_recent_summaries(project_dir),
             "canon_facts": self._collect_canon_facts(project_dir, scene),
             "style_guide": self._collect_style_guide(project_dir),
@@ -131,8 +131,7 @@ class RetrievalEngine:
 
         return {"major": major, "supporting": supporting, "background": background}
 
-    def _build_outline_context(self, project_dir: Path, scene_id: str) -> dict:
-        scene = self._find_scene(project_dir, scene_id)
+    def _build_outline_context(self, project_dir: Path, scene: dict | None) -> dict:
         if not scene or not scene.get("volume_id"):
             return {}
 

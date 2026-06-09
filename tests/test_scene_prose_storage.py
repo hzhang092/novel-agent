@@ -37,6 +37,14 @@ def test_save_and_load_scene_generation_record(tmp_path):
     project = Project(title="测试", genre="玄幻")
     proj_dir = create_project(tmp_path, project)
 
+    # Create a minimal outline so the scene can be resolved to a chapter
+    from app.storage.models import VolumeOutline, ChapterOutline, SceneOutline
+    from app.storage.project_files import save_volume_outline
+    scene = SceneOutline(id="scene-1", title="测试场景")
+    chapter = ChapterOutline(id="ch-1", title="第一章", scenes=[scene])
+    volume = VolumeOutline(id="vol-1", title="第一卷", chapters=[chapter])
+    save_volume_outline(proj_dir, volume)
+
     record = SceneGenerationRecord(
         scene_id="scene-1",
         generation_mode="standard",

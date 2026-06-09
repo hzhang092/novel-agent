@@ -15,6 +15,9 @@ class ReviewerAgent:
         result: ReviewResult = await agent.generate(provider, context, plan, intents, prose)
     """
 
+    def __init__(self) -> None:
+        self.last_usage: dict | None = None
+
     async def generate(
         self,
         provider: LLMProvider,
@@ -29,6 +32,7 @@ class ReviewerAgent:
         resp: ProviderResponse = await provider.generate_structured(
             messages, ReviewResult, temperature=0.2
         )
+        self.last_usage = resp.usage
         if resp.model is not None and isinstance(resp.model, ReviewResult):
             result = resp.model
             result.scene_id = scene_id
@@ -105,6 +109,27 @@ def _build_reviewer_prompt(
             if forbidden:
                 lines.append(f"  禁止行为：{'；'.join(forbidden)}")
     lines.append("")
+
+
+    # Per-character knowledge scope for boundary enforcement
+    chars = context.get("characters", {})
+    major_chars = chars.get("major", [])
+    if major_chars:
+        lines.append("【角色知识范围（知识边界检查参考）】")
+        lines.append("以下列出每个角色的已知信息。如果正文中出现某角色知道了他不该知道的信息，即为连续性违规。")
+        for mc in major_chars:
+            core = mc.get("core", {})
+            name = core.get("name", "")
+            state = mc.get("state", {})
+            knowledge = state.get("current_knowledge", [])
+            secrets = state.get("current_secrets", [])
+            if knowledge or secrets:
+                lines.append(f"\n★ {name}")
+                if knowledge:
+                    lines.append(f"  已知信息：{'；'.join(knowledge[:15])}")
+                if secrets:
+                    lines.append(f"  持有秘密（仅该角色知道）：{'；'.join(secrets)}")
+        lines.append("")
 
     # Canon facts for continuity check
     facts = context.get("canon_facts", [])

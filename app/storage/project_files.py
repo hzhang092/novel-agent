@@ -498,7 +498,12 @@ def load_scene_prose(project_dir: Path, chapter_id: str, scene_id: str) -> str:
 
 def save_scene_generation_record(project_dir: Path, record) -> None:
     """Write a SceneGenerationRecord as scenes/<chapter>/<scene_id>.gen.json."""
-    chapter_id = _find_chapter_for_scene(project_dir, record.scene_id) or "unknown"
+    chapter_id = _find_chapter_for_scene(project_dir, record.scene_id)
+    if chapter_id is None:
+        raise ValueError(
+            f"Scene {record.scene_id} was not found in any chapter outline. "
+            "Generation records require a valid chapter. Ensure the scene exists in the outline."
+        )
     chapter_dir = project_dir / "scenes" / chapter_id
     chapter_dir.mkdir(parents=True, exist_ok=True)
     filepath = chapter_dir / f"{record.scene_id}.gen.json"

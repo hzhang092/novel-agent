@@ -312,7 +312,16 @@ class MainWindow(QMainWindow):
                 workspace.set_generating(False)
                 workspace.trace_panel.clear()
 
+        try:
+            workspace.planner_checkpoint.approved.disconnect()
+        except TypeError:
+            pass
         workspace.planner_checkpoint.approved.connect(_on_plan_approved)
+
+        try:
+            workspace.planner_checkpoint.rejected.disconnect()
+        except TypeError:
+            pass
         workspace.planner_checkpoint.rejected.connect(_on_plan_rejected)
 
         async def on_plan_ready(plan) -> bool:

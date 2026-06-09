@@ -21,6 +21,9 @@ class CharacterIntentAgent:
         )
     """
 
+    def __init__(self) -> None:
+        self.last_usage: dict | None = None
+
     async def generate(
         self,
         provider: LLMProvider,
@@ -34,6 +37,7 @@ class CharacterIntentAgent:
         resp: ProviderResponse = await provider.generate_structured(
             messages, CharacterIntent, temperature=0.5
         )
+        self.last_usage = resp.usage
         if resp.model is not None and isinstance(resp.model, CharacterIntent):
             return resp.model
         parsed = resp.parsed or {}

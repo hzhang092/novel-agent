@@ -15,6 +15,9 @@ class ScenePlannerAgent:
         plan: ScenePlan = await agent.generate(provider, context, scene_id)
     """
 
+    def __init__(self) -> None:
+        self.last_usage: dict | None = None
+
     async def generate(
         self,
         provider: LLMProvider,
@@ -26,6 +29,7 @@ class ScenePlannerAgent:
         resp: ProviderResponse = await provider.generate_structured(
             messages, ScenePlan, temperature=0.3
         )
+        self.last_usage = resp.usage
         if resp.model is not None and isinstance(resp.model, ScenePlan):
             plan = resp.model
             plan.scene_id = scene_id

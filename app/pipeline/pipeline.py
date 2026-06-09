@@ -42,6 +42,8 @@ class AgentTraceEntry:
     duration_ms: int = 0
     token_count: int = 0
     error_message: str = ""
+    failed_prompt: str = ""  # prompt sent when the call failed (for debugging)
+    failed_output: str = ""  # partial or raw output when the call failed
     children: list[AgentTraceEntry] = field(default_factory=list)
 
 
@@ -132,11 +134,14 @@ class ScenePipeline:
             plan = await self._planner.generate(planner_provider, context, scene_id)
             planner_trace.status = "completed"
             planner_trace.duration_ms = int((time.monotonic() - t0) * 1000)
+            if self._planner.last_usage:
+                planner_trace.token_count = self._planner.last_usage.get("total_tokens", 0)
             result.plan = plan
             self._emit_trace(on_trace, result.trace)
         except Exception as e:
             planner_trace.status = "failed"
             planner_trace.error_message = str(e)
+            planner_trace.failed_prompt = self._planner.build_prompt(context)
             self._emit_trace(on_trace, result.trace)
             result.total_duration_ms = int((time.monotonic() - pipeline_start) * 1000)
             yield (None, result)
@@ -165,7 +170,7 @@ class ScenePipeline:
             char_trace.status = "running"
             self._emit_trace(on_trace, result.trace)
 
-            async def _run_char_intent(mc: dict) -> tuple[str, CharacterIntent | None, str]:
+            async def _run_char_intent(mc: dict) -> tuple[str, CharacterIntent | None, int, str]:
                 name = mc["core"]["name"]
                 t0_c = time.monotonic()
                 try:
@@ -174,10 +179,11 @@ class ScenePipeline:
                         mc.get("core", {}), mc.get("state", {}),
                     )
                     dur = int((time.monotonic() - t0_c) * 1000)
-                    return (name, intent, f"completed:{dur}")
+                    tokens = self._character_agent.last_usage.get("total_tokens", 0) if self._character_agent.last_usage else 0
+                    return (name, intent, tokens, f"completed:{dur}")
                 except Exception as e:
                     dur = int((time.monotonic() - t0_c) * 1000)
-                    return (name, None, f"failed:{dur}:{e}")
+                    return (name, None, 0, f"failed:{dur}:{e}")
 
             tasks = [asyncio.create_task(_run_char_intent(mc)) for mc in major_chars]
             gathered = await asyncio.gather(*tasks, return_exceptions=True)
@@ -190,7 +196,7 @@ class ScenePipeline:
                     )
                     char_trace.children.append(child)
                     continue
-                name, intent, status_str = item
+                name, intent, tokens, status_str = item
                 parts = status_str.split(":", 2)
                 child_status = parts[0]
                 child_dur = int(parts[1]) if len(parts) > 1 else 0
@@ -198,6 +204,7 @@ class ScenePipeline:
                 child = AgentTraceEntry(
                     agent_name=name, stage="characters",
                     status=child_status, duration_ms=child_dur,
+                    token_count=tokens,
                     error_message=child_err,
                 )
                 char_trace.children.append(child)
@@ -235,10 +242,13 @@ class ScenePipeline:
 
             writer_trace.status = "completed"
             writer_trace.duration_ms = int((time.monotonic() - t_writer) * 1000)
+            writer_trace.token_count = len(tokens_collected)
             result.prose = "".join(tokens_collected)
         except Exception as e:
             writer_trace.status = "failed"
             writer_trace.error_message = str(e)
+            writer_trace.failed_prompt = self._writer.build_prompt(enhanced_context)
+            writer_trace.failed_output = "".join(tokens_collected)
             self._emit_trace(on_trace, result.trace)
             result.total_duration_ms = int((time.monotonic() - pipeline_start) * 1000)
             yield (None, result)
@@ -262,10 +272,17 @@ class ScenePipeline:
             )
             reviewer_trace.status = "completed"
             reviewer_trace.duration_ms = int((time.monotonic() - t_review) * 1000)
+            if self._reviewer.last_usage:
+                reviewer_trace.token_count = self._reviewer.last_usage.get("total_tokens", 0)
             result.review = review
         except Exception as e:
             reviewer_trace.status = "failed"
             reviewer_trace.error_message = str(e)
+            reviewer_trace.failed_prompt = self._reviewer.build_prompt(
+                context, plan_dict,
+                {k: v.model_dump(mode="json") for k, v in result.character_intents.items()},
+                result.prose,
+            )
 
         self._emit_trace(on_trace, result.trace)
 
