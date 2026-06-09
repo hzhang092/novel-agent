@@ -1,6 +1,5 @@
-"""Tests for OllamaProvider with mocked HTTP responses."""
+"""Tests for OllamaProvider with mocked OpenAI SDK responses."""
 
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,11 +12,45 @@ class _TestSchema:
 
     @staticmethod
     def model_json_schema():
-        return {"type": "object", "properties": {"name": {"type": "string"}, "value": {"type": "integer"}}}
+        return {
+            "description": "Test schema",
+            "title": "TestSchema",
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "title": "Name", "default": ""},
+                "value": {"type": "integer", "title": "Value", "default": 0},
+            },
+        }
 
     @staticmethod
     def model_validate(data):
         return data
+
+
+def _make_mock_completion(content: str, prompt_tokens: int = 10, completion_tokens: int = 5):
+    """Build a mock ChatCompletion object shaped like the openai SDK response."""
+    choice = MagicMock()
+    choice.message.content = content
+    mock = MagicMock()
+    mock.choices = [choice]
+    mock.usage.prompt_tokens = prompt_tokens
+    mock.usage.completion_tokens = completion_tokens
+    mock.usage.total_tokens = prompt_tokens + completion_tokens
+    return mock
+
+
+def _make_mock_stream_chunks(chunks: list[str]):
+    """Build an async generator of mock stream chunks."""
+    async def _gen():
+        for text in chunks:
+            chunk = MagicMock()
+            delta = MagicMock()
+            delta.content = text
+            choice = MagicMock()
+            choice.delta = delta
+            chunk.choices = [choice]
+            yield chunk
+    return _gen()
 
 
 @pytest.fixture
@@ -26,114 +59,74 @@ def ollama_provider():
 
 
 class TestOllamaProvider:
-    """OllamaProvider integration points, tested with mocked httpx."""
+    """OllamaProvider tests using mocked openai SDK client."""
 
     @pytest.mark.asyncio
     async def test_generate_text(self, ollama_provider):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {
-            "model": "qwen:14b",
-            "message": {"role": "assistant", "content": "Hello, world!"},
-            "done": True,
-            "prompt_eval_count": 10,
-            "eval_count": 5,
-        }
-        mock_resp.raise_for_status = MagicMock()
+        mock_create = AsyncMock(return_value=_make_mock_completion("Hello, world!"))
 
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_resp
-
-        with patch.object(ollama_provider, "_get_client", return_value=mock_client):
+        with patch.object(ollama_provider._client.chat.completions, "create", mock_create):
             resp = await ollama_provider.generate_text([{"role": "user", "content": "Hi"}])
-            assert resp.text == "Hello, world!"
-            assert resp.usage["prompt_tokens"] == 10
-            assert resp.usage["completion_tokens"] == 5
-            assert resp.usage["total_tokens"] == 15
+
+        assert resp.text == "Hello, world!"
+        assert resp.usage["prompt_tokens"] == 10
+        assert resp.usage["completion_tokens"] == 5
+        assert resp.usage["total_tokens"] == 15
 
     @pytest.mark.asyncio
     async def test_generate_structured(self, ollama_provider):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {
-            "model": "qwen:14b",
-            "message": {"role": "assistant", "content": '{"name": "test", "value": 42}'},
-            "done": True,
-            "prompt_eval_count": 10,
-            "eval_count": 5,
-        }
-        mock_resp.raise_for_status = MagicMock()
+        mock_create = AsyncMock(
+            return_value=_make_mock_completion('{"name": "test", "value": 42}')
+        )
 
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_resp
-
-        with patch.object(ollama_provider, "_get_client", return_value=mock_client):
+        with patch.object(ollama_provider._client.chat.completions, "create", mock_create):
             resp = await ollama_provider.generate_structured(
                 [{"role": "user", "content": "Give me JSON"}],
                 _TestSchema,
             )
-            assert resp.parsed is not None
-            assert resp.parsed["name"] == "test"
-            assert resp.parsed["value"] == 42
+
+        assert resp.parsed is not None
+        assert resp.parsed["name"] == "test"
+        assert resp.parsed["value"] == 42
 
     @pytest.mark.asyncio
     async def test_generate_structured_passes_json_schema_format(self, ollama_provider):
-        """Verify that the Ollama API `format` field receives the JSON schema."""
-        last_payload = {}
+        """Verify that extra_body includes the `format` field with cleaned schema."""
+        captured_kwargs = {}
 
-        async def capture_post(url, json=None, **kwargs):
-            nonlocal last_payload
-            last_payload.update(json)
-            mock_resp = MagicMock()
-            mock_resp.json.return_value = {
-                "model": "qwen:14b",
-                "message": {"role": "assistant", "content": '{"name": "x", "value": 1}'},
-                "done": True,
-                "prompt_eval_count": 0,
-                "eval_count": 0,
-            }
-            mock_resp.raise_for_status = MagicMock()
-            return mock_resp
+        async def _capture(**kwargs):
+            captured_kwargs.update(kwargs)
+            return _make_mock_completion('{"name": "x", "value": 1}')
 
-        mock_client = AsyncMock()
-        mock_client.post = capture_post
+        mock_create = AsyncMock(side_effect=_capture)
 
-        with patch.object(ollama_provider, "_get_client", return_value=mock_client):
+        with patch.object(ollama_provider._client.chat.completions, "create", mock_create):
             await ollama_provider.generate_structured(
                 [{"role": "user", "content": "X"}],
                 _TestSchema,
             )
-            assert "format" in last_payload
-            assert last_payload["format"].get("type") == "object"
+
+        assert "extra_body" in captured_kwargs
+        assert "format" in captured_kwargs["extra_body"]
+        fmt = captured_kwargs["extra_body"]["format"]
+        assert fmt.get("type") == "object"
+        # Pydantic metadata keys (title, default, description) should be stripped
+        assert "title" not in fmt
+        assert "description" not in fmt
+        prop = fmt.get("properties", {}).get("name", {})
+        assert "title" not in prop
 
     @pytest.mark.asyncio
     async def test_generate_stream(self, ollama_provider):
-        async def stream_lines():
-            for line in [
-                json.dumps({"message": {"content": "Hello"}, "done": False}),
-                json.dumps({"message": {"content": ", "}, "done": False}),
-                json.dumps({"message": {"content": "world!"}, "done": False}),
-                json.dumps({"done": True}),
-            ]:
-                yield line
+        mock_create = AsyncMock(
+            return_value=_make_mock_stream_chunks(["Hello", ", ", "world!"])
+        )
 
-        class _MockStreamResponse:
-            async def aiter_lines(self):
-                async for line in stream_lines():
-                    yield line
-
-            def raise_for_status(self):
-                pass
-
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *args):
-                pass
-
-        mock_client = MagicMock()
-        mock_client.stream = MagicMock(return_value=_MockStreamResponse())
-
-        with patch.object(ollama_provider, "_get_client", return_value=mock_client):
+        with patch.object(ollama_provider._client.chat.completions, "create", mock_create):
             tokens = []
-            async for token in ollama_provider.generate_stream([{"role": "user", "content": "Hi"}]):
+            async for token in ollama_provider.generate_stream(
+                [{"role": "user", "content": "Hi"}]
+            ):
                 tokens.append(token)
-            assert tokens == ["Hello", ", ", "world!"]
+
+        assert tokens == ["Hello", ", ", "world!"]
