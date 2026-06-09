@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
@@ -338,6 +339,7 @@ class MainWindow(QMainWindow):
             workspace.trace_panel.update_trace(trace)
 
         async def _run():
+            providers = [planner_provider, char_provider, writer_provider, reviewer_provider]
             try:
                 async for token, result in pipeline.generate_stream(
                     self._current_project_dir,
@@ -366,10 +368,20 @@ class MainWindow(QMainWindow):
                         else:
                             workspace._status_label.setText("生成失败")
                         return
-            except Exception as e:
+            except Exception:
                 workspace.trace_panel.clear()
                 workspace.set_generating(False)
                 workspace._status_label.setText("生成失败")
+            finally:
+                for p in providers:
+                    try:
+                        await p.close()
+                    except Exception:
+                        pass
+                # Force GC while event loop is still running to prevent
+                # httpcore async-generator cleanup warnings on shutdown.
+                gc.collect()
+                await asyncio.sleep(0)
 
         asyncio.ensure_future(_run())
 

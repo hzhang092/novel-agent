@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import sys
 
 import qasync
@@ -25,6 +26,10 @@ def main() -> None:
 
     with loop:
         loop.run_forever()
+
+    # Force GC after the event loop stops but before full interpreter
+    # shutdown, to reduce httpcore async-generator cleanup warnings.
+    gc.collect()
 
 
 if __name__ == "__main__":

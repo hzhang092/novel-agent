@@ -23,6 +23,9 @@ class DeepSeekProvider(LLMProvider):
         self.model = model
         self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
+    async def close(self) -> None:
+        await self._client.close()
+
     async def generate_text(
         self,
         messages: list[dict[str, str]],

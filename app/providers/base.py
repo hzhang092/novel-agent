@@ -21,6 +21,10 @@ class ProviderResponse:
 class LLMProvider(ABC):
     """Unified interface for Ollama, DeepSeek, and mock providers."""
 
+    async def close(self) -> None:
+        """Release provider resources (connections, sessions, etc.)."""
+        pass
+
     @abstractmethod
     async def generate_text(
         self,

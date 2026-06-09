@@ -46,11 +46,17 @@ class OllamaProvider(LLMProvider):
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
+                "num_ctx": 16384,
+                "presence_penalty": 0.0,
             },
         }
         resp = await client.post(f"{self.host}/api/chat", json=payload)
-        resp.raise_for_status()
-        data = resp.json()
+        try:
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception:
+            await resp.aread()  # consume body to prevent httpcore cleanup warnings
+            raise
         text = data["message"]["content"]
         return ProviderResponse(
             text=text,
@@ -68,7 +74,7 @@ class OllamaProvider(LLMProvider):
         temperature: float = 0.3,
     ) -> ProviderResponse:
         client = await self._get_client()
-        json_schema = schema.model_json_schema()
+        json_schema = _clean_schema(schema.model_json_schema())
         payload = {
             "model": self.model,
             "messages": messages,
@@ -77,11 +83,17 @@ class OllamaProvider(LLMProvider):
             "options": {
                 "temperature": temperature,
                 "num_predict": 4096,
+                "num_ctx": 16384,
+                "presence_penalty": 0.0,
             },
         }
         resp = await client.post(f"{self.host}/api/chat", json=payload)
-        resp.raise_for_status()
-        data = resp.json()
+        try:
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception:
+            await resp.aread()  # consume body to prevent httpcore cleanup warnings
+            raise
         text = data["message"]["content"]
         parsed = json.loads(text)
         model = schema.model_validate(parsed)
@@ -110,6 +122,8 @@ class OllamaProvider(LLMProvider):
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
+                "num_ctx": 16384,
+                "presence_penalty": 0.0,
             },
         }
         async with client.stream("POST", f"{self.host}/api/chat", json=payload) as resp:
@@ -126,3 +140,16 @@ class OllamaProvider(LLMProvider):
                 content = chunk.get("message", {}).get("content", "")
                 if content:
                     yield content
+
+
+def _clean_schema(schema: dict) -> dict:
+    """Strip Pydantic-specific keys (title, default, description) for Ollama compat."""
+    if isinstance(schema, dict):
+        return {
+            k: _clean_schema(v)
+            for k, v in schema.items()
+            if k not in ("title", "default", "description")
+        }
+    if isinstance(schema, list):
+        return [_clean_schema(item) for item in schema]
+    return schema
