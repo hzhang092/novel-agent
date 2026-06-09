@@ -227,3 +227,45 @@ class ProviderConfig(BaseModel):
         "reviewer": "ollama",
         "fact_extractor": "ollama",
     })
+
+
+# ── Agent Output Schemas ───────────────────────────────────────────────────
+
+class ScenePlan(BaseModel):
+    """Scene Planner agent output."""
+    scene_id: str = ""
+    scene_goal: str = ""
+    required_beats: list[str] = Field(default_factory=list)
+    conflict: str = ""
+    emotional_arc: str = ""
+    ending_hook: str = ""
+    continuity_constraints: list[str] = Field(default_factory=list)
+
+
+class CharacterIntent(BaseModel):
+    """Character Intent agent output for one major-tier character."""
+    character_name: str = ""
+    current_emotion: str = ""
+    private_goal: str = ""
+    public_goal: str = ""
+    attitude_to_others: dict[str, str] = Field(default_factory=dict)
+    likely_actions: list[str] = Field(default_factory=list)
+    dialogue_intentions: list[str] = Field(default_factory=list)
+    forbidden_actions: list[str] = Field(default_factory=list)
+    speech_style_notes: str = ""
+
+
+class ReviewIssue(BaseModel):
+    """A single issue found by the Reviewer agent."""
+    severity: str = "minor"  # critical / major / minor
+    description: str = ""
+    category: str = ""  # continuity / style / hook / face_slap
+    passed: bool = True
+
+
+class ReviewResult(BaseModel):
+    """Reviewer agent output."""
+    scene_id: str = ""
+    issues: list[ReviewIssue] = Field(default_factory=list)
+    overall_pass: bool = True
+    summary: str = ""
