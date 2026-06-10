@@ -135,6 +135,20 @@ class MainWindow(QMainWindow):
                 except TypeError:
                     pass
                 workspace.generate_requested.connect(self._on_generate_requested)
+                try:
+                    workspace.fact_approval.facts_approved.disconnect()
+                except TypeError:
+                    pass
+                workspace.fact_approval.facts_approved.connect(
+                    lambda facts: self._on_facts_approved(facts)
+                )
+                try:
+                    workspace.fact_approval.state_changes_approved.disconnect()
+                except TypeError:
+                    pass
+                workspace.fact_approval.state_changes_approved.connect(
+                    lambda changes: self._on_state_changes_approved(changes)
+                )
 
         self._previous_tab_index = index
 
@@ -363,6 +377,10 @@ class MainWindow(QMainWindow):
                                     result.review.summary,
                                 )
                             self._save_generated_scene(result)
+                            extracted = getattr(result, 'extracted_facts', [])
+                            state_changes = getattr(result, 'state_changes', [])
+                            if extracted or state_changes:
+                                workspace.show_fact_approval(extracted, state_changes)
                         elif result.plan is not None:
                             pass
                         else:
@@ -417,8 +435,88 @@ class MainWindow(QMainWindow):
             draft_text=result.prose,
             review=review_dict,
             final_text=result.prose,
+            extracted_facts_raw=getattr(result, 'extracted_facts', []),
+            state_changes_raw=getattr(result, 'state_changes', []),
         )
         save_scene_generation_record(self._current_project_dir, record)
+
+    def _on_facts_approved(self, approved_facts: list[dict]) -> None:
+        """Save approved facts to canon/facts.yaml."""
+        if self._current_project_dir is None:
+            return
+        from app.storage.models import CanonFact
+        from app.storage.project_files import load_canon_facts, save_canon_facts
+
+        workspace = self.views.get("workspace")
+        scene_id = workspace._current_scene_id if isinstance(workspace, SceneWorkspaceView) else ""
+
+        try:
+            existing = load_canon_facts(self._current_project_dir)
+        except Exception:
+            existing = []
+
+        new_facts: list[CanonFact] = []
+        for fd in approved_facts:
+            fact = CanonFact(
+                description=fd.get("description", ""),
+                category=fd.get("category", "world"),
+                source_scene_id=scene_id or "",
+                importance=3,
+                tags=[],
+            )
+            is_dup = any(
+                e.description == fact.description and e.category == fact.category
+                for e in existing
+            )
+            if not is_dup:
+                new_facts.append(fact)
+
+        all_facts = list(existing) + new_facts
+        save_canon_facts(self._current_project_dir, all_facts)
+
+    def _on_state_changes_approved(self, approved_changes: list[dict]) -> None:
+        """Apply approved state changes to character YAML files."""
+        if self._current_project_dir is None:
+            return
+
+        workspace = self.views.get("workspace")
+        scene_id = workspace._current_scene_id if isinstance(workspace, SceneWorkspaceView) else ""
+
+        for change in approved_changes:
+            char_id = change.get("character_id", "")
+            if not char_id:
+                continue
+            try:
+                char = self._repo.load_character(self._current_project_dir, char_id)
+            except Exception:
+                continue
+
+            state = char.state
+            if change.get("emotion"):
+                state.current_emotion = change["emotion"]
+            if change.get("goal"):
+                state.current_goal = change["goal"]
+            if change.get("location"):
+                state.current_location = change["location"]
+            if change.get("status"):
+                state.current_status = change["status"]
+
+            for k, v in change.get("relationships_add", {}).items():
+                state.current_relationships[k] = v
+            for k in change.get("relationships_remove", []):
+                state.current_relationships.pop(k, None)
+
+            for item in change.get("knowledge_add", []):
+                if item not in state.current_knowledge:
+                    state.current_knowledge.append(item)
+
+            for item in change.get("secrets_add", []):
+                if item not in state.current_secrets:
+                    state.current_secrets.append(item)
+
+            state.last_updated_scene = scene_id
+
+            self._repo.save_character(self._current_project_dir, char)
 
     def _find_chapter_for_scene(self, scene_id: str) -> str | None:
         """Find the chapter ID containing a scene by scanning all volumes."""

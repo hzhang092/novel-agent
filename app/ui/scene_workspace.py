@@ -18,6 +18,7 @@ from app.ui.context_preview import ContextPreviewView
 from app.ui.widgets.agent_trace import AgentTracePanel
 from app.ui.widgets.planner_checkpoint import PlannerCheckpointWidget
 from app.ui.widgets.prose_editor import ProseEditorWidget
+from app.ui.widgets.fact_approval import FactApprovalPanel
 
 
 class SceneWorkspaceView(QWidget):
@@ -123,6 +124,11 @@ class SceneWorkspaceView(QWidget):
         self._review_bar.hide()
         layout.addWidget(self._review_bar)
 
+        # ── Fact Approval panel ──
+        self.fact_approval = FactApprovalPanel()
+        self.fact_approval.hide()
+        layout.addWidget(self.fact_approval)
+
     # ── Public API ────────────────────────────────────────────────────────
 
     def load_project_dir(self, project_dir: Path) -> None:
@@ -143,6 +149,7 @@ class SceneWorkspaceView(QWidget):
         self._current_chapter_id = None
         self._generate_btn.setEnabled(False)
         self._regenerate_btn.setEnabled(False)
+        self.hide_fact_approval()
 
     def show_context(self, context: dict) -> None:
         """Display assembled context in the preview panel."""
@@ -175,6 +182,14 @@ class SceneWorkspaceView(QWidget):
     def hide_review_result(self) -> None:
         """Hide the review result bar."""
         self._review_bar.hide()
+
+    def show_fact_approval(self, facts: list[dict], state_changes: list[dict]) -> None:
+        """Show the fact approval panel with extracted facts and state changes."""
+        self.fact_approval.show_items(facts, state_changes)
+
+    def hide_fact_approval(self) -> None:
+        """Hide the fact approval panel."""
+        self.fact_approval.clear_and_hide()
 
     # ── Actions ────────────────────────────────────────────────────────────
 
