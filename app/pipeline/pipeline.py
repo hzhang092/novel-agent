@@ -16,6 +16,8 @@ from typing import AsyncGenerator, Callable, Awaitable
 from app.pipeline.agents.character import CharacterIntentAgent
 from app.pipeline.agents.planner import ScenePlannerAgent
 from app.pipeline.agents.reviewer import ReviewerAgent
+from app.pipeline.agents.fact_extractor import FactExtractorAgent
+from app.pipeline.agents.state_updater import StateUpdaterAgent
 from app.pipeline.agents.writer import WriterAgent
 from app.pipeline.context_builder import RetrievalEngine
 from app.providers.base import LLMProvider
@@ -58,6 +60,8 @@ class GenerationResult:
     trace: list[AgentTraceEntry] = field(default_factory=list)
     total_duration_ms: int = 0
     total_tokens: int = 0
+    extracted_facts: list[dict] = field(default_factory=list)
+    state_changes: list[dict] = field(default_factory=list)
 
 
 # Callback types for trace updates
@@ -95,6 +99,8 @@ class ScenePipeline:
         self._character_agent = CharacterIntentAgent()
         self._writer = WriterAgent()
         self._reviewer = ReviewerAgent()
+        self._fact_extractor = FactExtractorAgent()
+        self._state_updater = StateUpdaterAgent()
 
     def assemble_context(self, project_dir: Path, scene_id: str) -> dict:
         """Build the context dict via RetrievalEngine."""
@@ -285,6 +291,78 @@ class ScenePipeline:
             )
 
         self._emit_trace(on_trace, result.trace)
+
+        # ── Step 7: Fact Extractor + State Updater (parallel) ──
+        if result.prose:
+            fact_trace = AgentTraceEntry(agent_name="Fact Extractor", stage="fact_extractor")
+            result.trace.append(fact_trace)
+            state_trace = AgentTraceEntry(agent_name="State Updater", stage="state_updater")
+            result.trace.append(state_trace)
+
+            fact_trace.status = "running"
+            state_trace.status = "running"
+            self._emit_trace(on_trace, result.trace)
+
+            from app.providers.config import get_provider_for_step, load_provider_config
+            config = load_provider_config()
+            fact_provider = get_provider_for_step("fact_extractor", config)
+            state_provider = get_provider_for_step("fact_extractor", config)
+
+            chars = context.get("characters", {})
+            major_chars = chars.get("major", [])[:max_character_agents]
+
+            t_fact = time.monotonic()
+            t_state = time.monotonic()
+
+            async def _run_facts():
+                nonlocal fact_trace
+                try:
+                    facts = await self._fact_extractor.generate(
+                        fact_provider, context, result.prose, scene_id
+                    )
+                    fact_trace.status = "completed"
+                    fact_trace.duration_ms = int((time.monotonic() - t_fact) * 1000)
+                    if self._fact_extractor.last_usage:
+                        fact_trace.token_count = self._fact_extractor.last_usage.get("total_tokens", 0)
+                    result.extracted_facts = [f.model_dump(mode="json") for f in facts]
+                except Exception as e:
+                    fact_trace.status = "failed"
+                    fact_trace.error_message = str(e)
+                    fact_trace.failed_prompt = self._fact_extractor.build_prompt(context, result.prose)
+
+            async def _run_state_updates():
+                nonlocal state_trace
+                try:
+                    changes = await self._state_updater.generate(
+                        state_provider, context, result.prose, scene_id, major_chars
+                    )
+                    state_trace.status = "completed"
+                    state_trace.duration_ms = int((time.monotonic() - t_state) * 1000)
+                    if self._state_updater.last_usage:
+                        state_trace.token_count = self._state_updater.last_usage.get("total_tokens", 0)
+                    result.state_changes = [c.model_dump(mode="json") for c in changes]
+                except Exception as e:
+                    state_trace.status = "failed"
+                    state_trace.error_message = str(e)
+                    state_trace.failed_prompt = self._state_updater.build_prompt(
+                        context, result.prose, major_chars
+                    )
+
+            await asyncio.gather(
+                asyncio.create_task(_run_facts()),
+                asyncio.create_task(_run_state_updates()),
+            )
+
+            self._emit_trace(on_trace, result.trace)
+
+            try:
+                await fact_provider.close()
+            except Exception:
+                pass
+            try:
+                await state_provider.close()
+            except Exception:
+                pass
 
         # ── Compute totals ──
         total_tokens = 0
