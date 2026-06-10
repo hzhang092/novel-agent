@@ -161,7 +161,10 @@ class SceneGenerationRecord(BaseModel):
     review: Optional[dict] = None
     final_text: str = ""
     extracted_facts: list[dict] = Field(default_factory=list)
+    extracted_facts_raw: list[dict] = Field(default_factory=list)  # raw ExtractedFact dicts from pipeline
+    state_changes_raw: list[dict] = Field(default_factory=list)  # raw StateChangeProposal dicts from pipeline
     approved_fact_ids: list[str] = Field(default_factory=list)
+    approved_state_changes: list[str] = Field(default_factory=list)  # character_ids whose changes were approved
     created_at: datetime = Field(default_factory=datetime.now)
     user_modifications: Optional[str] = None
 
@@ -269,3 +272,27 @@ class ReviewResult(BaseModel):
     issues: list[ReviewIssue] = Field(default_factory=list)
     overall_pass: bool = True
     summary: str = ""
+
+
+# ── Memory Pipeline Agent Outputs ─────────────────────────────────────────
+
+class ExtractedFact(BaseModel):
+    """A single fact extracted by the Fact Extractor from generated prose."""
+    description: str
+    category: str  # world / character / plot
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    source_excerpt: str = ""
+
+
+class StateChangeProposal(BaseModel):
+    """A proposed change to one character's mutable state, from the State Updater."""
+    character_id: str = ""
+    character_name: str = ""
+    emotion: str = ""
+    goal: str = ""
+    location: str = ""
+    relationships_add: dict[str, str] = Field(default_factory=dict)
+    relationships_remove: list[str] = Field(default_factory=list)
+    knowledge_add: list[str] = Field(default_factory=list)
+    secrets_add: list[str] = Field(default_factory=list)
+    status: str = ""
