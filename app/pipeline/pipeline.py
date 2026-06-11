@@ -309,6 +309,16 @@ class ScenePipeline:
             if self._reviewer.last_usage:
                 reviewer_trace.token_count = self._reviewer.last_usage.get("total_tokens", 0)
             result.review = review
+            save_scene_review(project_dir, scene_id, review.model_dump(mode='json'))
+            if self._reviewer.last_usage:
+                tracker.log_call(
+                    project_dir, scene_id, agent_name='Reviewer',
+                    provider=reviewer_provider.__class__.__name__.replace('Provider', '').lower(),
+                    model=getattr(reviewer_provider, 'model', 'unknown'),
+                    prompt_tokens=self._reviewer.last_usage.get('prompt_tokens', 0),
+                    completion_tokens=self._reviewer.last_usage.get('completion_tokens', 0),
+                    duration_ms=reviewer_trace.duration_ms,
+                )
         except Exception as e:
             reviewer_trace.status = "failed"
             reviewer_trace.error_message = str(e)
