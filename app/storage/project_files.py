@@ -541,3 +541,58 @@ def _find_chapter_for_scene(project_dir: Path, scene_id: str) -> str | None:
                 if sc.id == scene_id:
                     return ch.id
     return None
+# ── Pipeline Intermediate Output I/O ───────────────────────────────────────
+
+
+def save_scene_plan(project_dir: Path, scene_id: str, plan: dict) -> None:
+    """Save planner output to scenes/<chapter>/<scene_id>.plan.json."""
+    _save_intermediate(project_dir, scene_id, "plan.json", plan)
+
+
+def save_scene_intents(project_dir: Path, scene_id: str, intents: dict[str, dict]) -> None:
+    """Save character intent outputs to scenes/<chapter>/<scene_id>.intents.json."""
+    _save_intermediate(project_dir, scene_id, "intents.json", intents)
+
+
+def save_scene_review(project_dir: Path, scene_id: str, review: dict) -> None:
+    """Save reviewer output to scenes/<chapter>/<scene_id>.review.json."""
+    _save_intermediate(project_dir, scene_id, "review.json", review)
+
+
+def load_scene_plan(project_dir: Path, scene_id: str) -> dict | None:
+    """Load saved plan. Returns None if not found."""
+    return _load_intermediate(project_dir, scene_id, "plan.json")
+
+
+def load_scene_intents(project_dir: Path, scene_id: str) -> dict[str, dict] | None:
+    """Load saved intents. Returns None if not found."""
+    return _load_intermediate(project_dir, scene_id, "intents.json")
+
+
+def load_scene_review(project_dir: Path, scene_id: str) -> dict | None:
+    """Load saved review. Returns None if not found."""
+    return _load_intermediate(project_dir, scene_id, "review.json")
+
+
+def _save_intermediate(project_dir: Path, scene_id: str, suffix: str, data: dict) -> None:
+    """Write intermediate output to scenes/<chapter>/<scene_id>.<suffix>."""
+    chapter_id = _find_chapter_for_scene(project_dir, scene_id)
+    if chapter_id is None:
+        raise ValueError(f"Scene {scene_id} not found in outline")
+    chapter_dir = project_dir / "scenes" / chapter_id
+    chapter_dir.mkdir(parents=True, exist_ok=True)
+    filepath = chapter_dir / f"{scene_id}.{suffix}"
+    with open(filepath, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2, default=str)
+
+
+def _load_intermediate(project_dir: Path, scene_id: str, suffix: str) -> dict | None:
+    """Load intermediate output. Returns None if file doesn't exist."""
+    chapter_id = _find_chapter_for_scene(project_dir, scene_id)
+    if chapter_id is None:
+        return None
+    filepath = project_dir / "scenes" / chapter_id / f"{scene_id}.{suffix}"
+    if not filepath.exists():
+        return None
+    with open(filepath, "r", encoding="utf-8") as fh:
+        return json.load(fh)
