@@ -118,7 +118,6 @@ class ScenePipeline:
         on_trace: TraceCallback | None = None,
         on_plan_ready: PlanReadyCallback | None = None,
         max_character_agents: int = 4,
-        resume: bool = False,
     ) -> AsyncGenerator[tuple[str | None, GenerationResult | None], None]:
         """Run the full pipeline and stream writer tokens.
 
@@ -133,38 +132,8 @@ class ScenePipeline:
         # ── Step 1: Assemble context ──
         context = self.assemble_context(project_dir, scene_id)
 
-        # ── Step 2: Planner (skip if resume + plan.json exists) ──
-        plan = None
-        if resume:
-            from app.storage.project_files import load_scene_plan
-            plan_data = load_scene_plan(project_dir, scene_id)
-            if plan_data:
-                plan = ScenePlan(**plan_data)
-                planner_trace = AgentTraceEntry(agent_name="Scene Planner", stage="planner")
-                planner_trace.status = "completed"
-                planner_trace.duration_ms = 0
-                planner_trace.token_count = 0
-                result.trace.append(planner_trace)
-                result.plan = plan
-                self._emit_trace(on_trace, result.trace)
-                # Also load intents if available
-                from app.storage.project_files import load_scene_intents, load_scene_review
-                intents_data = load_scene_intents(project_dir, scene_id)
-                if intents_data:
-                    char_trace = AgentTraceEntry(
-                        agent_name=f"Characters (resumed)", stage="characters"
-                    )
-                    char_trace.status = "completed"
-                    result.trace.append(char_trace)
-                    result.character_intents = {
-                        k: CharacterIntent(**v) for k, v in intents_data.items()
-                    }
-                    self._emit_trace(on_trace, result.trace)
-                # Yield to signal skip
-                yield (None, None)
-
-        if plan is None:
-            planner_trace = AgentTraceEntry(agent_name="Scene Planner", stage="planner")
+        # ── Step 2: Planner ──
+        planner_trace = AgentTraceEntry(agent_name="Scene Planner", stage="planner")
         result.trace.append(planner_trace)
         self._emit_trace(on_trace, result.trace)
 
@@ -177,15 +146,14 @@ class ScenePipeline:
             if self._planner.last_usage:
                 planner_trace.token_count = self._planner.last_usage.get("total_tokens", 0)
             result.plan = plan
-            # Save plan immediately to disk
-            save_scene_plan(project_dir, scene_id, plan.model_dump(mode="json"))
+            save_scene_plan(project_dir, scene_id, plan.model_dump(mode='json'))
             if self._planner.last_usage:
                 tracker.log_call(
-                    project_dir, scene_id, agent_name="Scene Planner",
-                    provider=planner_provider.__class__.__name__.replace("Provider", "").lower(),
-                    model=getattr(planner_provider, "model", "unknown"),
-                    prompt_tokens=self._planner.last_usage.get("prompt_tokens", 0),
-                    completion_tokens=self._planner.last_usage.get("completion_tokens", 0),
+                    project_dir, scene_id, agent_name='Scene Planner',
+                    provider=planner_provider.__class__.__name__.replace('Provider', '').lower(),
+                    model=getattr(planner_provider, 'model', 'unknown'),
+                    prompt_tokens=self._planner.last_usage.get('prompt_tokens', 0),
+                    completion_tokens=self._planner.last_usage.get('completion_tokens', 0),
                     duration_ms=planner_trace.duration_ms,
                 )
             self._emit_trace(on_trace, result.trace)
@@ -266,22 +234,19 @@ class ScenePipeline:
             char_trace.duration_ms = sum(
                 c.duration_ms for c in char_trace.children
             )
-            # Save character intents immediately to disk
             if result.character_intents:
                 save_scene_intents(project_dir, scene_id, {
-                    k: v.model_dump(mode="json")
+                    k: v.model_dump(mode='json')
                     for k, v in result.character_intents.items()
                 })
-            # Log token usage for each character agent
             for child in char_trace.children:
                 if child.token_count > 0:
                     tracker.log_call(
                         project_dir, scene_id,
-                        agent_name=f"CharIntent: {child.agent_name}",
-                        provider=char_provider.__class__.__name__.replace("Provider", "").lower(),
-                        model=getattr(char_provider, "model", "unknown"),
-                        prompt_tokens=0,
-                        completion_tokens=child.token_count,
+                        agent_name=f'CharIntent: {child.agent_name}',
+                        provider=char_provider.__class__.__name__.replace('Provider', '').lower(),
+                        model=getattr(char_provider, 'model', 'unknown'),
+                        prompt_tokens=0, completion_tokens=child.token_count,
                         duration_ms=child.duration_ms,
                     )
         else:
@@ -313,16 +278,6 @@ class ScenePipeline:
             writer_trace.duration_ms = int((time.monotonic() - t_writer) * 1000)
             writer_trace.token_count = len(tokens_collected)
             result.prose = "".join(tokens_collected)
-            # Log writer token usage
-            if writer_trace.token_count > 0:
-                tracker.log_call(
-                    project_dir, scene_id, agent_name="Writer",
-                    provider=writer_provider.__class__.__name__.replace("Provider", "").lower(),
-                    model=getattr(writer_provider, "model", "unknown"),
-                    prompt_tokens=0,
-                    completion_tokens=writer_trace.token_count,
-                    duration_ms=writer_trace.duration_ms,
-                )
         except Exception as e:
             writer_trace.status = "failed"
             writer_trace.error_message = str(e)
@@ -354,17 +309,6 @@ class ScenePipeline:
             if self._reviewer.last_usage:
                 reviewer_trace.token_count = self._reviewer.last_usage.get("total_tokens", 0)
             result.review = review
-            # Save review immediately to disk
-            save_scene_review(project_dir, scene_id, review.model_dump(mode="json"))
-            if self._reviewer.last_usage:
-                tracker.log_call(
-                    project_dir, scene_id, agent_name="Reviewer",
-                    provider=reviewer_provider.__class__.__name__.replace("Provider", "").lower(),
-                    model=getattr(reviewer_provider, "model", "unknown"),
-                    prompt_tokens=self._reviewer.last_usage.get("prompt_tokens", 0),
-                    completion_tokens=self._reviewer.last_usage.get("completion_tokens", 0),
-                    duration_ms=reviewer_trace.duration_ms,
-                )
         except Exception as e:
             reviewer_trace.status = "failed"
             reviewer_trace.error_message = str(e)
@@ -409,15 +353,6 @@ class ScenePipeline:
                     if self._fact_extractor.last_usage:
                         fact_trace.token_count = self._fact_extractor.last_usage.get("total_tokens", 0)
                     result.extracted_facts = [f.model_dump(mode="json") for f in facts]
-                    if self._fact_extractor.last_usage:
-                        tracker.log_call(
-                            project_dir, scene_id, agent_name="Fact Extractor",
-                            provider=fact_provider.__class__.__name__.replace("Provider", "").lower(),
-                            model=getattr(fact_provider, "model", "unknown"),
-                            prompt_tokens=self._fact_extractor.last_usage.get("prompt_tokens", 0),
-                            completion_tokens=self._fact_extractor.last_usage.get("completion_tokens", 0),
-                            duration_ms=fact_trace.duration_ms,
-                        )
                 except Exception as e:
                     fact_trace.status = "failed"
                     fact_trace.error_message = str(e)
@@ -434,15 +369,6 @@ class ScenePipeline:
                     if self._state_updater.last_usage:
                         state_trace.token_count = self._state_updater.last_usage.get("total_tokens", 0)
                     result.state_changes = [c.model_dump(mode="json") for c in changes]
-                    if self._state_updater.last_usage:
-                        tracker.log_call(
-                            project_dir, scene_id, agent_name="State Updater",
-                            provider=state_provider.__class__.__name__.replace("Provider", "").lower(),
-                            model=getattr(state_provider, "model", "unknown"),
-                            prompt_tokens=self._state_updater.last_usage.get("prompt_tokens", 0),
-                            completion_tokens=self._state_updater.last_usage.get("completion_tokens", 0),
-                            duration_ms=state_trace.duration_ms,
-                        )
                 except Exception as e:
                     state_trace.status = "failed"
                     state_trace.error_message = str(e)
