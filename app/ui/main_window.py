@@ -42,6 +42,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("NovelForge")
         self.resize(1200, 800)
+        self._last_generated_scene_id: str | None = None
+        self._generation_in_progress: bool = False
 
         self._repo = Repository(Path.home() / "NovelForge")
         self._current_project: ProjectModel | None = None
@@ -50,6 +52,9 @@ class MainWindow(QMainWindow):
 
         self._setup_menu()
         self._setup_ui()
+        self._token_status_label = QLabel("Tokens: —")
+        self._token_status_label.setStyleSheet("color: #888; font-size: 11px; padding: 0 8px;")
+        self.statusBar().addPermanentWidget(self._token_status_label)
 
     def _setup_menu(self) -> None:
         menubar = self.menuBar()
@@ -136,6 +141,11 @@ class MainWindow(QMainWindow):
                     pass
                 workspace.generate_requested.connect(self._on_generate_requested)
                 try:
+                    workspace.retry_requested.disconnect()
+                except TypeError:
+                    pass
+                workspace.retry_requested.connect(self._retry_agent)
+                try:
                     workspace.fact_approval.facts_approved.disconnect()
                 except TypeError:
                     pass
@@ -149,6 +159,11 @@ class MainWindow(QMainWindow):
                 workspace.fact_approval.state_changes_approved.connect(
                     lambda changes: self._on_state_changes_approved(changes)
                 )
+                try:
+                    workspace.retry_requested.disconnect()
+                except TypeError:
+                    pass
+                workspace.retry_requested.connect(self._retry_agent)
 
         self._previous_tab_index = index
 
@@ -191,9 +206,17 @@ class MainWindow(QMainWindow):
 
         self._set_nav_items_enabled(True)
 
+        from app.pipeline.token_tracker import TokenTracker
+        TokenTracker.reset()
+        TokenTracker.get()
+        self._update_status_bar_tokens()
+
         bible = self.views["bible"]
         if isinstance(bible, BibleEditorView):
             bible.load_project_dir(proj_dir)
+        dashboard = self.views["dashboard"]
+        if isinstance(dashboard, DashboardView):
+            dashboard.load_project_dir(proj_dir)
 
         outline = self.views["outline"]
         if isinstance(outline, OutlineEditorView):
@@ -229,9 +252,17 @@ class MainWindow(QMainWindow):
 
         self._set_nav_items_enabled(True)
 
+        from app.pipeline.token_tracker import TokenTracker
+        TokenTracker.reset()
+        TokenTracker.get()
+        self._update_status_bar_tokens()
+
         bible = self.views["bible"]
         if isinstance(bible, BibleEditorView):
             bible.load_project_dir(Path(dir_path))
+        dashboard = self.views["dashboard"]
+        if isinstance(dashboard, DashboardView):
+            dashboard.load_project_dir(Path(dir_path))
 
         outline = self.views["outline"]
         if isinstance(outline, OutlineEditorView):
@@ -250,6 +281,11 @@ class MainWindow(QMainWindow):
                 except TypeError:
                     pass
                 workspace.generate_requested.connect(self._on_generate_requested)
+                try:
+                    workspace.retry_requested.disconnect()
+                except TypeError:
+                    pass
+                workspace.retry_requested.connect(self._retry_agent)
 
     def _on_llm_settings(self) -> None:
         """Open the LLM provider settings dialog."""
@@ -285,6 +321,7 @@ class MainWindow(QMainWindow):
 
     def _on_generate_requested(self, scene_id: str) -> None:
         """Trigger full pipeline generation for the given scene."""
+        self._last_generated_scene_id = scene_id
         if self._current_project_dir is None:
             return
 
@@ -371,6 +408,7 @@ class MainWindow(QMainWindow):
                         workspace.set_generating(False)
                         if result.prose:
                             workspace._status_label.setText("已生成")
+                            self._update_status_bar_tokens()
                             if result.review is not None:
                                 workspace.show_review_result(
                                     result.review.overall_pass,
@@ -517,6 +555,23 @@ class MainWindow(QMainWindow):
             state.last_updated_scene = scene_id
 
             self._repo.save_character(self._current_project_dir, char)
+
+
+    def _retry_agent(self, agent_name: str) -> None:
+        """Retry generation from the current scene (re-runs full pipeline)."""
+        if self._last_generated_scene_id and not self._generation_in_progress:
+            self._on_generate_requested(self._last_generated_scene_id)
+
+    def _update_status_bar_tokens(self) -> None:
+        """Update the status bar with session token totals and cost."""
+        from app.pipeline.token_tracker import TokenTracker
+        tracker = TokenTracker.get()
+        total = tracker.session_total_tokens
+        cost = tracker.session_cost
+        parts = [f"Session: {total:,} tokens"]
+        if cost > 0:
+            parts.append(f"${cost:.4f}")
+        self._token_status_label.setText("  ".join(parts))
 
     def _find_chapter_for_scene(self, scene_id: str) -> str | None:
         """Find the chapter ID containing a scene by scanning all volumes."""

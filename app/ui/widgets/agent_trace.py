@@ -71,6 +71,9 @@ class AgentTracePanel(QWidget):
         )
         layout.addWidget(self._tree)
 
+        self._tree.itemClicked.connect(self._on_item_clicked)
+        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._on_context_menu)
         self._tree.setVisible(False)
         self._empty_label = QLabel("等待生成...")
         self._empty_label.setStyleSheet("color: #666; font-size: 12px;")
@@ -80,6 +83,9 @@ class AgentTracePanel(QWidget):
     def clear(self) -> None:
         """Remove all trace entries."""
         self._tree.clear()
+        self._tree.itemClicked.connect(self._on_item_clicked)
+        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._on_context_menu)
         self._tree.setVisible(False)
         self._empty_label.setVisible(True)
         self._token_label.setText("Tokens: —")
@@ -104,6 +110,9 @@ class AgentTracePanel(QWidget):
     def set_waiting(self, message: str) -> None:
         """Show a waiting state with a message."""
         self._tree.clear()
+        self._tree.itemClicked.connect(self._on_item_clicked)
+        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._on_context_menu)
         self._tree.setVisible(False)
         self._empty_label.setVisible(True)
         self._token_label.setText(message)
@@ -144,9 +153,45 @@ class AgentTracePanel(QWidget):
         # Tooltip for failed agents
         if entry.status == "failed":
             item.setToolTip(0, entry.error_message or "Unknown error")
+            item.setData(0, Qt.ItemDataRole.UserRole + 1, {
+                "agent_name": entry.agent_name,
+                "error_message": entry.error_message,
+                "failed_prompt": getattr(entry, "failed_prompt", ""),
+                "failed_output": getattr(entry, "failed_output", ""),
+            })
 
         tokens = entry.token_count
         for child in entry.children:
             tokens += self._add_tree_node(item, child)
 
         return tokens
+
+    def _on_item_clicked(self, item, column: int) -> None:
+        """Open error detail dialog when a failed agent node is clicked."""
+        error_data = item.data(0, Qt.ItemDataRole.UserRole + 1)
+        if error_data is None:
+            return
+        from app.ui.widgets.error_detail import ErrorDetailDialog
+        dialog = ErrorDetailDialog(
+            agent_name=error_data.get("agent_name", ""),
+            error_message=error_data.get("error_message", ""),
+            prompt=error_data.get("failed_prompt", ""),
+            output=error_data.get("failed_output", ""),
+            parent=self,
+        )
+        dialog.exec()
+
+    def _on_context_menu(self, pos) -> None:
+        """Show retry context menu for failed agent nodes."""
+        item = self._tree.itemAt(pos)
+        if item is None:
+            return
+        error_data = item.data(0, Qt.ItemDataRole.UserRole + 1)
+        if error_data is None:
+            return
+        from PyQt6.QtWidgets import QMenu
+        menu = QMenu(self)
+        retry_action = menu.addAction("Retry this step")
+        action = menu.exec(self._tree.viewport().mapToGlobal(pos))
+        if action == retry_action:
+            self.retry_requested.emit(error_data.get("agent_name", ""))

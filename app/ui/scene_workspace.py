@@ -32,6 +32,7 @@ class SceneWorkspaceView(QWidget):
     """
 
     generate_requested = pyqtSignal(str)  # emits scene_id
+    retry_requested = pyqtSignal(str)  # emits agent_name
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -104,6 +105,7 @@ class SceneWorkspaceView(QWidget):
         right_layout = QVBoxLayout(right_pane)
         right_layout.setContentsMargins(4, 0, 0, 0)
         self.trace_panel = AgentTracePanel()
+        self.trace_panel.retry_requested.connect(self.retry_requested.emit)
         right_layout.addWidget(self.trace_panel)
         splitter.addWidget(right_pane)
 
