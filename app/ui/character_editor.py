@@ -23,8 +23,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+import logging
+
 from app.storage.models import Character, CharacterCore, CharacterState, CharacterTier
 from app.storage.project_files import (
+
+logger = logging.getLogger(__name__)
     delete_character,
     list_character_ids,
     load_character,
@@ -412,7 +416,7 @@ class CharacterEditorView(QWidget):
             self._characters[self._current_id] = char
             self._populate_state_tab(char.state)
         except Exception:
-            pass
+            logger.exception("Failed to reload state for %s", self._current_id)
 
     # ── Gather ─────────────────────────────────────────────────────────────
 

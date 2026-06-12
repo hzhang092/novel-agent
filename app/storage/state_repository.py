@@ -76,6 +76,9 @@ class StateRepository:
         next_id = get_latest_event_id(char_dir) + 1
 
         # Apply changes to snapshot in-place
+        assert next_id > snapshot.last_event_id, (
+            f"event_id monotonicity violation: next_id={next_id} <= snapshot.last_event_id={snapshot.last_event_id}"
+        )
         _apply_changes_to_snapshot(snapshot, stored_changes)
         snapshot.last_event_id = next_id
         snapshot.last_scene_id = scene_id

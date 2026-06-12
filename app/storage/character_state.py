@@ -118,6 +118,11 @@ def _set_scalar(snap: CharacterStateSnapshot, field: str, value: str) -> None:
         setattr(snap, attr, value)
 
 
+def _none_if_empty(value: str) -> str | None:
+    """Return None if value is the empty string, otherwise the value unchanged."""
+    return None if value == "" else value
+
+
 # ── State ↔ Snapshot mapping ───────────────────────────────────────────────
 
 def map_character_state_to_snapshot(state: CharacterState) -> CharacterStateSnapshot:
@@ -129,7 +134,7 @@ def map_character_state_to_snapshot(state: CharacterState) -> CharacterStateSnap
         goal=state.current_goal,
         location=state.current_location,
         status=state.current_status,
-        power_level=state.current_power_level or "",
+        power_level=state.current_power_level if state.current_power_level is not None else "",
         relationships=dict(state.current_relationships),
         knowledge=list(state.current_knowledge),
         secrets=list(state.current_secrets),
@@ -143,7 +148,7 @@ def map_snapshot_to_character_state(snap: CharacterStateSnapshot) -> CharacterSt
         current_goal=snap.goal,
         current_emotion=snap.emotion,
         current_location=snap.location,
-        current_power_level=snap.power_level if snap.power_level else None,
+        current_power_level=_none_if_empty(snap.power_level),
         current_relationships=dict(snap.relationships),
         current_knowledge=list(snap.knowledge),
         current_secrets=list(snap.secrets),

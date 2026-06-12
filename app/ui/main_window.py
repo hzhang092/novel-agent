@@ -23,10 +23,16 @@ from PyQt6.QtWidgets import (
 
 from app.storage.models import Project as ProjectModel
 from app.storage.repository import Repository
+import logging
+
+from pydantic import ValidationError
+
 from app.events.bus import EventBus
 from app.events.qt_bridge import QtEventBridge
 from app.storage.state_repository import StateRepository
 from app.ui.bible_editor import BibleEditorView
+
+logger = logging.getLogger(__name__)
 from app.ui.create_project_dialog import CreateProjectDialog
 from app.ui.settings_dialog import SettingsDialog
 from app.ui.dashboard import DashboardView
@@ -551,24 +557,13 @@ class MainWindow(QMainWindow):
             changes_data = proposal_dict.get("changes", [])
             from app.storage.models import StateChangeProposal
 
-            # Parse changes_data which may be raw dicts or already the right format
-            parsed_changes = []
-            for c in changes_data:
-                t = c.get("type", "")
-                if t == "set_field":
-                    parsed_changes.append({"type": "set_field", "field": c.get("field", ""), "value": c.get("value", "")})
-                elif t == "relationship_change":
-                    parsed_changes.append({"type": "relationship_change", "target_character_id": c.get("target_character_id", ""), "relationship": c.get("relationship", "")})
-                elif t in ("knowledge_add", "knowledge_remove", "secret_add", "secret_remove"):
-                    parsed_changes.append({"type": t, "fact": c.get("fact", "")})
-
-            if not parsed_changes:
+            if not changes_data:
                 continue
 
             proposal = StateChangeProposal(
                 character_id=char_id,
                 character_name=proposal_dict.get("character_name", ""),
-                changes=parsed_changes,
+                changes=changes_data,
             )
 
             try:
@@ -579,8 +574,18 @@ class MainWindow(QMainWindow):
                     transaction_id=tx_id,
                     request_id=str(uuid_mod.uuid4()),
                 )
+            except ValidationError as e:
+                logger.warning("State change validation failed for %s: %s", char_id, e)
+                QMessageBox.warning(
+                    self, "State Change Error",
+                    f"Failed to apply state change for {proposal.character_name}:\n{e}",
+                )
             except Exception:
-                pass
+                logger.exception("Unexpected error committing state change for %s", char_id)
+                QMessageBox.critical(
+                    self, "Unexpected Error",
+                    f"An unexpected error occurred while saving state for {proposal.character_name}.",
+                )
 
 
     def _retry_agent(self, agent_name: str) -> None:
@@ -652,6 +657,7 @@ class MainWindow(QMainWindow):
             try:
                 char = load_character(project_dir, f.stem)
                 save_character(project_dir, char)
+                f.rename(f.with_suffix(".yaml.bak"))
                 migrated += 1
             except Exception:
                 continue
