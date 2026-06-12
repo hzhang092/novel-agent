@@ -242,49 +242,55 @@ class FactApprovalPanel(QWidget):
         name_label.setStyleSheet("color: #e67e22;")
         layout.addWidget(name_label)
 
-        # Summary of changes
-        changed_fields: list[str] = []
-        if change.get("emotion"):
-            changed_fields.append(f"情绪→{change['emotion']}")
-        if change.get("goal"):
-            changed_fields.append(f"目标→{change['goal']}")
-        if change.get("location"):
-            changed_fields.append(f"位置→{change['location']}")
-        if change.get("relationships_add"):
-            rels = change["relationships_add"]
-            changed_fields.append(f"关系+{len(rels)}")
-        if change.get("relationships_remove"):
-            changed_fields.append(f"关系-{len(change['relationships_remove'])}")
-        if change.get("knowledge_add"):
-            changed_fields.append(f"知识+{len(change['knowledge_add'])}")
-        if change.get("secrets_add"):
-            changed_fields.append(f"秘密+{len(change['secrets_add'])}")
-        if change.get("status"):
-            changed_fields.append(f"状态→{change['status']}")
+        # Build summary from the new 'changes' list
+        changes_list = change.get("changes", [])
+        summaries: list[str] = []
+        for c in changes_list:
+            t = c.get("type", "")
+            if t == "set_field":
+                summaries.append(f"{c.get('field','')}→{c.get('value','')}")
+            elif t == "relationship_change":
+                summaries.append(f"关系:{c.get('target_character_id','')}→{c.get('relationship','')}")
+            elif t == "knowledge_add":
+                summaries.append("+知识")
+            elif t == "knowledge_remove":
+                summaries.append("-知识")
+            elif t == "secret_add":
+                summaries.append("+秘密")
+            elif t == "secret_remove":
+                summaries.append("-秘密")
 
-        summary = "；".join(changed_fields) if changed_fields else "无变化"
+        # Fallback: check for old format flat fields
+        if not summaries:
+            if change.get("emotion"):
+                summaries.append(f"情绪→{change['emotion']}")
+            if change.get("goal"):
+                summaries.append(f"目标→{change['goal']}")
+            if change.get("location"):
+                summaries.append(f"位置→{change['location']}")
+            if change.get("status"):
+                summaries.append(f"状态→{change['status']}")
+
+        summary = "；".join(summaries) if summaries else "无变化"
         summary_label = QLabel(summary)
         summary_label.setStyleSheet("color: #ccc; font-size: 11px;")
         layout.addWidget(summary_label, stretch=1)
 
         # Tooltip with full details
         tooltip_lines = []
-        for k in ["emotion", "goal", "location", "status"]:
-            if change.get(k):
-                tooltip_lines.append(f"{k}: {change[k]}")
-        for k in ["relationships_add", "knowledge_add", "secrets_add"]:
-            if change.get(k):
-                items = change[k]
-                if isinstance(items, dict):
-                    tooltip_lines.append(
-                        f"{k}: {'; '.join(f'{kk}:{vv}' for kk, vv in items.items())}"
-                    )
-                elif isinstance(items, list):
-                    tooltip_lines.append(f"{k}: {'; '.join(items)}")
-        if change.get("relationships_remove"):
-            tooltip_lines.append(
-                f"relationships_remove: {'; '.join(change['relationships_remove'])}"
-            )
+        for c in changes_list:
+            t = c.get("type", "")
+            if t == "set_field":
+                tooltip_lines.append(f"{c.get('field','')}: {c.get('value','')}")
+            elif t == "relationship_change":
+                tooltip_lines.append(f"关系 {c.get('target_character_id','')}: {c.get('relationship','')}")
+            elif t in ("knowledge_add", "knowledge_remove", "secret_add", "secret_remove"):
+                tooltip_lines.append(f"{t}: {c.get('fact','')}")
+        # Fallback: old format
+        if not tooltip_lines:
+            for k in ["emotion", "goal", "location", "status"]:
+                if change.get(k):
+                    tooltip_lines.append(f"{k}: {change[k]}")
         row.setToolTip("\n".join(tooltip_lines))
 
         return row
