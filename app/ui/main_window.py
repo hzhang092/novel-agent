@@ -23,6 +23,9 @@ from PyQt6.QtWidgets import (
 
 from app.storage.models import Project as ProjectModel
 from app.storage.repository import Repository
+from app.events.bus import EventBus
+from app.events.qt_bridge import QtEventBridge
+from app.storage.state_repository import StateRepository
 from app.ui.bible_editor import BibleEditorView
 from app.ui.create_project_dialog import CreateProjectDialog
 from app.ui.settings_dialog import SettingsDialog
@@ -50,6 +53,11 @@ class MainWindow(QMainWindow):
         self._current_project: ProjectModel | None = None
         self._current_project_dir: Path | None = None
         self._previous_tab_index: int = 0
+
+        # Event bus for live UI refresh
+        self._domain_bus = EventBus()
+        self._event_bridge = QtEventBridge(self._domain_bus)
+        self._state_repo = StateRepository(bus=self._domain_bus)
 
         self._setup_menu()
         self._setup_ui()
@@ -130,6 +138,12 @@ class MainWindow(QMainWindow):
             outline = self.views["outline"]
             if isinstance(outline, OutlineEditorView) and outline._project_dir is not None:
                 outline._on_save()
+
+        # Wire event bus to Bible Editor's character editor when navigating to Bible
+        if index == 1:
+            bible = self.views["bible"]
+            if isinstance(bible, BibleEditorView):
+                bible._character_editor.set_event_bus(self._domain_bus)
 
         # Load workspace when navigating to it
         if index == 3:
@@ -287,6 +301,9 @@ class MainWindow(QMainWindow):
                 except TypeError:
                     pass
                 workspace.retry_requested.connect(self._retry_agent)
+
+        # Check for legacy character files and offer migration
+        self._check_legacy_migration(Path(dir_path))
 
     def _on_llm_settings(self) -> None:
         """Open the LLM provider settings dialog."""
@@ -514,48 +531,56 @@ class MainWindow(QMainWindow):
         save_canon_facts(self._current_project_dir, all_facts)
 
     def _on_state_changes_approved(self, approved_changes: list[dict]) -> None:
-        """Apply approved state changes to character YAML files."""
+        """Apply approved state changes via StateRepository (event-sourced)."""
         if self._current_project_dir is None:
             return
 
+        import uuid as uuid_mod
+
         workspace = self.views.get("workspace")
         scene_id = workspace._current_scene_id if isinstance(workspace, SceneWorkspaceView) else ""
+        tx_id = str(uuid_mod.uuid4())
 
-        for change in approved_changes:
-            char_id = change.get("character_id", "")
+        for proposal_dict in approved_changes:
+            char_id = proposal_dict.get("character_id", "")
             if not char_id:
                 continue
-            try:
-                char = self._repo.load_character(self._current_project_dir, char_id)
-            except Exception:
+            char_dir = self._current_project_dir / "characters" / char_id
+
+            # Convert the approved dict back to a StateChangeProposal
+            changes_data = proposal_dict.get("changes", [])
+            from app.storage.models import StateChangeProposal
+
+            # Parse changes_data which may be raw dicts or already the right format
+            parsed_changes = []
+            for c in changes_data:
+                t = c.get("type", "")
+                if t == "set_field":
+                    parsed_changes.append({"type": "set_field", "field": c.get("field", ""), "value": c.get("value", "")})
+                elif t == "relationship_change":
+                    parsed_changes.append({"type": "relationship_change", "target_character_id": c.get("target_character_id", ""), "relationship": c.get("relationship", "")})
+                elif t in ("knowledge_add", "knowledge_remove", "secret_add", "secret_remove"):
+                    parsed_changes.append({"type": t, "fact": c.get("fact", "")})
+
+            if not parsed_changes:
                 continue
 
-            state = char.state
-            if change.get("emotion"):
-                state.current_emotion = change["emotion"]
-            if change.get("goal"):
-                state.current_goal = change["goal"]
-            if change.get("location"):
-                state.current_location = change["location"]
-            if change.get("status"):
-                state.current_status = change["status"]
+            proposal = StateChangeProposal(
+                character_id=char_id,
+                character_name=proposal_dict.get("character_name", ""),
+                changes=parsed_changes,
+            )
 
-            for k, v in change.get("relationships_add", {}).items():
-                state.current_relationships[k] = v
-            for k in change.get("relationships_remove", []):
-                state.current_relationships.pop(k, None)
-
-            for item in change.get("knowledge_add", []):
-                if item not in state.current_knowledge:
-                    state.current_knowledge.append(item)
-
-            for item in change.get("secrets_add", []):
-                if item not in state.current_secrets:
-                    state.current_secrets.append(item)
-
-            state.last_updated_scene = scene_id
-
-            self._repo.save_character(self._current_project_dir, char)
+            try:
+                self._state_repo.commit_proposal(
+                    char_dir=char_dir,
+                    proposal=proposal,
+                    scene_id=scene_id,
+                    transaction_id=tx_id,
+                    request_id=str(uuid_mod.uuid4()),
+                )
+            except Exception:
+                pass
 
 
     def _retry_agent(self, agent_name: str) -> None:
@@ -585,6 +610,56 @@ class MainWindow(QMainWindow):
                     if sc.id == scene_id:
                         return ch.id
         return None
+
+    def _check_legacy_migration(self, project_dir: Path) -> None:
+        """Check for legacy character files and offer migration."""
+        from pathlib import Path
+        char_dir = project_dir / "characters"
+        if not char_dir.exists():
+            return
+        legacy = list(char_dir.glob("*.yaml"))
+        # Filter out files that already have .bak suffix
+        legacy = [f for f in legacy if not f.name.endswith(".bak")]
+        if not legacy:
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "格式迁移",
+            f"项目包含 {len(legacy)} 个旧格式角色文件。\n"
+            "建议迁移到新格式以使用完整功能。\n\n"
+            "迁移会创建备份，不会丢失数据。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._migrate_legacy_characters(project_dir, legacy)
+
+    def _migrate_legacy_characters(self, project_dir: Path, legacy_files: list) -> None:
+        """Migrate legacy characters/<name>.yaml to per-directory layout."""
+        import shutil
+        from datetime import datetime
+
+        char_root = project_dir / "characters"
+        backup_dir = project_dir / ".backups" / f"migration-{datetime.now().strftime('%Y-%m-%d')}"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+
+        migrated = 0
+        for f in legacy_files:
+            # Backup
+            shutil.copy2(f, backup_dir / f.name)
+
+            # Load and re-save (triggers new layout via save_character)
+            try:
+                char = load_character(project_dir, f.stem)
+                save_character(project_dir, char)
+                migrated += 1
+            except Exception:
+                continue
+
+        QMessageBox.information(
+            self, "迁移完成",
+            f"已迁移 {migrated} 个角色。\n备份存储在: {backup_dir}"
+        )
 
     def _set_nav_items_enabled(self, enabled: bool) -> None:
         """Enable or disable all non-dashboard sidebar items."""
