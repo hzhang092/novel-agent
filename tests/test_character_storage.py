@@ -141,10 +141,11 @@ def test_delete_character(tmp_path):
     character = Character(core=core, state=state)
 
     save_character(proj_dir, character)
-    assert (proj_dir / "characters" / f"{core.id}.yaml").exists()
+    # New per-directory layout: characters/<id>/definition.yaml
+    assert (proj_dir / "characters" / core.id / "definition.yaml").exists()
 
     delete_character(proj_dir, core.id)
-    assert not (proj_dir / "characters" / f"{core.id}.yaml").exists()
+    assert not (proj_dir / "characters" / core.id).exists()
 
     with pytest.raises(FileNotFoundError):
         load_character(proj_dir, core.id)

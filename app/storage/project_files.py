@@ -221,80 +221,126 @@ def save_style_guide(project_dir: Path, style: StyleGuide) -> None:
 # ── Character I/O ──────────────────────────────────────────────────────────
 
 def save_character(project_dir: Path, character: Character) -> None:
-    """Write a character to characters/<id>.yaml.
+    """Write a character to characters/<id>/ in per-directory layout.
 
-    The YAML file contains both core and state sections.
+    Creates definition.yaml (core) and state.yaml (snapshot from character.state).
+    Legacy flat files are no longer written.
     """
-    char_dir = project_dir / "characters"
+    from app.storage.character_state import map_character_state_to_snapshot, save_snapshot
+
+    char_root = project_dir / "characters"
+    char_root.mkdir(exist_ok=True)
+    char_dir = char_root / character.core.id
     char_dir.mkdir(exist_ok=True)
 
-    data = {
-        "core": character.core.model_dump(mode="json"),
-        "state": character.state.model_dump(mode="json"),
-    }
-    filepath = char_dir / f"{character.core.id}.yaml"
-    with open(filepath, "w", encoding="utf-8") as f:
-        yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+    # Write definition.yaml (core)
+    definition_path = char_dir / "definition.yaml"
+    core_data = character.core.model_dump(mode="json")
+    with open(definition_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(core_data, f, allow_unicode=True, sort_keys=False)
+
+    # Write state.yaml (snapshot)
+    snap = map_character_state_to_snapshot(character.state)
+    save_snapshot(char_dir, snap)
 
 
 def load_character(project_dir: Path, character_id: str) -> Character:
-    """Load a single character from characters/<id>.yaml.
+    """Load a character — tries per-directory layout first, then legacy flat file.
 
     Raises:
-        FileNotFoundError: If the character file does not exist.
-        ValueError: If the YAML is invalid or fails model validation.
+        FileNotFoundError: If the character does not exist in either layout.
+        ValueError: If the data is invalid or fails model validation.
     """
-    filepath = project_dir / "characters" / f"{character_id}.yaml"
-    if not filepath.exists():
-        raise FileNotFoundError(f"Character not found: {filepath}")
+    from app.storage.character_state import load_snapshot, map_snapshot_to_character_state
 
-    with open(filepath, "r", encoding="utf-8") as f:
+    char_root = project_dir / "characters"
+    char_dir = char_root / character_id
+    flat_path = char_root / f"{character_id}.yaml"
+
+    # ── New layout: per-directory ──
+    if char_dir.is_dir():
+        # Load definition.yaml
+        def_path = char_dir / "definition.yaml"
+        if not def_path.exists():
+            raise FileNotFoundError(f"Character definition not found: {def_path}")
+        with open(def_path, "r", encoding="utf-8") as f:
+            try:
+                raw_core = yaml.safe_load(f)
+            except yaml.YAMLError as e:
+                raise ValueError(f"Invalid YAML in {def_path}: {e}") from e
+        if raw_core is None:
+            raise ValueError(f"Empty definition file: {def_path}")
         try:
-            raw = yaml.safe_load(f)
-        except yaml.YAMLError as e:
-            raise ValueError(f"Invalid YAML in {filepath}: {e}") from e
+            core = CharacterCore.model_validate(raw_core)
+        except Exception as e:
+            raise ValueError(f"Invalid core data in {def_path}: {e}") from e
 
-    if raw is None:
-        raise ValueError(f"Empty character file: {filepath}")
+        # Load state.yaml and map back
+        snap = load_snapshot(char_dir)
+        state = map_snapshot_to_character_state(snap)
+        return Character(core=core, state=state)
 
-    try:
-        core = CharacterCore.model_validate(raw.get("core", {}))
-        state = CharacterState.model_validate(raw.get("state", {}))
-    except Exception as e:
-        raise ValueError(f"Invalid character data in {filepath}: {e}") from e
+    # ── Legacy layout: flat .yaml ──
+    if flat_path.exists():
+        with open(flat_path, "r", encoding="utf-8") as f:
+            try:
+                raw = yaml.safe_load(f)
+            except yaml.YAMLError as e:
+                raise ValueError(f"Invalid YAML in {flat_path}: {e}") from e
+        if raw is None:
+            raise ValueError(f"Empty character file: {flat_path}")
+        try:
+            core = CharacterCore.model_validate(raw.get("core", {}))
+            state = CharacterState.model_validate(raw.get("state", {}))
+        except Exception as e:
+            raise ValueError(f"Invalid character data in {flat_path}: {e}") from e
+        return Character(core=core, state=state)
 
-    return Character(core=core, state=state)
+    raise FileNotFoundError(f"Character not found: {character_id}")
 
 
 def delete_character(project_dir: Path, character_id: str) -> None:
-    """Delete a character YAML file. No-op if the file does not exist."""
-    filepath = project_dir / "characters" / f"{character_id}.yaml"
-    if filepath.exists():
-        filepath.unlink()
+    """Delete a character (per-directory or flat file). No-op if not found."""
+    import shutil
+
+    char_root = project_dir / "characters"
+    char_dir = char_root / character_id
+    flat_path = char_root / f"{character_id}.yaml"
+
+    if char_dir.is_dir():
+        shutil.rmtree(char_dir)
+    if flat_path.exists():
+        flat_path.unlink()
 
 
 def list_character_ids(project_dir: Path) -> list[str]:
-    """Return all character IDs found in the characters/ directory."""
-    char_dir = project_dir / "characters"
-    if not char_dir.exists():
+    """Return all character IDs from both per-directory and flat-file layouts."""
+    char_root = project_dir / "characters"
+    if not char_root.exists():
         return []
-    ids = []
-    for filepath in char_dir.glob("*.yaml"):
-        ids.append(filepath.stem)
-    return ids
+    ids: set[str] = set()
+
+    # Per-directory layout
+    for d in char_root.iterdir():
+        if d.is_dir() and (d / "definition.yaml").exists():
+            ids.add(d.name)
+
+    # Legacy flat files
+    for filepath in char_root.glob("*.yaml"):
+        stem = filepath.stem
+        if stem not in ids:
+            ids.add(stem)
+
+    return sorted(ids)
 
 
 def load_all_characters(project_dir: Path) -> list[Character]:
-    """Load all characters from the characters/ directory."""
-    char_dir = project_dir / "characters"
-    if not char_dir.exists():
-        return []
+    """Load all characters from both layouts."""
     characters = []
-    for filepath in sorted(char_dir.glob("*.yaml")):
+    for cid in list_character_ids(project_dir):
         try:
-            characters.append(load_character(project_dir, filepath.stem))
+            characters.append(load_character(project_dir, cid))
         except (ValueError, FileNotFoundError):
-            # Skip corrupt files - don't crash the whole load
             continue
     return characters
 
