@@ -68,6 +68,24 @@ class CharacterEditorView(QWidget):
         else:
             self._clear_detail()
 
+    def set_event_bus(self, bus) -> None:
+        """Subscribe to domain events for live state refresh."""
+        self._bus = bus
+        bus.subscribe("character_state_updated", self._on_state_updated)
+
+    def set_current_scene_id(self, scene_id: str) -> None:
+        """Set the current scene ID for history filtering."""
+        self._current_scene_id = scene_id
+
+    def _on_state_updated(self, character_id: str, event_id: int) -> None:
+        """Reload character state from disk when a domain event fires."""
+        if character_id == self._current_id and self._project_dir is not None:
+            self._reload_state_tab()
+            # Refresh history tab
+            char_dir = self._project_dir / "characters" / character_id
+            if char_dir.exists():
+                self._history_tab.set_character(char_dir, self._current_scene_id)
+
     # ── UI Setup ───────────────────────────────────────────────────────────
 
     def _setup_ui(self) -> None:
@@ -110,10 +128,13 @@ class CharacterEditorView(QWidget):
 
         # Detail area (tabs: Core / State)
         self._detail_tabs = QTabWidget()
-        self._core_tab = self._build_core_tab()
+        self._definition_tab = self._build_core_tab()
         self._state_tab = self._build_state_tab()
-        self._detail_tabs.addTab(self._core_tab, "核心设定")
+        from app.ui.widgets.character_history import CharacterHistoryWidget
+        self._history_tab = CharacterHistoryWidget()
+        self._detail_tabs.addTab(self._definition_tab, "基本设定")
         self._detail_tabs.addTab(self._state_tab, "当前状态")
+        self._detail_tabs.addTab(self._history_tab, "变化历史")
         splitter.addWidget(self._detail_tabs)
         self._detail_tabs.setVisible(False)  # hidden until a character is selected
 
@@ -318,6 +339,10 @@ class CharacterEditorView(QWidget):
         self._populate_core_tab(char.core)
         self._populate_state_tab(char.state)
         self._detail_tabs.setVisible(True)
+        # Populate history tab
+        if self._project_dir is not None:
+            char_dir = self._project_dir / "characters" / char_id
+            self._history_tab.set_character(char_dir, self._current_scene_id)
 
     def _clear_detail(self) -> None:
         """Clear all detail fields."""
@@ -377,6 +402,17 @@ class CharacterEditorView(QWidget):
         self._state_secrets.set_items(state.current_secrets)
         self._state_status.setText(state.current_status)
         self._state_last_scene.setText(state.last_updated_scene or "")
+
+    def _reload_state_tab(self) -> None:
+        """Reload the current character's state from disk."""
+        if self._project_dir is None or self._current_id is None:
+            return
+        try:
+            char = load_character(self._project_dir, self._current_id)
+            self._characters[self._current_id] = char
+            self._populate_state_tab(char.state)
+        except Exception:
+            pass
 
     # ── Gather ─────────────────────────────────────────────────────────────
 
