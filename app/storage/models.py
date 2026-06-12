@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Annotated, Literal, Optional, Union
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
@@ -284,15 +284,133 @@ class ExtractedFact(BaseModel):
     source_excerpt: str = ""
 
 
+# ── State Change discriminated union (LLM-facing) ─────────────────────────
+
+CHARACTER_SCALAR_FIELDS = Literal[
+    "emotion", "goal", "location", "status", "power_level"
+]
+
+
+class SetFieldChange(BaseModel):
+    """Set a scalar state field to a new value."""
+    type: Literal["set_field"]
+    field: CHARACTER_SCALAR_FIELDS
+    value: str
+
+
+class RelationshipChange(BaseModel):
+    """Add or update a relationship with another character."""
+    type: Literal["relationship_change"]
+    target_character_id: str
+    relationship: str
+
+
+class KnowledgeAddChange(BaseModel):
+    """Add a fact to the character's knowledge."""
+    type: Literal["knowledge_add"]
+    fact: str
+
+
+class KnowledgeRemoveChange(BaseModel):
+    """Remove a fact from the character's knowledge."""
+    type: Literal["knowledge_remove"]
+    fact: str
+
+
+class SecretAddChange(BaseModel):
+    """Add a secret the character knows."""
+    type: Literal["secret_add"]
+    fact: str
+
+
+class SecretRemoveChange(BaseModel):
+    """Remove a secret from the character's knowledge."""
+    type: Literal["secret_remove"]
+    fact: str
+
+
+StateChange = Annotated[
+    Union[
+        SetFieldChange,
+        RelationshipChange,
+        KnowledgeAddChange,
+        KnowledgeRemoveChange,
+        SecretAddChange,
+        SecretRemoveChange,
+    ],
+    Field(discriminator="type"),
+]
+
+
 class StateChangeProposal(BaseModel):
-    """A proposed change to one character's mutable state, from the State Updater."""
+    """LLM output: proposed state changes for one character after a scene.
+    Contains only new values — code fills old values from the snapshot."""
     character_id: str = ""
     character_name: str = ""
+    changes: list[StateChange] = Field(default_factory=list)
+
+
+# ── Stored event record (events.jsonl line) ───────────────────────────────
+
+class CharacterStoredChange(BaseModel):
+    """A single change within a stored event, with old value filled by code."""
+    type: str  # same discriminator as StateChange
+    field: str = ""             # for set_field
+    value: str = ""             # new value (for set_field)
+    old: str = ""               # previous value (filled by code)
+    fact: str = ""              # for knowledge_add/remove, secret_add/remove
+    target_character_id: str = ""  # for relationship_change
+    relationship: str = ""      # for relationship_change
+
+
+class CharacterStateEvent(BaseModel):
+    """One JSONL line in events.jsonl — a single StateUpdater run."""
+    event_id: int = 0
+    transaction_id: str = ""    # groups events from same pipeline run
+    scene_id: str = ""
+    character_id: str = ""
+    source: str = "ai"          # ai | user | manual_event | system
+    request_id: str = ""        # UUID for observability
+    schema_version: int = 1
+    invalidated: bool = False
+    created_at: str = ""        # ISO timestamp
+    changes: list[CharacterStoredChange] = Field(default_factory=list)
+
+
+# ── State snapshot (state.yaml) ───────────────────────────────────────────
+
+class CharacterStateSnapshot(BaseModel):
+    """Materialized character state at a specific event_id.
+    Written to state.yaml — the cached current-state view."""
+    character_id: str = ""
+    last_scene_id: str = ""
+    last_event_id: int = 0
+    snapshot_version: int = 1
+    generated_at: str = ""
     emotion: str = ""
     goal: str = ""
     location: str = ""
-    relationships_add: dict[str, str] = Field(default_factory=dict)
-    relationships_remove: list[str] = Field(default_factory=list)
-    knowledge_add: list[str] = Field(default_factory=list)
-    secrets_add: list[str] = Field(default_factory=list)
     status: str = ""
+    power_level: str = ""
+    relationships: dict[str, str] = Field(default_factory=dict)
+    knowledge: list[str] = Field(default_factory=list)
+    secrets: list[str] = Field(default_factory=list)
+
+
+# ── Scene-level state checkpoint (checkpoint.yaml per scene) ──────────────
+
+class SceneStateCheckpoint(BaseModel):
+    """Snapshot of all character states at a point in the scene.
+    Written to characters/<name>/checkpoints/<scene_id>.yaml."""
+    scene_id: str = ""
+    checkpoint_id: str = ""
+    parent_checkpoint_id: str = ""
+    event_id: int = 0
+    character_id: str = ""
+    created_at: str = ""
+    snapshot: CharacterStateSnapshot = Field(default_factory=CharacterStateSnapshot)
+
+
+# ── Rebuild models that reference StateChange ─────────────────────────────
+
+ContextStateChanges = list[StateChangeProposal]

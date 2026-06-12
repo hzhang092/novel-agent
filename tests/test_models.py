@@ -327,3 +327,36 @@ def test_project_title_required():
 def test_project_genre_required():
     with pytest.raises(ValidationError):
         Project(title="test")
+
+# ── State Change discriminated union tests ──────────────────────────────────
+
+def test_state_change_discriminated_union_set_field():
+    """SetFieldChange validates with correct type and known field."""
+    from app.storage.models import SetFieldChange, StateChangeProposal
+
+    change = SetFieldChange(type="set_field", field="goal", value="avenge master")
+    proposal = StateChangeProposal(character_id="char-1", character_name="林枫", changes=[change])
+    assert len(proposal.changes) == 1
+    assert proposal.changes[0].type == "set_field"
+
+def test_state_change_discriminated_union_rejects_unknown_field():
+    """SetFieldChange rejects field names not in CHARACTER_SCALAR_FIELDS."""
+    from app.storage.models import SetFieldChange
+
+    with pytest.raises(ValidationError):
+        SetFieldChange(type="set_field", field="goals", value="avenge master")
+
+def test_character_state_event_serializes_to_dict():
+    """CharacterStateEvent round-trips through model_dump."""
+    from app.storage.models import CharacterStateEvent, CharacterStoredChange
+
+    event = CharacterStateEvent(
+        event_id=1,
+        scene_id="scene_042",
+        character_id="char-1",
+        source="ai",
+        changes=[CharacterStoredChange(type="set_field", field="goal", value="avenge", old="become_elder")],
+    )
+    d = event.model_dump(mode="json")
+    assert d["event_id"] == 1
+    assert d["changes"][0]["old"] == "become_elder"
