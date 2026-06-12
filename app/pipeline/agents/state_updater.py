@@ -1,8 +1,10 @@
-"""StateUpdaterAgent — proposes CharacterState changes after a scene."""
+"""StateUpdaterAgent — proposes CharacterState changes after a scene.
+
+Now outputs the new discriminated union format: a list of typed StateChange items
+in the "changes" field instead of flat scalar fields.
+"""
 
 from __future__ import annotations
-
-from pydantic import BaseModel, Field
 
 from app.providers.base import LLMProvider, ProviderResponse
 from app.storage.models import StateChangeProposal
@@ -31,6 +33,9 @@ class StateUpdaterAgent:
         major_characters: list[dict],
     ) -> list[StateChangeProposal]:
         """Run the state updater and return validated proposals."""
+        from pydantic import BaseModel, Field
+        from app.storage.models import StateChange
+
         class ChangeList(BaseModel):
             changes: list[StateChangeProposal] = Field(default_factory=list)
 
@@ -43,7 +48,7 @@ class StateUpdaterAgent:
             return resp.model.changes
         parsed = resp.parsed or {}
         items = parsed.get("changes", [])
-        return [StateChangeProposal(**item) for item in items]
+        return [StateChangeProposal.model_validate(item) for item in items]
 
     def build_prompt(
         self, context: dict, prose: str, major_characters: list[dict]
@@ -60,7 +65,11 @@ def _build_state_updater_messages(
     system = (
         "你是一位角色状态追踪员。"
         "你的任务是根据场景正文，推理每个主要角色在本场景结束后的状态变化。"
-        "只报告发生了变化的字段；没有变化的字段留空。"
+        "只有发生了变化的字段才需要报告，未变化的字段不要输出。"
+        "每个变化必须使用 type 字段标注类型："
+        "set_field（修改标量字段）、relationship_change（关系变化）、"
+        "knowledge_add（获得新知识）、knowledge_remove（遗忘知识）、"
+        "secret_add（发现新秘密）、secret_remove（秘密不再有效）。"
         "你必须输出严格的 JSON 格式。"
     )
     return [
@@ -119,19 +128,33 @@ def _build_state_updater_prompt(
     lines.append("")
 
     lines.append("【输出要求】")
-    lines.append("为每个主要角色输出一条 StateChangeProposal，只填写实际发生变化的字段：")
-    lines.append("- character_id: 角色的 id")
-    lines.append("- character_name: 角色名")
-    lines.append("- emotion: 场景结束后的新情绪（没变化则留空）")
-    lines.append("- goal: 场景结束后的新目标（没变化则留空）")
-    lines.append("- location: 场景结束后的新位置（没变化则留空）")
-    lines.append("- relationships_add: 新增或变化的关系（dict，角色名→关系描述）")
-    lines.append("- relationships_remove: 不再有效的关系角色名列表")
-    lines.append("- knowledge_add: 本场景中该角色新获得的信息")
-    lines.append("- secrets_add: 本场景中该角色新发现的秘密")
-    lines.append("- status: 新状态描述（如受伤/突破/昏迷等，没变化则留空）")
+    lines.append("为每个主要角色输出一条 StateChangeProposal，在 changes 数组中列出所有状态变化：")
     lines.append("")
-    lines.append('输出 JSON 格式：{"changes": [...]}')
+    lines.append("变化类型（type 字段）：")
+    lines.append("- set_field: 修改标量状态字段。field 可选值: emotion, goal, location, status, power_level")
+    lines.append("  例: {\"type\": \"set_field\", \"field\": \"emotion\", \"value\": \"愤怒\"}")
+    lines.append("- relationship_change: 与其他角色的关系发生变化")
+    lines.append("  例: {\"type\": \"relationship_change\", \"target_character_id\": \"char-bob\", \"relationship\": \"死敌\"}")
+    lines.append("- knowledge_add: 角色新得知了某个信息")
+    lines.append("  例: {\"type\": \"knowledge_add\", \"fact\": \"知道了宝藏的秘密\"}")
+    lines.append("- knowledge_remove: 角色遗忘/不再关心某个信息")
+    lines.append("  例: {\"type\": \"knowledge_remove\", \"fact\": \"旧信息\"}")
+    lines.append("- secret_add: 角色发现了新秘密")
+    lines.append("  例: {\"type\": \"secret_add\", \"fact\": \"师父的真实身份\"}")
+    lines.append("- secret_remove: 某个秘密已不再有效")
+    lines.append("  例: {\"type\": \"secret_remove\", \"fact\": \"已揭露的秘密\"}")
+    lines.append("")
+    lines.append("每条 Proposal 格式：")
+    lines.append("{")
+    lines.append('  "character_id": "角色ID",')
+    lines.append('  "character_name": "角色名",')
+    lines.append('  "changes": [')
+    lines.append('    {\"type\": \"...\", ...},')
+    lines.append('    ...')
+    lines.append('  ]')
+    lines.append("}")
+    lines.append("")
+    lines.append('整个输出为 JSON 格式：{"changes": [...]}')
     lines.append('如果所有角色都没有状态变化，输出 {"changes": []}')
 
     return "\n".join(lines)
