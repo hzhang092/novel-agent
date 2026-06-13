@@ -27,13 +27,13 @@ import logging
 
 from app.storage.models import Character, CharacterCore, CharacterState, CharacterTier
 from app.storage.project_files import (
-
-logger = logging.getLogger(__name__)
     delete_character,
     list_character_ids,
     load_character,
     save_character,
 )
+
+logger = logging.getLogger(__name__)
 from app.ui.widgets import KeyValueTable, StringListEditor, read_table_cell
 
 TIER_COLORS = {
