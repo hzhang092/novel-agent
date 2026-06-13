@@ -149,7 +149,7 @@ class MainWindow(QMainWindow):
         if index == 1:
             bible = self.views["bible"]
             if isinstance(bible, BibleEditorView):
-                bible._character_editor.set_event_bus(self._domain_bus)
+                bible._character_tab.set_event_bus(self._domain_bus)
 
         # Load workspace when navigating to it
         if index == 3:
@@ -670,6 +670,12 @@ class MainWindow(QMainWindow):
             self, "迁移完成",
             f"已迁移 {migrated} 个角色。\n备份存储在: {backup_dir}"
         )
+
+        # Reload the Bible Editor's character tab to pick up migrated characters
+        if migrated > 0:
+            bible = self.views.get("bible")
+            if isinstance(bible, BibleEditorView):
+                bible._character_tab.load_project_dir(project_dir)
 
     def _set_nav_items_enabled(self, enabled: bool) -> None:
         """Enable or disable all non-dashboard sidebar items."""
