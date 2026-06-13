@@ -336,6 +336,19 @@ class MainWindow(QMainWindow):
                     pass
                 workspace.next_scene_requested.connect(self._on_next_scene)
 
+        from PyQt6.QtCore import QSettings
+        settings = QSettings()
+        key = f"last_scene/{Path(dir_path)}"
+        last_scene_id = settings.value(key)
+        if last_scene_id and isinstance(last_scene_id, str):
+            chapter_id = self._find_chapter_for_scene(last_scene_id)
+            if chapter_id:
+                self.sidebar.setCurrentRow(3)
+                if isinstance(outline, OutlineEditorView):
+                    outline._select_by_id(last_scene_id)
+            else:
+                self.sidebar.setCurrentRow(0)
+
         # Check for legacy character files and offer migration
         self._check_legacy_migration(Path(dir_path))
 
@@ -402,6 +415,12 @@ class MainWindow(QMainWindow):
 
         chapter_id = self._find_chapter_for_scene(scene_id)
         workspace.set_scene(scene_id, chapter_id or "")
+
+        from PyQt6.QtCore import QSettings
+        settings = QSettings()
+        if self._current_project_dir is not None:
+            key = f"last_scene/{self._current_project_dir}"
+            settings.setValue(key, scene_id)
 
         try:
             from app.pipeline.context_builder import RetrievalEngine
