@@ -362,6 +362,7 @@ class MainWindow(QMainWindow):
         reviewer_provider = get_provider_for_step("reviewer", config)
 
         workspace.set_generating(True)
+        self._generation_in_progress = True
         workspace.editor.setPlainText("")
         workspace.trace_panel.clear()
         workspace.trace_panel.set_waiting("正在组装上下文...")
@@ -386,6 +387,7 @@ class MainWindow(QMainWindow):
                 plan_decision.set_result(False)
                 workspace.planner_checkpoint.hide_plan()
                 workspace.set_generating(False)
+                self._generation_in_progress = False
                 workspace.trace_panel.clear()
 
         try:
@@ -430,6 +432,7 @@ class MainWindow(QMainWindow):
                         workspace.editor.append(token)
                     if result is not None:
                         workspace.set_generating(False)
+                        self._generation_in_progress = False
                         if result.prose:
                             workspace._status_label.setText("已生成")
                             self._update_status_bar_tokens()
@@ -451,6 +454,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 workspace.trace_panel.clear()
                 workspace.set_generating(False)
+                self._generation_in_progress = False
                 workspace._status_label.setText("生成失败")
             finally:
                 for p in providers:
@@ -510,8 +514,8 @@ class MainWindow(QMainWindow):
         from app.storage.project_files import load_canon_facts, save_canon_facts
 
         workspace = self.views.get("workspace")
-        scene_id = workspace._current_scene_id if isinstance(workspace, SceneWorkspaceView) else ""
 
+        scene_id = (workspace._current_scene_id or "") if isinstance(workspace, SceneWorkspaceView) else ""
         try:
             existing = load_canon_facts(self._current_project_dir)
         except Exception:
@@ -544,7 +548,7 @@ class MainWindow(QMainWindow):
         import uuid as uuid_mod
 
         workspace = self.views.get("workspace")
-        scene_id = workspace._current_scene_id if isinstance(workspace, SceneWorkspaceView) else ""
+        scene_id = (workspace._current_scene_id or "") if isinstance(workspace, SceneWorkspaceView) else ""
         tx_id = str(uuid_mod.uuid4())
 
         for proposal_dict in approved_changes:

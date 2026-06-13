@@ -249,6 +249,8 @@ def _convert_to_stored_change(
         fact = change.fact
     elif t == "secret_remove":
         fact = change.fact
+    else:
+        raise ValueError(f"Unknown change type: {t!r}")
 
     return CharacterStoredChange(
         type=t,

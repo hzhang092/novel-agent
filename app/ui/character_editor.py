@@ -58,6 +58,7 @@ class CharacterEditorView(QWidget):
         self._characters: dict[str, Character] = {}  # id -> Character
         self._current_id: str | None = None
         self._current_scene_id: str = ""
+        self._bus = None
         self._setup_ui()
 
     # ── Public API ─────────────────────────────────────────────────────────
@@ -75,6 +76,8 @@ class CharacterEditorView(QWidget):
 
     def set_event_bus(self, bus) -> None:
         """Subscribe to domain events for live state refresh."""
+        if self._bus is not None:
+            return  # already subscribed
         self._bus = bus
         bus.subscribe("character_state_updated", self._on_state_updated)
 
