@@ -57,6 +57,7 @@ class CharacterEditorView(QWidget):
         self._project_dir: Path | None = None
         self._characters: dict[str, Character] = {}  # id -> Character
         self._current_id: str | None = None
+        self._current_scene_id: str = ""
         self._setup_ui()
 
     # ── Public API ─────────────────────────────────────────────────────────
