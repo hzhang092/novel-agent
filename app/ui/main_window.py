@@ -89,6 +89,15 @@ class MainWindow(QMainWindow):
         settings_action.triggered.connect(self._on_llm_settings)
         file_menu.addAction(settings_action)
 
+        file_menu.addSeparator()
+        export_md_action = QAction("导出 Markdown(&M)...", self)
+        export_md_action.triggered.connect(self._on_export_markdown)
+        file_menu.addAction(export_md_action)
+
+        export_epub_action = QAction("导出 EPUB(&E)...", self)
+        export_epub_action.triggered.connect(self._on_export_epub)
+        file_menu.addAction(export_epub_action)
+
     def _setup_ui(self) -> None:
         central = QWidget()
         self.setCentralWidget(central)
@@ -315,6 +324,53 @@ class MainWindow(QMainWindow):
         """Open the LLM provider settings dialog."""
         dialog = SettingsDialog(self)
         dialog.exec()
+
+    def _on_export_markdown(self) -> None:
+        """Export all approved scenes as a single Markdown file."""
+        if self._current_project_dir is None or self._current_project is None:
+            QMessageBox.warning(self, "提示", "请先打开或创建项目")
+            return
+
+        try:
+            from app.export import export_markdown
+            path = export_markdown(
+                self._current_project_dir, self._current_project.title
+            )
+            QMessageBox.information(
+                self, "导出成功",
+                f"Markdown 已导出到:\n{path}"
+            )
+        except ValueError as e:
+            QMessageBox.warning(self, "导出失败", str(e))
+        except Exception as e:
+            QMessageBox.critical(self, "导出错误", f"导出过程中发生错误:\n{e}")
+
+    def _on_export_epub(self) -> None:
+        """Export all approved scenes as an EPUB file."""
+        if self._current_project_dir is None or self._current_project is None:
+            QMessageBox.warning(self, "提示", "请先打开或创建项目")
+            return
+
+        try:
+            from app.export import export_epub
+            path = export_epub(
+                self._current_project_dir,
+                self._current_project.title,
+                author="",
+            )
+            QMessageBox.information(
+                self, "导出成功",
+                f"EPUB 已导出到:\n{path}"
+            )
+        except ValueError as e:
+            QMessageBox.warning(self, "导出失败", str(e))
+        except ImportError:
+            QMessageBox.critical(
+                self, "缺少依赖",
+                "EPUB 导出需要 ebooklib 库。\n请运行: pip install ebooklib"
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "导出错误", f"导出过程中发生错误:\n{e}")
 
     def _on_scene_selected(self, scene_id: str) -> None:
         """Handle scene selection: assemble context, find chapter, load prose, update workspace."""
