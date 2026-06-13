@@ -559,6 +559,29 @@ class OutlineEditorView(QWidget):
 
     # ── Helpers ────────────────────────────────────────────────────────────
 
+
+    def select_next_scene(self, current_scene_id: str) -> str | None:
+        """Find and select the next scene in sequence after the given scene_id.
+
+        Returns the next scene's ID, or None if this is the last scene.
+        Navigates across chapter and volume boundaries.
+        """
+        flat_scenes: list[tuple[str, str]] = []  # (scene_id, chapter_id)
+        for vol in self._volumes:
+            for ch in vol.chapters:
+                for sc in ch.scenes:
+                    flat_scenes.append((sc.id, ch.id))
+
+        for i, (sid, _chid) in enumerate(flat_scenes):
+            if sid == current_scene_id:
+                if i + 1 < len(flat_scenes):
+                    next_sid = flat_scenes[i + 1][0]
+                    self._select_by_id(next_sid)
+                    return next_sid
+                return None
+
+        return None
+
     def _find_volume(self, volume_id: str):
         for vol in self._volumes:
             if vol.id == volume_id:

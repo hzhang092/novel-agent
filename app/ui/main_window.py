@@ -98,6 +98,15 @@ class MainWindow(QMainWindow):
         export_epub_action.triggered.connect(self._on_export_epub)
         file_menu.addAction(export_epub_action)
 
+        file_menu.addSeparator()
+        export_md_action = QAction("导出 Markdown(&M)...", self)
+        export_md_action.triggered.connect(self._on_export_markdown)
+        file_menu.addAction(export_md_action)
+
+        export_epub_action = QAction("导出 EPUB(&E)...", self)
+        export_epub_action.triggered.connect(self._on_export_epub)
+        file_menu.addAction(export_epub_action)
+
     def _setup_ui(self) -> None:
         central = QWidget()
         self.setCentralWidget(central)
@@ -175,6 +184,11 @@ class MainWindow(QMainWindow):
                 except TypeError:
                     pass
                 workspace.retry_requested.connect(self._retry_agent)
+                try:
+                    workspace.next_scene_requested.disconnect()
+                except TypeError:
+                    pass
+                workspace.next_scene_requested.connect(self._on_next_scene)
                 try:
                     workspace.fact_approval.facts_approved.disconnect()
                 except TypeError:
@@ -316,6 +330,11 @@ class MainWindow(QMainWindow):
                 except TypeError:
                     pass
                 workspace.retry_requested.connect(self._retry_agent)
+                try:
+                    workspace.next_scene_requested.disconnect()
+                except TypeError:
+                    pass
+                workspace.next_scene_requested.connect(self._on_next_scene)
 
         # Check for legacy character files and offer migration
         self._check_legacy_migration(Path(dir_path))
@@ -398,6 +417,23 @@ class MainWindow(QMainWindow):
             prose = load_scene_prose(self._current_project_dir, chapter_id, scene_id)
             if prose:
                 workspace.editor.setPlainText(prose)
+
+    def _on_next_scene(self) -> None:
+        """Navigate to the next scene in the outline sequence."""
+        workspace = self.views.get("workspace")
+        if not isinstance(workspace, SceneWorkspaceView):
+            return
+        if not workspace._current_scene_id:
+            return
+
+        outline = self.views.get("outline")
+        if not isinstance(outline, OutlineEditorView):
+            return
+
+        next_id = outline.select_next_scene(workspace._current_scene_id)
+        if next_id is None:
+            workspace._next_scene_btn.setEnabled(False)
+            workspace._status_label.setText("已是最后一场景")
 
     def _on_generate_requested(self, scene_id: str) -> None:
         """Trigger full pipeline generation for the given scene."""

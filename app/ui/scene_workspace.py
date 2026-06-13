@@ -33,6 +33,7 @@ class SceneWorkspaceView(QWidget):
 
     generate_requested = pyqtSignal(str)  # emits scene_id
     retry_requested = pyqtSignal(str)  # emits agent_name
+    next_scene_requested = pyqtSignal()  # emits when user clicks Next Scene
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -65,6 +66,17 @@ class SceneWorkspaceView(QWidget):
         )
         self._regenerate_btn.clicked.connect(self._on_regenerate_clicked)
         toolbar.addWidget(self._regenerate_btn)
+
+        toolbar.addSpacing(16)
+        self._next_scene_btn = QPushButton("下一场景 ▸")
+        self._next_scene_btn.setEnabled(False)
+        self._next_scene_btn.setStyleSheet(
+            "QPushButton { padding: 6px 14px; }"
+        )
+        self._next_scene_btn.clicked.connect(
+            lambda: self.next_scene_requested.emit()
+        )
+        toolbar.addWidget(self._next_scene_btn)
 
         self._status_label = QLabel("")
         self._status_label.setStyleSheet("color: #888; font-size: 12px;")
@@ -144,6 +156,7 @@ class SceneWorkspaceView(QWidget):
         self._generate_btn.setEnabled(True)
         self._regenerate_btn.setEnabled(True)
         self._status_label.setText("就绪")
+        self._next_scene_btn.setEnabled(True)
 
     def clear_scene(self) -> None:
         """Called when no scene is selected."""
@@ -152,6 +165,7 @@ class SceneWorkspaceView(QWidget):
         self._generate_btn.setEnabled(False)
         self._regenerate_btn.setEnabled(False)
         self.hide_fact_approval()
+        self._next_scene_btn.setEnabled(False)
 
     def show_context(self, context: dict) -> None:
         """Display assembled context in the preview panel."""
@@ -166,10 +180,12 @@ class SceneWorkspaceView(QWidget):
         self._generating = generating
         self._generate_btn.setEnabled(not generating and self._current_scene_id is not None)
         self._regenerate_btn.setEnabled(not generating and self._current_scene_id is not None)
+        self._next_scene_btn.setEnabled(not generating and self._current_scene_id is not None)
         if generating:
             self._status_label.setText("生成中...")
         else:
             self._status_label.setText("就绪")
+        self._next_scene_btn.setEnabled(True)
 
     def show_review_result(self, passed: bool, summary: str) -> None:
         """Show the review result bar."""
