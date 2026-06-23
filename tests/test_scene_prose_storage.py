@@ -30,6 +30,54 @@ def test_load_scene_prose_missing_file(tmp_path):
     assert result == ""
 
 
+def test_load_scene_prose_prefers_latest_versioned_file(tmp_path):
+    """Versioned generated prose should be reloaded by default."""
+    from app.storage.project_files import load_scene_prose
+
+    project = Project(title="测试", genre="玄幻")
+    proj_dir = create_project(tmp_path, project)
+    chapter_dir = proj_dir / "scenes" / "ch-1"
+    chapter_dir.mkdir(parents=True)
+
+    (chapter_dir / "scene-1.md").write_text("legacy", encoding="utf-8")
+    (chapter_dir / "scene-1.v1.md").write_text("first generated", encoding="utf-8")
+    (chapter_dir / "scene-1.v2.md").write_text("latest generated", encoding="utf-8")
+
+    loaded = load_scene_prose(proj_dir, chapter_id="ch-1", scene_id="scene-1")
+    assert loaded == "latest generated"
+
+
+def test_load_scene_prose_falls_back_to_legacy_file(tmp_path):
+    """Legacy unversioned prose remains readable when no vN files exist."""
+    from app.storage.project_files import load_scene_prose
+
+    project = Project(title="测试", genre="玄幻")
+    proj_dir = create_project(tmp_path, project)
+    chapter_dir = proj_dir / "scenes" / "ch-1"
+    chapter_dir.mkdir(parents=True)
+
+    (chapter_dir / "scene-1.md").write_text("legacy", encoding="utf-8")
+
+    loaded = load_scene_prose(proj_dir, chapter_id="ch-1", scene_id="scene-1")
+    assert loaded == "legacy"
+
+
+def test_load_scene_prose_ignores_malformed_versions(tmp_path):
+    """Malformed v-suffix files should not beat valid prose files."""
+    from app.storage.project_files import load_scene_prose
+
+    project = Project(title="测试", genre="玄幻")
+    proj_dir = create_project(tmp_path, project)
+    chapter_dir = proj_dir / "scenes" / "ch-1"
+    chapter_dir.mkdir(parents=True)
+
+    (chapter_dir / "scene-1.vx.md").write_text("bad", encoding="utf-8")
+    (chapter_dir / "scene-1.md").write_text("legacy", encoding="utf-8")
+
+    loaded = load_scene_prose(proj_dir, chapter_id="ch-1", scene_id="scene-1")
+    assert loaded == "legacy"
+
+
 def test_save_and_load_scene_generation_record(tmp_path):
     """Save and load a SceneGenerationRecord as JSON."""
     from app.storage.project_files import save_scene_generation_record, load_scene_generation_record
