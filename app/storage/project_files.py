@@ -4,6 +4,7 @@ creates the standard project directory layout."""
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -516,10 +517,14 @@ def load_scene_summaries(project_dir: Path) -> list:
 
 # ── Scene Prose I/O ───────────────────────────────────────────────────────
 
+_SCENE_PROSE_VERSION_RE = re.compile(r"\.v(\d+)$")
+
 
 def save_scene_prose(project_dir: Path, chapter_id: str, scene_id: str, prose: str) -> None:
-    """Write scene prose to scenes/<chapter>/<scene_id>.md.
-    Creates the chapter directory if it doesn't exist.
+    """Write scene prose to the legacy scenes/<chapter>/<scene_id>.md path.
+
+    Generated prose is versioned elsewhere as <scene_id>.vN.md. This legacy writer
+    is retained for manual/older call sites and backward compatibility.
     """
     chapter_dir = project_dir / "scenes" / chapter_id
     chapter_dir.mkdir(parents=True, exist_ok=True)
@@ -528,12 +533,48 @@ def save_scene_prose(project_dir: Path, chapter_id: str, scene_id: str, prose: s
         fh.write(prose)
 
 
+def _extract_scene_prose_version(path: Path) -> int | None:
+    """Return N for a <scene_id>.vN.md path, ignoring malformed versions."""
+    match = _SCENE_PROSE_VERSION_RE.search(path.stem)
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+def _latest_scene_prose_path(project_dir: Path, chapter_id: str, scene_id: str) -> Path | None:
+    """Find the latest versioned prose path, falling back to legacy unversioned prose."""
+    chapter_dir = project_dir / "scenes" / chapter_id
+    if not chapter_dir.exists():
+        return None
+
+    latest_path: Path | None = None
+    latest_version = -1
+    for path in chapter_dir.glob(f"{scene_id}.v*.md"):
+        version = _extract_scene_prose_version(path)
+        if version is None:
+            continue
+        if version > latest_version:
+            latest_version = version
+            latest_path = path
+
+    if latest_path is not None:
+        return latest_path
+
+    legacy_path = chapter_dir / f"{scene_id}.md"
+    if legacy_path.exists():
+        return legacy_path
+    return None
+
+
 def load_scene_prose(project_dir: Path, chapter_id: str, scene_id: str) -> str:
-    """Load scene prose from scenes/<chapter>/<scene_id>.md.
-    Returns empty string if the file does not exist.
+    """Load the latest scene prose.
+
+    Prefer scenes/<chapter>/<scene_id>.vN.md using the highest numeric N, then
+    fall back to legacy scenes/<chapter>/<scene_id>.md. Returns an empty string
+    if no prose file exists.
     """
-    filepath = project_dir / "scenes" / chapter_id / f"{scene_id}.md"
-    if not filepath.exists():
+    filepath = _latest_scene_prose_path(project_dir, chapter_id, scene_id)
+    if filepath is None:
         return ""
     with open(filepath, "r", encoding="utf-8") as fh:
         return fh.read()
