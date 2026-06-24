@@ -95,6 +95,88 @@ def test_save_scene_prose_appends_version_after_generation(tmp_path):
     assert loaded == "manual edit"
 
 
+def test_list_scene_prose_versions_newest_first_with_legacy(tmp_path):
+    from app.storage.project_files import list_scene_prose_versions
+
+    project = Project(title="测试", genre="玄幻")
+    proj_dir = create_project(tmp_path, project)
+    chapter_dir = proj_dir / "scenes" / "ch-1"
+    chapter_dir.mkdir(parents=True)
+    (chapter_dir / "scene-1.md").write_text("legacy", encoding="utf-8")
+    (chapter_dir / "scene-1.v1.md").write_text("first", encoding="utf-8")
+    (chapter_dir / "scene-1.v3.md").write_text("third", encoding="utf-8")
+    (chapter_dir / "scene-1.vx.md").write_text("bad", encoding="utf-8")
+
+    versions = list_scene_prose_versions(proj_dir, "ch-1", "scene-1")
+
+    assert versions == ["v3", "v1", "legacy"]
+
+
+def test_load_scene_prose_version_loads_requested_version(tmp_path):
+    from app.storage.project_files import load_scene_prose_version
+
+    project = Project(title="测试", genre="玄幻")
+    proj_dir = create_project(tmp_path, project)
+    chapter_dir = proj_dir / "scenes" / "ch-1"
+    chapter_dir.mkdir(parents=True)
+    (chapter_dir / "scene-1.md").write_text("legacy", encoding="utf-8")
+    (chapter_dir / "scene-1.v1.md").write_text("first", encoding="utf-8")
+    (chapter_dir / "scene-1.v2.md").write_text("second", encoding="utf-8")
+
+    assert load_scene_prose_version(proj_dir, "ch-1", "scene-1", "v1") == "first"
+    assert load_scene_prose_version(proj_dir, "ch-1", "scene-1", "legacy") == "legacy"
+    assert load_scene_prose_version(proj_dir, "ch-1", "scene-1", "missing") == ""
+
+
+def test_set_active_scene_prose_version_writes_marker(tmp_path):
+    from app.storage.project_files import (
+        get_active_scene_prose_version,
+        set_active_scene_prose_version,
+    )
+
+    project = Project(title="测试", genre="玄幻")
+    proj_dir = create_project(tmp_path, project)
+
+    set_active_scene_prose_version(proj_dir, "ch-1", "scene-1", "v2")
+
+    assert get_active_scene_prose_version(proj_dir, "ch-1", "scene-1") == "v2"
+    assert (proj_dir / "scenes" / "ch-1" / "scene-1.active.yaml").exists()
+
+
+def test_load_scene_prose_prefers_active_version(tmp_path):
+    from app.storage.project_files import load_scene_prose, set_active_scene_prose_version
+
+    project = Project(title="测试", genre="玄幻")
+    proj_dir = create_project(tmp_path, project)
+    chapter_dir = proj_dir / "scenes" / "ch-1"
+    chapter_dir.mkdir(parents=True)
+    (chapter_dir / "scene-1.v1.md").write_text("chosen", encoding="utf-8")
+    (chapter_dir / "scene-1.v2.md").write_text("newest", encoding="utf-8")
+    set_active_scene_prose_version(proj_dir, "ch-1", "scene-1", "v1")
+
+    assert load_scene_prose(proj_dir, "ch-1", "scene-1") == "chosen"
+
+
+def test_load_scene_prose_status_reports_missing_active_fallback(tmp_path):
+    from app.storage.project_files import (
+        load_scene_prose_status,
+        set_active_scene_prose_version,
+    )
+
+    project = Project(title="测试", genre="玄幻")
+    proj_dir = create_project(tmp_path, project)
+    chapter_dir = proj_dir / "scenes" / "ch-1"
+    chapter_dir.mkdir(parents=True)
+    (chapter_dir / "scene-1.v2.md").write_text("fallback", encoding="utf-8")
+    set_active_scene_prose_version(proj_dir, "ch-1", "scene-1", "v1")
+
+    prose, version, active_missing = load_scene_prose_status(proj_dir, "ch-1", "scene-1")
+
+    assert prose == "fallback"
+    assert version == "v2"
+    assert active_missing is True
+
+
 def test_save_and_load_scene_generation_record(tmp_path):
     """Save and load a SceneGenerationRecord as JSON."""
     from app.storage.project_files import save_scene_generation_record, load_scene_generation_record

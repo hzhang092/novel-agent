@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QShortcut, QKeySequence
 from PyQt6.QtWidgets import (
+    QComboBox,
     QHBoxLayout,
     QPushButton,
     QStackedWidget,
@@ -24,9 +25,13 @@ class ProseEditorWidget(QWidget):
     Preview mode: QTextBrowser rendering Markdown as styled HTML.
     """
 
+    version_selected = pyqtSignal(str)
+    set_active_requested = pyqtSignal(str)
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._preview_on = False
+        self._updating_versions = False
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -41,6 +46,16 @@ class ProseEditorWidget(QWidget):
         self._preview_btn.setCheckable(True)
         self._preview_btn.toggled.connect(self._on_toggle_preview)
         toolbar.addWidget(self._preview_btn)
+
+        self._version_combo = QComboBox()
+        self._version_combo.setEnabled(False)
+        self._version_combo.currentIndexChanged.connect(self._on_version_changed)
+        toolbar.addWidget(self._version_combo)
+
+        self._set_active_btn = QPushButton("设为当前")
+        self._set_active_btn.setEnabled(False)
+        self._set_active_btn.clicked.connect(self._on_set_active)
+        toolbar.addWidget(self._set_active_btn)
 
         toolbar.addStretch()
         layout.addLayout(toolbar)
@@ -86,6 +101,7 @@ class ProseEditorWidget(QWidget):
     def setPlainText(self, text: str) -> None:
         """Set the editor text (mirrors QTextEdit.setPlainText)."""
         self._editor.setPlainText(text)
+        self._editor.document().setModified(False)
 
     def toPlainText(self) -> str:
         """Get the editor text."""
@@ -100,6 +116,43 @@ class ProseEditorWidget(QWidget):
         scrollbar = self._editor.verticalScrollBar()
         if scrollbar:
             scrollbar.setValue(scrollbar.maximum())
+
+    def set_versions(self, versions: list[str], current: str | None = None) -> None:
+        """Set selectable prose version tokens."""
+        self._updating_versions = True
+        self._version_combo.clear()
+        for version in versions:
+            label = "Legacy" if version == "legacy" else version
+            if current is not None and version == current:
+                label = f"当前 ({label})"
+            self._version_combo.addItem(label, version)
+        if current is not None:
+            index = self._version_combo.findData(current)
+            if index >= 0:
+                self._version_combo.setCurrentIndex(index)
+        self._version_combo.setEnabled(len(versions) > 1)
+        self._set_active_btn.setEnabled(bool(versions))
+        self._updating_versions = False
+
+    def current_version(self) -> str:
+        """Return the selected prose version token."""
+        return self._version_combo.currentData() or ""
+
+    def is_modified(self) -> bool:
+        """Return whether the editor has unsaved user edits."""
+        return self._editor.document().isModified()
+
+    def _on_version_changed(self, index: int) -> None:
+        if self._updating_versions or index < 0:
+            return
+        version = self._version_combo.itemData(index)
+        if version:
+            self.version_selected.emit(version)
+
+    def _on_set_active(self) -> None:
+        version = self.current_version()
+        if version:
+            self.set_active_requested.emit(version)
 
 
 def _wrap_html(body: str) -> str:

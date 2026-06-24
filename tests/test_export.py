@@ -1,6 +1,7 @@
 """Integration tests for the export module."""
 
 import tempfile
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from app.storage.models import (
 )
 from app.storage.project_files import (
     create_project,
+    set_active_scene_prose_version,
     save_volume_outline,
 )
 
@@ -73,6 +75,15 @@ class TestMarkdownExport:
         # scene-2 has prose so no placeholder expected
         assert "尚未生成" not in content
 
+    def test_uses_active_scene_version(self, project_dir: Path) -> None:
+        set_active_scene_prose_version(project_dir, "ch-1", "scene-1", "v1")
+
+        path = export_markdown(project_dir, "TestExport")
+        content = path.read_text(encoding="utf-8")
+
+        assert "旧版本" in content
+        assert "云海翻涌" not in content
+
     def test_raises_on_empty_outline(self, tmp_path: Path) -> None:
         proj = Project(title="Empty", genre="玄幻", llm_provider="mock")
         proj_dir = create_project(tmp_path, proj)
@@ -86,6 +97,20 @@ class TestEpubExport:
         assert path.exists()
         assert path.suffix == ".epub"
         assert path.stat().st_size > 0
+
+    def test_uses_active_scene_version(self, project_dir: Path) -> None:
+        set_active_scene_prose_version(project_dir, "ch-1", "scene-1", "v1")
+
+        path = export_epub(project_dir, "TestExport", author="测试作者")
+        with zipfile.ZipFile(path) as epub:
+            content = "\n".join(
+                epub.read(name).decode("utf-8")
+                for name in epub.namelist()
+                if name.endswith(".xhtml")
+            )
+
+        assert "旧版本" in content
+        assert "云海翻涌" not in content
 
     def test_raises_on_no_prose(self, tmp_path: Path) -> None:
         """EPUB export should raise if there's no generated prose at all."""

@@ -54,6 +54,7 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
         self._last_generated_scene_id: str | None = None
         self._generation_in_progress: bool = False
+        self._current_prose_version: str | None = None
 
         self._repo = Repository(Path.home() / "NovelForge")
         self._current_project: ProjectModel | None = None
@@ -134,6 +135,11 @@ class MainWindow(QMainWindow):
         }
         for key in ["dashboard", "bible", "outline", "workspace"]:
             self.stack.addWidget(self.views[key])
+
+        workspace = self.views["workspace"]
+        if isinstance(workspace, SceneWorkspaceView):
+            workspace.editor.version_selected.connect(self._on_prose_version_selected)
+            workspace.editor.set_active_requested.connect(self._on_set_active_prose_version)
 
         # Layout: sidebar | content
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -368,6 +374,14 @@ class MainWindow(QMainWindow):
             path = export_markdown(
                 self._current_project_dir, self._current_project.title
             )
+            fallback_warning = self._active_version_fallback_warning()
+            if fallback_warning:
+                QMessageBox.warning(
+                    self,
+                    "导出完成但版本已回退",
+                    f"{fallback_warning}\n\nMarkdown 已导出到:\n{path}",
+                )
+                return
             QMessageBox.information(
                 self, "导出成功",
                 f"Markdown 已导出到:\n{path}"
@@ -390,6 +404,14 @@ class MainWindow(QMainWindow):
                 self._current_project.title,
                 author="",
             )
+            fallback_warning = self._active_version_fallback_warning()
+            if fallback_warning:
+                QMessageBox.warning(
+                    self,
+                    "导出完成但版本已回退",
+                    f"{fallback_warning}\n\nEPUB 已导出到:\n{path}",
+                )
+                return
             QMessageBox.information(
                 self, "导出成功",
                 f"EPUB 已导出到:\n{path}"
@@ -432,10 +454,123 @@ class MainWindow(QMainWindow):
 
         # Load existing prose if available
         if chapter_id:
-            from app.storage.project_files import load_scene_prose
-            prose = load_scene_prose(self._current_project_dir, chapter_id, scene_id)
-            if prose:
-                workspace.editor.setPlainText(prose)
+            self._load_scene_prose_into_editor(workspace, chapter_id, scene_id)
+
+    def _active_version_fallback_warning(self) -> str:
+        """Return export warning text if any active prose version is missing."""
+        if self._current_project_dir is None:
+            return ""
+
+        from app.storage.project_files import load_all_volumes, load_scene_prose_status
+
+        missing: list[str] = []
+        for volume in load_all_volumes(self._current_project_dir):
+            for chapter in volume.chapters:
+                for scene in chapter.scenes:
+                    _, _, active_missing = load_scene_prose_status(
+                        self._current_project_dir, chapter.id, scene.id
+                    )
+                    if active_missing:
+                        missing.append(scene.title or scene.id)
+
+        if not missing:
+            return ""
+        listed = "、".join(missing[:5])
+        if len(missing) > 5:
+            listed += f" 等 {len(missing)} 个场景"
+        return f"以下场景的当前正文版本文件不存在，已使用最新可用版本：\n{listed}"
+
+    def _load_scene_prose_into_editor(
+        self, workspace: SceneWorkspaceView, chapter_id: str, scene_id: str
+    ) -> None:
+        """Load active scene prose and update the version selector."""
+        from app.storage.project_files import load_scene_prose_status
+
+        prose, version, active_missing = load_scene_prose_status(
+            self._current_project_dir, chapter_id, scene_id
+        )
+        self._refresh_prose_versions(chapter_id, scene_id, version)
+        workspace.editor.setPlainText(prose)
+        if active_missing:
+            QMessageBox.warning(
+                self,
+                "当前版本不可用",
+                "当前正文版本文件不存在，已显示最新可用版本。请重新设为当前。",
+            )
+
+    def _refresh_prose_versions(
+        self, chapter_id: str, scene_id: str, current: str | None = None
+    ) -> list[str]:
+        """Refresh editor version choices for the current scene."""
+        if self._current_project_dir is None:
+            return []
+        workspace = self.views.get("workspace")
+        if not isinstance(workspace, SceneWorkspaceView):
+            return []
+
+        from app.storage.project_files import list_scene_prose_versions
+
+        versions = list_scene_prose_versions(
+            self._current_project_dir, chapter_id, scene_id
+        )
+        if (
+            workspace._current_scene_id != scene_id
+            or workspace._current_chapter_id != chapter_id
+        ):
+            return versions
+        if current is None and versions:
+            current = versions[0]
+        self._current_prose_version = current
+        workspace.editor.set_versions(versions, current)
+        return versions
+
+    def _on_prose_version_selected(self, version: str) -> None:
+        """Load the selected prose version into the editor."""
+        if version == self._current_prose_version or self._current_project_dir is None:
+            return
+        workspace = self.views.get("workspace")
+        if not isinstance(workspace, SceneWorkspaceView):
+            return
+        scene_id = workspace._current_scene_id
+        chapter_id = workspace._current_chapter_id
+        if not scene_id or not chapter_id:
+            return
+
+        if workspace.editor.is_modified():
+            answer = QMessageBox.question(
+                self,
+                "切换版本",
+                "当前正文有未保存修改。切换版本会替换编辑器内容，继续吗？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                self._refresh_prose_versions(chapter_id, scene_id, self._current_prose_version)
+                return
+
+        from app.storage.project_files import load_scene_prose_version
+
+        workspace.editor.setPlainText(
+            load_scene_prose_version(self._current_project_dir, chapter_id, scene_id, version)
+        )
+        self._current_prose_version = version
+
+    def _on_set_active_prose_version(self, version: str) -> None:
+        """Persist the selected prose version as the display/export version."""
+        if self._current_project_dir is None:
+            return
+        workspace = self.views.get("workspace")
+        if not isinstance(workspace, SceneWorkspaceView):
+            return
+        scene_id = workspace._current_scene_id
+        chapter_id = workspace._current_chapter_id
+        if not scene_id or not chapter_id or not version:
+            return
+
+        from app.storage.project_files import set_active_scene_prose_version
+
+        set_active_scene_prose_version(self._current_project_dir, chapter_id, scene_id, version)
+        self._refresh_prose_versions(chapter_id, scene_id, version)
 
     def _on_next_scene(self) -> None:
         """Navigate to the next scene in the outline sequence."""
@@ -589,13 +724,20 @@ class MainWindow(QMainWindow):
         if not chapter_id:
             return
 
-        from app.storage.project_files import save_scene_generation_record
+        from app.storage.project_files import (
+            save_scene_generation_record,
+            set_active_scene_prose_version,
+        )
         from app.storage.models import SceneGenerationRecord
 
         version = _get_next_version(self._current_project_dir, chapter_id, result.scene_id)
         _save_versioned_prose(
             self._current_project_dir, chapter_id, result.scene_id, result.prose, version
         )
+        set_active_scene_prose_version(
+            self._current_project_dir, chapter_id, result.scene_id, f"v{version}"
+        )
+        self._refresh_prose_versions(chapter_id, result.scene_id, f"v{version}")
 
         plan_dict = result.plan.model_dump(mode="json") if result.plan else {}
         intents_dict = {

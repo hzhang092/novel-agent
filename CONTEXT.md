@@ -32,6 +32,10 @@ _Avoid_: Diff, patch, mutation.
 The post-generation UI where the author reviews and approves or rejects extracted canon facts and state change proposals. Approved proposals become events in the event log.
 _Avoid_: Review panel, post-generation review.
 
+**Active Prose Version (当前正文版本)**:
+The scene prose version the author has explicitly chosen as the authoritative text for display and export.
+_Avoid_: Selected version, current draft, default version.
+
 **Scene Checkpoint (场景检查点)**:
 A character state snapshot written immediately after a scene is approved. Used during context assembly so Scene N always sees state as of the end of Scene N-1, preserving temporal consistency even when scenes are generated out of order.
 _Avoid_: Scene snapshot, state checkpoint.

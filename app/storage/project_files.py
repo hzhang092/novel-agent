@@ -535,6 +535,12 @@ def save_scene_prose(project_dir: Path, chapter_id: str, scene_id: str, prose: s
     )
     with open(filepath, "w", encoding="utf-8") as fh:
         fh.write(prose)
+    set_active_scene_prose_version(
+        project_dir,
+        chapter_id,
+        scene_id,
+        "legacy" if latest_version is None else f"v{latest_version + 1}",
+    )
 
 
 def _extract_scene_prose_version(path: Path) -> int | None:
@@ -554,6 +560,69 @@ def _latest_scene_prose_version(chapter_dir: Path, scene_id: str) -> int | None:
     return max(versions, default=None)
 
 
+def _scene_prose_version_path(chapter_dir: Path, scene_id: str, version: str) -> Path | None:
+    if version == "legacy":
+        return chapter_dir / f"{scene_id}.md"
+    if version.startswith("v") and version[1:].isdigit():
+        return chapter_dir / f"{scene_id}.{version}.md"
+    return None
+
+
+def list_scene_prose_versions(project_dir: Path, chapter_id: str, scene_id: str) -> list[str]:
+    """List available prose versions newest-first, plus legacy if present."""
+    chapter_dir = project_dir / "scenes" / chapter_id
+    if not chapter_dir.exists():
+        return []
+
+    versions = [
+        version
+        for path in chapter_dir.glob(f"{scene_id}.v*.md")
+        if (version := _extract_scene_prose_version(path)) is not None
+    ]
+    result = [f"v{version}" for version in sorted(versions, reverse=True)]
+    if (chapter_dir / f"{scene_id}.md").exists():
+        result.append("legacy")
+    return result
+
+
+def load_scene_prose_version(
+    project_dir: Path, chapter_id: str, scene_id: str, version: str
+) -> str:
+    """Load a specific scene prose version token from list_scene_prose_versions()."""
+    chapter_dir = project_dir / "scenes" / chapter_id
+    filepath = _scene_prose_version_path(chapter_dir, scene_id, version)
+    if filepath is None:
+        return ""
+
+    if not filepath.exists():
+        return ""
+    with open(filepath, "r", encoding="utf-8") as fh:
+        return fh.read()
+
+
+def set_active_scene_prose_version(
+    project_dir: Path, chapter_id: str, scene_id: str, version: str
+) -> None:
+    """Persist the prose version chosen for display/export."""
+    chapter_dir = project_dir / "scenes" / chapter_id
+    chapter_dir.mkdir(parents=True, exist_ok=True)
+    with open(chapter_dir / f"{scene_id}.active.yaml", "w", encoding="utf-8") as fh:
+        yaml.safe_dump({"version": version}, fh, allow_unicode=True, sort_keys=False)
+
+
+def get_active_scene_prose_version(
+    project_dir: Path, chapter_id: str, scene_id: str
+) -> str | None:
+    """Return the persisted active prose version token, if any."""
+    filepath = project_dir / "scenes" / chapter_id / f"{scene_id}.active.yaml"
+    if not filepath.exists():
+        return None
+    with open(filepath, "r", encoding="utf-8") as fh:
+        raw = yaml.safe_load(fh) or {}
+    version = raw.get("version")
+    return version if isinstance(version, str) else None
+
+
 def _latest_scene_prose_path(project_dir: Path, chapter_id: str, scene_id: str) -> Path | None:
     """Find the latest versioned prose path, falling back to legacy unversioned prose."""
     chapter_dir = project_dir / "scenes" / chapter_id
@@ -570,18 +639,49 @@ def _latest_scene_prose_path(project_dir: Path, chapter_id: str, scene_id: str) 
     return None
 
 
-def load_scene_prose(project_dir: Path, chapter_id: str, scene_id: str) -> str:
-    """Load the latest scene prose.
+def _scene_prose_version_from_path(scene_id: str, path: Path) -> str:
+    if path.name == f"{scene_id}.md":
+        return "legacy"
+    version = _extract_scene_prose_version(path)
+    return f"v{version}" if version is not None else ""
 
-    Prefer scenes/<chapter>/<scene_id>.vN.md using the highest numeric N, then
+
+def load_scene_prose_status(
+    project_dir: Path, chapter_id: str, scene_id: str
+) -> tuple[str, str | None, bool]:
+    """Load active prose, falling back to latest if the active file is missing."""
+    chapter_dir = project_dir / "scenes" / chapter_id
+    active = get_active_scene_prose_version(project_dir, chapter_id, scene_id)
+    active_path = (
+        _scene_prose_version_path(chapter_dir, scene_id, active)
+        if active is not None
+        else None
+    )
+    if active_path is not None and active_path.exists():
+        with open(active_path, "r", encoding="utf-8") as fh:
+            return fh.read(), active, False
+
+    filepath = _latest_scene_prose_path(project_dir, chapter_id, scene_id)
+    if filepath is None:
+        return "", None, active is not None
+    with open(filepath, "r", encoding="utf-8") as fh:
+        return (
+            fh.read(),
+            _scene_prose_version_from_path(scene_id, filepath),
+            active is not None,
+        )
+
+
+def load_scene_prose(project_dir: Path, chapter_id: str, scene_id: str) -> str:
+    """Load the active scene prose.
+
+    Prefer the active version marker, then
+    scenes/<chapter>/<scene_id>.vN.md using the highest numeric N, then
     fall back to legacy scenes/<chapter>/<scene_id>.md. Returns an empty string
     if no prose file exists.
     """
-    filepath = _latest_scene_prose_path(project_dir, chapter_id, scene_id)
-    if filepath is None:
-        return ""
-    with open(filepath, "r", encoding="utf-8") as fh:
-        return fh.read()
+    prose, _, _ = load_scene_prose_status(project_dir, chapter_id, scene_id)
+    return prose
 
 
 # ── Scene Generation Record I/O ────────────────────────────────────────────
