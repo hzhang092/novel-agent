@@ -78,6 +78,23 @@ def test_load_scene_prose_ignores_malformed_versions(tmp_path):
     assert loaded == "legacy"
 
 
+def test_save_scene_prose_appends_version_after_generation(tmp_path):
+    """Saving after generated prose exists should not be hidden by old versions."""
+    from app.storage.project_files import save_scene_prose, load_scene_prose
+
+    project = Project(title="测试", genre="玄幻")
+    proj_dir = create_project(tmp_path, project)
+    chapter_dir = proj_dir / "scenes" / "ch-1"
+    chapter_dir.mkdir(parents=True)
+    (chapter_dir / "scene-1.v1.md").write_text("generated", encoding="utf-8")
+
+    save_scene_prose(proj_dir, chapter_id="ch-1", scene_id="scene-1", prose="manual edit")
+
+    assert (chapter_dir / "scene-1.v2.md").read_text(encoding="utf-8") == "manual edit"
+    loaded = load_scene_prose(proj_dir, chapter_id="ch-1", scene_id="scene-1")
+    assert loaded == "manual edit"
+
+
 def test_save_and_load_scene_generation_record(tmp_path):
     """Save and load a SceneGenerationRecord as JSON."""
     from app.storage.project_files import save_scene_generation_record, load_scene_generation_record

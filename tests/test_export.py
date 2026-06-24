@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.export import export_markdown, export_epub, _find_latest_prose
+from app.export import export_markdown, export_epub
 from app.storage.models import (
     Project,
     VolumeOutline,
@@ -52,21 +52,6 @@ def project_dir():
         (ch2_dir / "scene-2.md").write_text("小镇炊烟袅袅。", encoding="utf-8")
 
         yield proj_dir
-
-
-class TestFindLatestProse:
-    def test_picks_highest_version(self, project_dir: Path) -> None:
-        prose = _find_latest_prose(project_dir / "scenes", "ch-1", "scene-1")
-        assert "云海翻涌" in prose
-        assert "旧版本" not in prose  # Should pick v2, not v1
-
-    def test_fallback_to_unversioned(self, project_dir: Path) -> None:
-        prose = _find_latest_prose(project_dir / "scenes", "ch-2", "scene-2")
-        assert "炊烟袅袅" in prose
-
-    def test_returns_empty_for_missing(self, project_dir: Path) -> None:
-        prose = _find_latest_prose(project_dir / "scenes", "ch-1", "nonexistent")
-        assert prose == ""
 
 
 class TestMarkdownExport:

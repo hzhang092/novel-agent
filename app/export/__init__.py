@@ -5,41 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from app.storage.project_files import load_all_volumes
-
-
-def _find_latest_prose(scenes_dir: Path, chapter_id: str, scene_id: str) -> str:
-    """Find the latest version of a scene's prose file.
-
-    Looks for `<scene_id>.vN.md` files, returns the content of the highest N.
-    Falls back to `<scene_id>.md` if no versioned files exist.
-    """
-    chapter_dir = scenes_dir / chapter_id
-    if not chapter_dir.exists():
-        return ""
-
-    versioned = sorted(
-        chapter_dir.glob(f"{scene_id}.v*.md"),
-        key=lambda p: _extract_version(p.stem),
-        reverse=True,
-    )
-    if versioned:
-        return versioned[0].read_text(encoding="utf-8")
-
-    # Fallback: unversioned
-    plain = chapter_dir / f"{scene_id}.md"
-    if plain.exists():
-        return plain.read_text(encoding="utf-8")
-
-    return ""
-
-
-def _extract_version(stem: str) -> int:
-    """Extract version number from 'scene-uuid.v3' stem."""
-    m = re.search(r"\.v(\d+)$", stem)
-    if m:
-        return int(m.group(1))
-    return 0
+from app.storage.project_files import load_all_volumes, load_scene_prose
 
 
 def export_markdown(project_dir: Path, title: str) -> Path:
@@ -51,7 +17,6 @@ def export_markdown(project_dir: Path, title: str) -> Path:
     if not volumes:
         raise ValueError("No outline data found — create at least one volume with scenes")
 
-    scenes_dir = project_dir / "scenes"
     exports_dir = project_dir / "exports"
     exports_dir.mkdir(parents=True, exist_ok=True)
 
@@ -67,7 +32,7 @@ def export_markdown(project_dir: Path, title: str) -> Path:
                 for sc in ch.scenes:
                     lines.append(f"### {sc.title}")
                     lines.append("")
-                    prose = _find_latest_prose(scenes_dir, ch.id, sc.id)
+                    prose = load_scene_prose(project_dir, ch.id, sc.id)
                     if prose.strip():
                         lines.append(prose.strip())
                     else:
@@ -93,7 +58,6 @@ def export_epub(project_dir: Path, title: str, author: str = "") -> Path:
     if not volumes:
         raise ValueError("No outline data found")
 
-    scenes_dir = project_dir / "scenes"
     exports_dir = project_dir / "exports"
     exports_dir.mkdir(parents=True, exist_ok=True)
 
@@ -144,7 +108,7 @@ def export_epub(project_dir: Path, title: str, author: str = "") -> Path:
             ch_lines.append(f"<h2>{ch.title}</h2>")
 
             for sc in ch.scenes:
-                prose = _find_latest_prose(scenes_dir, ch.id, sc.id)
+                prose = load_scene_prose(project_dir, ch.id, sc.id)
                 if not prose.strip():
                     continue
                 ch_lines.append(f"<h3>{sc.title}</h3>")

@@ -521,14 +521,18 @@ _SCENE_PROSE_VERSION_RE = re.compile(r"\.v(\d+)$")
 
 
 def save_scene_prose(project_dir: Path, chapter_id: str, scene_id: str, prose: str) -> None:
-    """Write scene prose to the legacy scenes/<chapter>/<scene_id>.md path.
+    """Write scene prose so the next load returns this content.
 
-    Generated prose is versioned elsewhere as <scene_id>.vN.md. This legacy writer
-    is retained for manual/older call sites and backward compatibility.
+    Uses legacy <scene_id>.md until versioning exists, then appends <scene_id>.vN.md.
     """
     chapter_dir = project_dir / "scenes" / chapter_id
     chapter_dir.mkdir(parents=True, exist_ok=True)
-    filepath = chapter_dir / f"{scene_id}.md"
+    latest_version = _latest_scene_prose_version(chapter_dir, scene_id)
+    filepath = (
+        chapter_dir / f"{scene_id}.v{latest_version + 1}.md"
+        if latest_version is not None
+        else chapter_dir / f"{scene_id}.md"
+    )
     with open(filepath, "w", encoding="utf-8") as fh:
         fh.write(prose)
 
@@ -541,24 +545,24 @@ def _extract_scene_prose_version(path: Path) -> int | None:
     return int(match.group(1))
 
 
+def _latest_scene_prose_version(chapter_dir: Path, scene_id: str) -> int | None:
+    versions = [
+        version
+        for path in chapter_dir.glob(f"{scene_id}.v*.md")
+        if (version := _extract_scene_prose_version(path)) is not None
+    ]
+    return max(versions, default=None)
+
+
 def _latest_scene_prose_path(project_dir: Path, chapter_id: str, scene_id: str) -> Path | None:
     """Find the latest versioned prose path, falling back to legacy unversioned prose."""
     chapter_dir = project_dir / "scenes" / chapter_id
     if not chapter_dir.exists():
         return None
 
-    latest_path: Path | None = None
-    latest_version = -1
-    for path in chapter_dir.glob(f"{scene_id}.v*.md"):
-        version = _extract_scene_prose_version(path)
-        if version is None:
-            continue
-        if version > latest_version:
-            latest_version = version
-            latest_path = path
-
-    if latest_path is not None:
-        return latest_path
+    latest_version = _latest_scene_prose_version(chapter_dir, scene_id)
+    if latest_version is not None:
+        return chapter_dir / f"{scene_id}.v{latest_version}.md"
 
     legacy_path = chapter_dir / f"{scene_id}.md"
     if legacy_path.exists():
