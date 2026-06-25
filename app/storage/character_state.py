@@ -13,7 +13,7 @@ from app.storage.models import (
     CharacterStateSnapshot,
     SceneStateCheckpoint,
 )
-from app.storage.character_events import load_events
+from app.storage.character_events import get_latest_event_id, load_events
 
 STATE_FILE = "state.yaml"
 CHECKPOINT_DIR = "checkpoints"
@@ -32,29 +32,39 @@ def save_snapshot(char_dir: Path, snapshot: CharacterStateSnapshot) -> None:
 
 def load_snapshot(char_dir: Path) -> CharacterStateSnapshot:
     """Load the cached state snapshot from state.yaml.
-    Returns a default snapshot if the file doesn't exist or is corrupt."""
+    Returns a default snapshot if the file doesn't exist or is empty."""
     filepath = char_dir / STATE_FILE
     if not filepath.exists():
         return CharacterStateSnapshot()
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             raw = yaml.safe_load(f)
-    except yaml.YAMLError:
-        return CharacterStateSnapshot()
+    except yaml.YAMLError as e:
+        raise ValueError(f"Invalid YAML in {filepath}: {e}") from e
     if raw is None:
         return CharacterStateSnapshot()
     try:
         return CharacterStateSnapshot.model_validate(raw)
-    except Exception:
-        return CharacterStateSnapshot()
+    except Exception as e:
+        raise ValueError(f"Invalid state data in {filepath}: {e}") from e
 
 
 def load_or_build_snapshot(char_dir: Path, character_id: str = "") -> CharacterStateSnapshot:
-    """Load cached snapshot if it exists, otherwise replay all events to build one."""
-    cached = load_snapshot(char_dir)
-    if cached.last_event_id > 0 or cached.character_id:
+    """Load cached snapshot if current, otherwise replay events and repair it."""
+    try:
+        cached = load_snapshot(char_dir)
+    except ValueError as e:
+        latest_event_id = get_latest_event_id(char_dir)
+        if latest_event_id == 0:
+            raise e
+        cached = CharacterStateSnapshot()
+    else:
+        latest_event_id = get_latest_event_id(char_dir)
+    if (cached.last_event_id > 0 or cached.character_id) and cached.last_event_id >= latest_event_id:
         return cached
-    return build_snapshot(char_dir, character_id)
+    rebuilt = build_snapshot(char_dir, character_id or cached.character_id)
+    save_snapshot(char_dir, rebuilt)
+    return rebuilt
 
 
 def build_snapshot(char_dir: Path, character_id: str = "") -> CharacterStateSnapshot:

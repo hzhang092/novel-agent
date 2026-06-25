@@ -177,6 +177,23 @@ def test_load_scene_prose_status_reports_missing_active_fallback(tmp_path):
     assert active_missing is True
 
 
+def test_load_scene_prose_status_corrupt_active_marker_falls_back(tmp_path):
+    from app.storage.project_files import load_scene_prose_status
+
+    project = Project(title="测试", genre="玄幻")
+    proj_dir = create_project(tmp_path, project)
+    chapter_dir = proj_dir / "scenes" / "ch-1"
+    chapter_dir.mkdir(parents=True)
+    (chapter_dir / "scene-1.v2.md").write_text("fallback", encoding="utf-8")
+    (chapter_dir / "scene-1.active.yaml").write_text("[", encoding="utf-8")
+
+    prose, version, active_missing = load_scene_prose_status(proj_dir, "ch-1", "scene-1")
+
+    assert prose == "fallback"
+    assert version == "v2"
+    assert active_missing is True
+
+
 def test_save_and_load_scene_generation_record(tmp_path):
     """Save and load a SceneGenerationRecord as JSON."""
     from app.storage.project_files import save_scene_generation_record, load_scene_generation_record

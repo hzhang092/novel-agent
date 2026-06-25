@@ -53,6 +53,38 @@ class TestSnapshotSaveAndLoad:
             assert snap.last_event_id == 0
             assert snap.goal == ""
 
+    def test_load_snapshot_empty_returns_default(self):
+        with tempfile.TemporaryDirectory() as td:
+            char_dir = Path(td)
+            (char_dir / "state.yaml").write_text("", encoding="utf-8")
+
+            snap = load_snapshot(char_dir)
+
+            assert snap.character_id == ""
+            assert snap.last_event_id == 0
+
+    def test_load_snapshot_corrupt_yaml_raises_value_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            char_dir = Path(td)
+            path = char_dir / "state.yaml"
+            path.write_text("[", encoding="utf-8")
+
+            with pytest.raises(ValueError) as exc:
+                load_snapshot(char_dir)
+
+            assert str(path) in str(exc.value)
+
+    def test_load_snapshot_invalid_model_data_raises_value_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            char_dir = Path(td)
+            path = char_dir / "state.yaml"
+            path.write_text("- not\n- a mapping\n", encoding="utf-8")
+
+            with pytest.raises(ValueError) as exc:
+                load_snapshot(char_dir)
+
+            assert str(path) in str(exc.value)
+
 
 class TestBuildFromEvents:
     def test_build_snapshot_replays_set_field_events(self):
@@ -129,13 +161,13 @@ class TestBuildFromEvents:
 
 
 class TestLoadOrBuild:
-    def test_load_or_build_uses_cache_when_present(self):
+    def test_load_or_build_rebuilds_when_cache_is_behind_events(self):
         with tempfile.TemporaryDirectory() as td:
             char_dir = Path(td)
             # Pre-populate a snapshot
             snap = CharacterStateSnapshot(character_id="char-1", emotion="sad", last_event_id=3)
             save_snapshot(char_dir, snap)
-            # Also add events — but they should NOT be replayed since cache is present
+            # Simulate a crash after event append but before snapshot save.
             append_events(char_dir, [
                 CharacterStateEvent(
                     event_id=4, scene_id="s4", character_id="char-1",
@@ -143,9 +175,9 @@ class TestLoadOrBuild:
                 ),
             ])
             result = load_or_build_snapshot(char_dir, character_id="char-1")
-            # Should return cached version, not replayed
-            assert result.emotion == "sad"
-            assert result.last_event_id == 3
+            assert result.emotion == "happy"
+            assert result.last_event_id == 4
+            assert load_snapshot(char_dir).last_event_id == 4
 
     def test_load_or_build_builds_when_no_cache(self):
         with tempfile.TemporaryDirectory() as td:
@@ -158,6 +190,33 @@ class TestLoadOrBuild:
             ])
             result = load_or_build_snapshot(char_dir, character_id="char-1")
             assert result.goal == "revenge"
+
+    def test_load_or_build_recovers_corrupt_snapshot_from_events(self):
+        with tempfile.TemporaryDirectory() as td:
+            char_dir = Path(td)
+            (char_dir / "state.yaml").write_text("[", encoding="utf-8")
+            append_events(char_dir, [
+                CharacterStateEvent(
+                    event_id=1, scene_id="s1", character_id="char-1",
+                    changes=[CharacterStoredChange(type="set_field", field="goal", value="revenge")],
+                ),
+            ])
+
+            result = load_or_build_snapshot(char_dir, character_id="char-1")
+
+            assert result.goal == "revenge"
+            assert load_snapshot(char_dir).goal == "revenge"
+
+    def test_load_or_build_corrupt_snapshot_without_events_raises(self):
+        with tempfile.TemporaryDirectory() as td:
+            char_dir = Path(td)
+            path = char_dir / "state.yaml"
+            path.write_text("[", encoding="utf-8")
+
+            with pytest.raises(ValueError) as exc:
+                load_or_build_snapshot(char_dir, character_id="char-1")
+
+            assert str(path) in str(exc.value)
 
 
 class TestStateMapping:

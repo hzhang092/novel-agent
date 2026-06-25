@@ -44,6 +44,39 @@ class TestAppendAndLoad:
             loaded = load_events(Path(td))
             assert loaded == []
 
+    def test_load_empty_file_returns_empty_list(self):
+        with tempfile.TemporaryDirectory() as td:
+            char_dir = Path(td)
+            (char_dir / "events.jsonl").write_text("", encoding="utf-8")
+
+            assert load_events(char_dir) == []
+
+    def test_load_invalid_json_raises_with_file_and_line(self):
+        with tempfile.TemporaryDirectory() as td:
+            char_dir = Path(td)
+            path = char_dir / "events.jsonl"
+            path.write_text('{"event_id": 1}\n{bad json}\n', encoding="utf-8")
+
+            with pytest.raises(ValueError) as exc:
+                load_events(char_dir)
+
+            message = str(exc.value)
+            assert str(path) in message
+            assert "line 2" in message
+
+    def test_load_invalid_event_record_raises_with_file_and_line(self):
+        with tempfile.TemporaryDirectory() as td:
+            char_dir = Path(td)
+            path = char_dir / "events.jsonl"
+            path.write_text('{"changes": "not a list"}\n', encoding="utf-8")
+
+            with pytest.raises(ValueError) as exc:
+                load_events(char_dir)
+
+            message = str(exc.value)
+            assert str(path) in message
+            assert "line 1" in message
+
 
 class TestLoadSince:
     def test_load_events_since_returns_only_newer(self):

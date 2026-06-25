@@ -292,16 +292,25 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            project = self._repo.open(Path(dir_path))
+            project_dir = Path(dir_path)
+            project = self._repo.open(project_dir)
+            from app.storage.project_files import (
+                load_all_characters,
+                load_all_volumes,
+                load_canon_facts,
+            )
+            load_all_volumes(project_dir)
+            load_all_characters(project_dir)
+            load_canon_facts(project_dir)
         except FileNotFoundError:
             QMessageBox.warning(self, "错误", "所选目录不是有效项目")
             return
         except ValueError as e:
-            QMessageBox.warning(self, "错误", f"项目文件无效:\n{e}")
+            QMessageBox.warning(self, "项目文件无效", str(e))
             return
 
         self._current_project = project
-        self._current_project_dir = Path(dir_path)
+        self._current_project_dir = project_dir
         self.setWindowTitle(f"NovelForge — {project.title}")
 
         self._set_nav_items_enabled(True)

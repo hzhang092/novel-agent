@@ -22,20 +22,22 @@ def append_events(char_dir: Path, events: list[CharacterStateEvent]) -> None:
 
 
 def load_events(char_dir: Path) -> list[CharacterStateEvent]:
-    """Load all events from the character's event log. Skips invalid JSON lines."""
+    """Load all events from the character's event log."""
     filepath = char_dir / EVENTS_FILE
     if not filepath.exists():
         return []
     events: list[CharacterStateEvent] = []
     with open(filepath, "r", encoding="utf-8") as f:
-        for line in f:
+        for line_no, line in enumerate(f, start=1):
             line = line.strip()
             if not line:
                 continue
             try:
                 events.append(CharacterStateEvent.model_validate(json.loads(line)))
-            except (json.JSONDecodeError, Exception):
-                continue
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON in {filepath} line {line_no}: {e}") from e
+            except Exception as e:
+                raise ValueError(f"Invalid event data in {filepath} line {line_no}: {e}") from e
     return events
 
 

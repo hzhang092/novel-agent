@@ -217,6 +217,28 @@ def test_load_all_characters(tmp_path):
     assert loaded_names == {"林轩", "苏清鸾"}
 
 
+def test_load_all_characters_raises_with_bad_files(tmp_path):
+    """A corrupt character file should not make the list look partially valid."""
+    from app.storage.project_files import (
+        load_all_characters,
+        save_character,
+    )
+
+    project = Project(title="测试", genre="玄幻")
+    proj_dir = create_project(tmp_path, project)
+    core = CharacterCore(name="林轩")
+    save_character(proj_dir, Character(core=core, state=CharacterState(character_id=core.id)))
+    bad_file = proj_dir / "characters" / "bad.yaml"
+    bad_file.write_text("[", encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc:
+        load_all_characters(proj_dir)
+
+    message = str(exc.value)
+    assert "bad" in message
+    assert str(bad_file) in message
+
+
 def test_load_all_characters_empty(tmp_path):
     """Empty directory returns empty list."""
     from app.storage.project_files import load_all_characters

@@ -223,6 +223,24 @@ def test_load_all_volumes(tmp_path):
     assert {v.title for v in loaded} == {"第一卷", "第二卷"}
 
 
+def test_load_all_volumes_raises_with_bad_files(tmp_path):
+    """A corrupt outline file should not be silently skipped."""
+    from app.storage.project_files import load_all_volumes, save_volume_outline
+
+    project = Project(title="测试", genre="玄幻")
+    proj_dir = create_project(tmp_path, project)
+    save_volume_outline(proj_dir, VolumeOutline(title="第一卷"))
+    bad_file = proj_dir / "outline" / "bad.yaml"
+    bad_file.write_text("[", encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc:
+        load_all_volumes(proj_dir)
+
+    message = str(exc.value)
+    assert "bad.yaml" in message
+    assert str(bad_file) in message
+
+
 def test_load_all_volumes_empty(tmp_path):
     """Empty directory returns empty list."""
     from app.storage.project_files import load_all_volumes

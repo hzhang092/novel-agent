@@ -252,7 +252,7 @@ def load_character(project_dir: Path, character_id: str) -> Character:
         FileNotFoundError: If the character does not exist in either layout.
         ValueError: If the data is invalid or fails model validation.
     """
-    from app.storage.character_state import load_snapshot, map_snapshot_to_character_state
+    from app.storage.character_state import load_or_build_snapshot, map_snapshot_to_character_state
 
     char_root = project_dir / "characters"
     char_dir = char_root / character_id
@@ -277,7 +277,7 @@ def load_character(project_dir: Path, character_id: str) -> Character:
             raise ValueError(f"Invalid core data in {def_path}: {e}") from e
 
         # Load state.yaml and map back
-        snap = load_snapshot(char_dir)
+        snap = load_or_build_snapshot(char_dir, core.id)
         state = map_snapshot_to_character_state(snap)
         return Character(core=core, state=state)
 
@@ -338,11 +338,14 @@ def list_character_ids(project_dir: Path) -> list[str]:
 def load_all_characters(project_dir: Path) -> list[Character]:
     """Load all characters from both layouts."""
     characters = []
+    failures: list[str] = []
     for cid in list_character_ids(project_dir):
         try:
             characters.append(load_character(project_dir, cid))
-        except (ValueError, FileNotFoundError):
-            continue
+        except (ValueError, FileNotFoundError) as e:
+            failures.append(f"{cid}: {e}")
+    if failures:
+        raise ValueError("Invalid character files:\n" + "\n".join(failures))
     return characters
 
 
@@ -411,11 +414,14 @@ def load_all_volumes(project_dir: Path) -> list[VolumeOutline]:
     if not outline_dir.exists():
         return []
     volumes = []
+    failures: list[str] = []
     for filepath in sorted(outline_dir.glob("*.yaml")):
         try:
             volumes.append(load_volume_outline(project_dir, filepath.stem))
-        except (ValueError, FileNotFoundError):
-            continue
+        except (ValueError, FileNotFoundError) as e:
+            failures.append(f"{filepath}: {e}")
+    if failures:
+        raise ValueError("Invalid outline files:\n" + "\n".join(failures))
     return volumes
 
 
@@ -617,8 +623,13 @@ def get_active_scene_prose_version(
     filepath = project_dir / "scenes" / chapter_id / f"{scene_id}.active.yaml"
     if not filepath.exists():
         return None
-    with open(filepath, "r", encoding="utf-8") as fh:
-        raw = yaml.safe_load(fh) or {}
+    try:
+        with open(filepath, "r", encoding="utf-8") as fh:
+            raw = yaml.safe_load(fh) or {}
+    except yaml.YAMLError:
+        return None
+    if not isinstance(raw, dict):
+        return None
     version = raw.get("version")
     return version if isinstance(version, str) else None
 
@@ -651,6 +662,7 @@ def load_scene_prose_status(
 ) -> tuple[str, str | None, bool]:
     """Load active prose, falling back to latest if the active file is missing."""
     chapter_dir = project_dir / "scenes" / chapter_id
+    active_marker_exists = (chapter_dir / f"{scene_id}.active.yaml").exists()
     active = get_active_scene_prose_version(project_dir, chapter_id, scene_id)
     active_path = (
         _scene_prose_version_path(chapter_dir, scene_id, active)
@@ -663,12 +675,12 @@ def load_scene_prose_status(
 
     filepath = _latest_scene_prose_path(project_dir, chapter_id, scene_id)
     if filepath is None:
-        return "", None, active is not None
+        return "", None, active_marker_exists
     with open(filepath, "r", encoding="utf-8") as fh:
         return (
             fh.read(),
             _scene_prose_version_from_path(scene_id, filepath),
-            active is not None,
+            active_marker_exists,
         )
 
 
