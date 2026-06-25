@@ -4,6 +4,10 @@ A local-first desktop application for writing Chinese web novels through a multi
 
 ## Language
 
+**Project Folder (项目文件夹)**:
+The directory that contains one novel project's `project.yaml` and standard subfolders for characters, outline, scenes, canon, and exports.
+_Avoid_: Project file folder, workspace folder.
+
 **Character Definition (角色基本设定)**:
 Immutable or slowly-changing character traits set by the author: name, personality, background, appearance, skills, weaknesses, speech style.
 _Avoid_: Character card, character core, static traits.

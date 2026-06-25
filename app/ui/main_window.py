@@ -6,8 +6,8 @@ import asyncio
 import gc
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QAction
+from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtGui import QAction, QDesktopServices
 from PyQt6.QtWidgets import (
     QFileDialog,
     QLabel,
@@ -84,6 +84,10 @@ class MainWindow(QMainWindow):
         open_action = QAction("打开项目(&O)", self)
         open_action.triggered.connect(self._on_open_project)
         file_menu.addAction(open_action)
+
+        open_folder_action = QAction("打开项目文件夹(&F)", self)
+        open_folder_action.triggered.connect(self._on_open_project_folder)
+        file_menu.addAction(open_folder_action)
 
         file_menu.addSeparator()
         settings_action = QAction("LLM 设置(&S)...", self)
@@ -230,7 +234,7 @@ class MainWindow(QMainWindow):
     # ── Actions ───────────────────────────────────────────────────────────
 
     def _on_new_project(self) -> None:
-        dialog = CreateProjectDialog(self)
+        dialog = CreateProjectDialog(self, Path.home() / "NovelForge")
         if not dialog.exec():
             return
 
@@ -245,7 +249,7 @@ class MainWindow(QMainWindow):
         )
 
         try:
-            proj_dir = self._repo.create(project)
+            proj_dir = Repository(Path(result["storage_dir"])).create(project)
         except FileExistsError:
             QMessageBox.warning(self, "错误", f"项目「{result['title']}」已存在")
             return
@@ -357,6 +361,13 @@ class MainWindow(QMainWindow):
 
         # Check for legacy character files and offer migration
         self._check_legacy_migration(Path(dir_path))
+
+    def _on_open_project_folder(self) -> None:
+        if self._current_project_dir is None:
+            QMessageBox.warning(self, "提示", "请先打开或创建项目")
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._current_project_dir))):
+            QMessageBox.warning(self, "错误", f"无法打开项目文件夹:\n{self._current_project_dir}")
 
     def _on_llm_settings(self) -> None:
         """Open the LLM provider settings dialog."""
