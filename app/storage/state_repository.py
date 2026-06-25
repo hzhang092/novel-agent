@@ -1,6 +1,6 @@
-"""StateRepository — atomic commit pipeline for event-sourced character state.
+"""StateRepository — event-first commit pipeline for event-sourced character state.
 
-Wraps load_snapshot → apply changes → append events → save snapshot + checkpoint
+Wraps load_or_build_snapshot → apply changes → append events → save snapshot + checkpoint
 with an optional EventBus for live UI updates.
 """
 from __future__ import annotations
@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from app.storage.character_events import append_events, load_events, get_latest_event_id
 from app.storage.character_state import (
-    load_snapshot,
+    load_or_build_snapshot,
     save_snapshot,
     save_checkpoint,
     _apply_changes_to_snapshot,
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 
 class StateRepository:
-    """Commits state changes atomically: events → snapshot → checkpoint → domain event.
+    """Commits state changes event-first: events → snapshot → checkpoint → domain event.
 
     Usage::
         repo = StateRepository(bus=domain_bus)
@@ -59,7 +59,7 @@ class StateRepository:
             return None
 
         # Load current snapshot
-        snapshot = load_snapshot(char_dir)
+        snapshot = load_or_build_snapshot(char_dir, proposal.character_id)
         snapshot.character_id = proposal.character_id or snapshot.character_id
 
         # Build stored changes (filling old values from snapshot)
@@ -97,7 +97,7 @@ class StateRepository:
             changes=stored_changes,
         )
 
-        # Persist atomically
+        # Persist event first; snapshot load repairs if this is interrupted.
         append_events(char_dir, [event])
         save_snapshot(char_dir, snapshot)
 
@@ -130,7 +130,7 @@ class StateRepository:
         if not changes:
             return None
 
-        snapshot = load_snapshot(char_dir)
+        snapshot = load_or_build_snapshot(char_dir, character_id)
         snapshot.character_id = character_id or snapshot.character_id
 
         stored_changes: list[CharacterStoredChange] = []

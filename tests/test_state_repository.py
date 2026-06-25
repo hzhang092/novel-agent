@@ -13,10 +13,12 @@ from app.storage.models import (
     KnowledgeAddChange,
     KnowledgeRemoveChange,
     SecretAddChange,
+    CharacterStateEvent,
+    CharacterStoredChange,
     CharacterStateSnapshot,
 )
 from app.storage.character_state import load_snapshot
-from app.storage.character_events import load_events, get_latest_event_id
+from app.storage.character_events import append_events, load_events, get_latest_event_id
 from app.events.bus import EventBus
 
 
@@ -122,6 +124,35 @@ class TestCommitProposal:
 
             event = repo.commit_proposal(char_dir, proposal, "scene", "tx", "req")
             assert event is None  # Nothing to commit
+
+    def test_commit_proposal_recovers_stale_snapshot_before_applying_next_event(self):
+        with tempfile.TemporaryDirectory() as td:
+            char_dir = Path(td)
+            from app.storage.character_state import save_snapshot
+            save_snapshot(char_dir, CharacterStateSnapshot(character_id="char-1", goal="old", last_event_id=1))
+            append_events(char_dir, [
+                CharacterStateEvent(
+                    event_id=2, scene_id="s2", character_id="char-1",
+                    changes=[CharacterStoredChange(type="set_field", field="goal", value="from_log", old="old")],
+                ),
+            ])
+
+            repo = StateRepository()
+            proposal = StateChangeProposal(
+                character_id="char-1",
+                character_name="x",
+                changes=[SetFieldChange(type="set_field", field="emotion", value="calm")],
+            )
+
+            event = repo.commit_proposal(char_dir, proposal, "s3", "tx", "req")
+
+            assert event is not None
+            assert event.event_id == 3
+            assert event.changes[0].old == ""
+            snap = load_snapshot(char_dir)
+            assert snap.goal == "from_log"
+            assert snap.emotion == "calm"
+            assert snap.last_event_id == 3
 
 
 class TestInvalidateEvent:
