@@ -920,6 +920,7 @@ class MainWindow(QMainWindow):
         """Migrate legacy characters/<name>.yaml to per-directory layout."""
         import shutil
         from datetime import datetime
+        from app.storage.project_files import load_character, save_character
 
         char_root = project_dir / "characters"
         backup_dir = project_dir / ".backups" / f"migration-{datetime.now().strftime('%Y-%m-%d')}"
@@ -934,7 +935,7 @@ class MainWindow(QMainWindow):
             try:
                 char = load_character(project_dir, f.stem)
                 save_character(project_dir, char)
-                f.rename(f.with_suffix(".yaml.bak"))
+                f.replace(f.with_suffix(".yaml.bak"))
                 migrated += 1
             except Exception:
                 continue
