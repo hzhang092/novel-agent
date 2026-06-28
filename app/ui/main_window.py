@@ -200,18 +200,11 @@ class MainWindow(QMainWindow):
                     pass
                 workspace.next_scene_requested.connect(self._on_next_scene)
                 try:
-                    workspace.fact_approval.facts_approved.disconnect()
+                    workspace.fact_approval.approval_batch_approved.disconnect()
                 except TypeError:
                     pass
-                workspace.fact_approval.facts_approved.connect(
-                    lambda facts: self._on_facts_approved(facts)
-                )
-                try:
-                    workspace.fact_approval.state_changes_approved.disconnect()
-                except TypeError:
-                    pass
-                workspace.fact_approval.state_changes_approved.connect(
-                    lambda changes: self._on_state_changes_approved(changes)
+                workspace.fact_approval.approval_batch_approved.connect(
+                    self._on_approval_batch_approved
                 )
                 try:
                     workspace.retry_requested.disconnect()
@@ -633,6 +626,7 @@ class MainWindow(QMainWindow):
         workspace.trace_panel.clear()
         workspace.trace_panel.set_waiting("正在组装上下文...")
         workspace.hide_review_result()
+        workspace.hide_fact_approval()
 
         from app.pipeline.pipeline import ScenePipeline
 
@@ -711,7 +705,11 @@ class MainWindow(QMainWindow):
                             extracted = getattr(result, 'extracted_facts', [])
                             state_changes = getattr(result, 'state_changes', [])
                             if extracted or state_changes:
-                                workspace.show_fact_approval(extracted, state_changes)
+                                workspace.show_fact_approval(
+                                    result.scene_id,
+                                    extracted,
+                                    state_changes,
+                                )
                         elif result.plan is not None:
                             pass
                         else:
@@ -779,16 +777,20 @@ class MainWindow(QMainWindow):
         )
         save_scene_generation_record(self._current_project_dir, record)
 
-    def _on_facts_approved(self, approved_facts: list[dict]) -> None:
-        """Save approved facts to canon/facts.yaml."""
+    def _on_approval_batch_approved(
+        self,
+        scene_id: str,
+        approved_facts: list[dict],
+        approved_changes: list[dict],
+    ) -> None:
+        """Save approved facts and state events for their source scene."""
         if self._current_project_dir is None:
             return
-        from app.storage.models import CanonFact
+        import uuid as uuid_mod
+
+        from app.storage.models import CanonFact, StateChangeProposal
         from app.storage.project_files import load_canon_facts, save_canon_facts
 
-        workspace = self.views.get("workspace")
-
-        scene_id = (workspace._current_scene_id or "") if isinstance(workspace, SceneWorkspaceView) else ""
         try:
             existing = load_canon_facts(self._current_project_dir)
         except Exception:
@@ -813,15 +815,6 @@ class MainWindow(QMainWindow):
         all_facts = list(existing) + new_facts
         save_canon_facts(self._current_project_dir, all_facts)
 
-    def _on_state_changes_approved(self, approved_changes: list[dict]) -> None:
-        """Apply approved state changes via StateRepository (event-sourced)."""
-        if self._current_project_dir is None:
-            return
-
-        import uuid as uuid_mod
-
-        workspace = self.views.get("workspace")
-        scene_id = (workspace._current_scene_id or "") if isinstance(workspace, SceneWorkspaceView) else ""
         tx_id = str(uuid_mod.uuid4())
 
         for proposal_dict in approved_changes:
@@ -832,7 +825,6 @@ class MainWindow(QMainWindow):
 
             # Convert the approved dict back to a StateChangeProposal
             changes_data = proposal_dict.get("changes", [])
-            from app.storage.models import StateChangeProposal
 
             if not changes_data:
                 continue

@@ -201,9 +201,14 @@ class SceneWorkspaceView(QWidget):
         """Hide the review result bar."""
         self._review_bar.hide()
 
-    def show_fact_approval(self, facts: list[dict], state_changes: list[dict]) -> None:
+    def show_fact_approval(
+        self,
+        source_scene_id: str,
+        facts: list[dict],
+        state_changes: list[dict],
+    ) -> None:
         """Show the fact approval panel with extracted facts and state changes."""
-        self.fact_approval.show_items(facts, state_changes)
+        self.fact_approval.show_items(source_scene_id, facts, state_changes)
 
     def hide_fact_approval(self) -> None:
         """Hide the fact approval panel."""

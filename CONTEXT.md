@@ -34,6 +34,7 @@ _Avoid_: Diff, patch, mutation.
 
 **Fact Approval Panel (设定审批面板)**:
 The post-generation UI where the author reviews and approves or rejects extracted canon facts and state change proposals. Approved proposals become events in the event log.
+Approvals belong to the scene that produced them, even if the author selects another scene before confirming.
 _Avoid_: Review panel, post-generation review.
 
 **Active Prose Version (当前正文版本)**:

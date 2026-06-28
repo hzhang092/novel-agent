@@ -19,15 +19,15 @@ from PyQt6.QtWidgets import (
 class FactApprovalPanel(QWidget):
     """Panel showing extracted facts + state changes for user approval.
 
-    Emits facts_approved with the approved fact dicts and state_changes_approved
-    with the approved state change dicts when the user confirms.
+    Emits approval_batch_approved with the source scene id, approved fact
+    dicts, and approved state change dicts when the user confirms.
     """
 
-    facts_approved = pyqtSignal(list)
-    state_changes_approved = pyqtSignal(list)
+    approval_batch_approved = pyqtSignal(str, list, list)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._source_scene_id = ""
         self._facts: list[dict] = []
         self._state_changes: list[dict] = []
         self._fact_checkboxes: list[QCheckBox] = []
@@ -51,6 +51,11 @@ class FactApprovalPanel(QWidget):
         desc.setWordWrap(True)
         desc.setStyleSheet("color: #aaa; font-size: 11px;")
         layout.addWidget(desc)
+
+        self._source_scene_label = QLabel("")
+        self._source_scene_label.setStyleSheet("color: #888; font-size: 11px;")
+        self._source_scene_label.hide()
+        layout.addWidget(self._source_scene_label)
 
         # Separator
         sep = QFrame()
@@ -122,10 +127,18 @@ class FactApprovalPanel(QWidget):
         layout.addLayout(confirm_layout)
         self.hide()
 
-    def show_items(self, facts: list[dict], state_changes: list[dict]) -> None:
+    def show_items(
+        self,
+        source_scene_id: str,
+        facts: list[dict],
+        state_changes: list[dict],
+    ) -> None:
         """Populate the panel with extracted facts and state changes."""
+        self._source_scene_id = source_scene_id
         self._facts = facts
         self._state_changes = state_changes
+        self._source_scene_label.setText(f"来源场景：{source_scene_id}")
+        self._source_scene_label.show()
         self._fact_checkboxes.clear()
         self._change_checkboxes.clear()
         self._populate()
@@ -133,8 +146,11 @@ class FactApprovalPanel(QWidget):
 
     def clear_and_hide(self) -> None:
         """Clear and hide the panel."""
+        self._source_scene_id = ""
         self._facts = []
         self._state_changes = []
+        self._source_scene_label.clear()
+        self._source_scene_label.hide()
         self._fact_checkboxes.clear()
         self._change_checkboxes.clear()
         self._clear_content()
@@ -326,6 +342,9 @@ class FactApprovalPanel(QWidget):
             for i, cb in enumerate(self._change_checkboxes)
             if cb.isChecked()
         ]
-        self.facts_approved.emit(approved_facts)
-        self.state_changes_approved.emit(approved_changes)
+        self.approval_batch_approved.emit(
+            self._source_scene_id,
+            approved_facts,
+            approved_changes,
+        )
         self.clear_and_hide()
