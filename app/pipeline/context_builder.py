@@ -33,11 +33,13 @@ class RetrievalEngine:
         outline_context, recent_summaries, canon_facts, style_guide.
         """
         scene = self._find_scene(project_dir, scene_id)
+        characters, read_points = self._collect_characters(project_dir, scene)
 
         return {
             "scene_info": self._build_scene_info(scene),
             "world_rules": self._collect_world_rules(project_dir, scene),
-            "characters": self._collect_characters(project_dir, scene),
+            "characters": characters,
+            "read_points": read_points,
             "outline_context": self._build_outline_context(project_dir, scene),
             "recent_summaries": self._collect_recent_summaries(project_dir),
             "canon_facts": self._collect_canon_facts(project_dir, scene),
@@ -98,11 +100,14 @@ class RetrievalEngine:
             "power_system": world.power_system.model_dump(mode="json") if world.power_system else {},
         }
 
-    def _collect_characters(self, project_dir: Path, scene: dict | None) -> dict:
-        from app.storage.project_files import load_all_characters
+    def _collect_characters(self, project_dir: Path, scene: dict | None) -> tuple[dict, dict]:
+        from app.storage.timeline_repository import load_character_context_for_scene
 
         participants = (scene or {}).get("participating_characters", [])
-        all_chars = load_all_characters(project_dir)
+        scene_id = (scene or {}).get("id", "")
+        all_chars, read_points = load_character_context_for_scene(
+            project_dir, scene_id, participants
+        )
 
         major: list[dict] = []
         supporting: list[dict] = []
@@ -129,7 +134,7 @@ class RetrievalEngine:
             else:
                 background.append({"name": char.core.name, "tier": "background"})
 
-        return {"major": major, "supporting": supporting, "background": background}
+        return {"major": major, "supporting": supporting, "background": background}, read_points
 
     def _build_outline_context(self, project_dir: Path, scene: dict | None) -> dict:
         if not scene or not scene.get("volume_id"):

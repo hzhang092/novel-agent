@@ -154,6 +154,12 @@ class StoryOutline(BaseModel):
 class SceneGenerationRecord(BaseModel):
     """Stored alongside prose for traceability."""
     scene_id: str
+    revision_id: str = Field(default_factory=lambda: str(uuid4()))
+    revision_number: int = 1
+    scene_order: int = 0
+    generated_from_checkpoint_id: str = ""
+    generated_with: dict[str, dict] = Field(default_factory=dict)
+    status: Literal["current", "superseded", "stale"] = "current"
     generation_mode: str = "standard"
     scene_plan: dict = Field(default_factory=dict)
     character_intents: dict[str, dict] = Field(default_factory=dict)
@@ -368,6 +374,9 @@ class CharacterStateEvent(BaseModel):
     event_id: int = 0
     transaction_id: str = ""    # groups events from same pipeline run
     scene_id: str = ""
+    scene_revision_id: str = ""
+    scene_order: int = 0
+    event_seq: int = 0
     character_id: str = ""
     source: str = "ai"          # ai | user | manual_event | system
     request_id: str = ""        # UUID for observability
@@ -403,10 +412,13 @@ class SceneStateCheckpoint(BaseModel):
     """Snapshot of all character states at a point in the scene.
     Written to characters/<name>/checkpoints/<scene_id>.yaml."""
     scene_id: str = ""
+    scene_revision_id: str = ""
+    scene_order: int = 0
     checkpoint_id: str = ""
     parent_checkpoint_id: str = ""
     event_id: int = 0
     character_id: str = ""
+    invalidated: bool = False
     created_at: str = ""
     snapshot: CharacterStateSnapshot = Field(default_factory=CharacterStateSnapshot)
 

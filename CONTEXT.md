@@ -41,9 +41,17 @@ _Avoid_: Review panel, post-generation review.
 The scene prose version the author has explicitly chosen as the authoritative text for display and export.
 _Avoid_: Selected version, current draft, default version.
 
+**Scene Revision (场景修订版)**:
+A generated version of one scene's prose and derived state changes. Regenerating a scene creates a new revision; older revisions may be superseded but remain useful for audit and undo.
+_Avoid_: Scene version, draft version, rewrite.
+
 **Scene Checkpoint (场景检查点)**:
 A character state snapshot written immediately after a scene is approved. Used during context assembly so Scene N always sees state as of the end of Scene N-1, preserving temporal consistency even when scenes are generated out of order.
 _Avoid_: Scene snapshot, state checkpoint.
+
+**Read Point (读取点)**:
+The checkpoint or event position used to assemble a scene prompt for a specific character. Used to detect when a later scene was generated from an older timeline.
+_Avoid_: Dependency pointer, generated-with marker.
 
 **Stale Scene (过期场景)**:
 A scene whose generation used character state revisions that have since been superseded (e.g., Scene 30 was rewritten, changing hero state; Scene 45 was generated with the old revision). Detected via revision comparison.
@@ -58,4 +66,5 @@ _Avoid_: Deletion, removal, tombstone.
 - **State Updater → State Change Proposal → Fact Approval Panel**: The State Updater produces proposals; the author approves them in the panel; approved proposals are committed as State Events.
 - **State Event → State Snapshot**: Snapshots are derived by replaying valid (non-invalidated) events from the event log.
 - **Scene Checkpoint → Context Assembly**: When generating Scene N, the context assembler reads the checkpoint from Scene N-1 to determine what characters knew at that point.
+- **Scene Revision → Read Point → Stale Scene**: A scene revision records the read points used in its prompt; when those read points are superseded, downstream revisions become stale.
 - **Scene Regeneration → Event Invalidation → Stale Scene Detection**: Regenerating a scene invalidates its old events; revision comparison identifies downstream scenes that used now-stale state.

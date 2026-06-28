@@ -118,6 +118,57 @@ def test_non_participating_characters_are_excluded(tmp_path):
     assert "路人乙" not in all_names
 
 
+def test_characters_use_previous_scene_checkpoint_in_context(tmp_path):
+    """Regenerating an older scene must not use the latest character state."""
+    from app.pipeline.context_builder import RetrievalEngine
+    from app.storage.character_state import save_checkpoint
+    from app.storage.models import (
+        Character, CharacterCore, CharacterState, CharacterStateSnapshot,
+        ChapterOutline, SceneOutline, SceneStateCheckpoint, VolumeOutline,
+    )
+    from app.storage.project_files import create_project, save_character, save_volume_outline
+
+    project = Project(title="测试", genre="玄幻")
+    proj_dir = create_project(tmp_path, project)
+
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(id="char-hero", name="林轩", tier="major"),
+            state=CharacterState(character_id="char-hero", current_goal="第十场后的目标"),
+        ),
+    )
+    first = SceneOutline(id="scene-1", title="第一场", participating_characters=["林轩"])
+    second = SceneOutline(id="scene-2", title="第二场", participating_characters=["林轩"])
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(
+            title="第一卷",
+            chapters=[ChapterOutline(title="第一章", scenes=[first, second])],
+        ),
+    )
+    save_checkpoint(
+        proj_dir / "characters" / "char-hero",
+        SceneStateCheckpoint(
+            scene_id="scene-1",
+            checkpoint_id="cp-scene-1",
+            event_id=3,
+            character_id="char-hero",
+            snapshot=CharacterStateSnapshot(
+                character_id="char-hero",
+                goal="第一场后的目标",
+                last_event_id=3,
+            ),
+        ),
+    )
+
+    context = RetrievalEngine().assemble(proj_dir, scene_id="scene-2")
+
+    hero = context["characters"]["major"][0]
+    assert hero["state"]["current_goal"] == "第一场后的目标"
+    assert context["read_points"]["char-hero"]["checkpoint_id"] == "cp-scene-1"
+
+
 def test_canon_facts_filtered_by_importance(tmp_path):
     """Facts below the importance threshold are excluded unless tagged/scene-matched."""
     from app.pipeline.context_builder import RetrievalEngine

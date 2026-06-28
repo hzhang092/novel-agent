@@ -29,7 +29,6 @@ from pydantic import ValidationError
 
 from app.events.bus import EventBus
 from app.events.qt_bridge import QtEventBridge
-from app.storage.state_repository import StateRepository
 from app.ui.bible_editor import BibleEditorView
 
 logger = logging.getLogger(__name__)
@@ -64,7 +63,6 @@ class MainWindow(QMainWindow):
         # Event bus for live UI refresh
         self._domain_bus = EventBus()
         self._event_bridge = QtEventBridge(self._domain_bus)
-        self._state_repo = StateRepository(bus=self._domain_bus)
 
         self._setup_menu()
         self._setup_ui()
@@ -747,6 +745,10 @@ class MainWindow(QMainWindow):
             set_active_scene_prose_version,
         )
         from app.storage.models import SceneGenerationRecord
+        from app.storage.timeline_repository import (
+            find_scene_position,
+            prepare_scene_regeneration,
+        )
 
         version = _get_next_version(self._current_project_dir, chapter_id, result.scene_id)
         _save_versioned_prose(
@@ -763,9 +765,24 @@ class MainWindow(QMainWindow):
             for k, v in result.character_intents.items()
         }
         review_dict = result.review.model_dump(mode="json") if result.review else None
+        generated_with = getattr(result, "generated_with", {})
+        generated_from_checkpoint_id = next(
+            (
+                read_point.get("checkpoint_id", "")
+                for read_point in generated_with.values()
+                if read_point.get("checkpoint_id")
+            ),
+            "",
+        )
+        position = find_scene_position(self._current_project_dir, result.scene_id)
 
         record = SceneGenerationRecord(
             scene_id=result.scene_id,
+            revision_number=version,
+            scene_order=position.scene_order if position else 0,
+            generated_from_checkpoint_id=generated_from_checkpoint_id,
+            generated_with=generated_with,
+            status="current",
             generation_mode="standard",
             scene_plan=plan_dict,
             character_intents=intents_dict,
@@ -776,6 +793,11 @@ class MainWindow(QMainWindow):
             state_changes_raw=getattr(result, 'state_changes', []),
         )
         save_scene_generation_record(self._current_project_dir, record)
+        prepare_scene_regeneration(
+            self._current_project_dir,
+            result.scene_id,
+            revision_id=record.revision_id,
+        )
 
     def _on_approval_batch_approved(
         self,
@@ -816,12 +838,12 @@ class MainWindow(QMainWindow):
         save_canon_facts(self._current_project_dir, all_facts)
 
         tx_id = str(uuid_mod.uuid4())
+        from app.storage.timeline_repository import commit_scene_proposal
 
         for proposal_dict in approved_changes:
             char_id = proposal_dict.get("character_id", "")
             if not char_id:
                 continue
-            char_dir = self._current_project_dir / "characters" / char_id
 
             # Convert the approved dict back to a StateChangeProposal
             changes_data = proposal_dict.get("changes", [])
@@ -836,12 +858,13 @@ class MainWindow(QMainWindow):
             )
 
             try:
-                self._state_repo.commit_proposal(
-                    char_dir=char_dir,
+                commit_scene_proposal(
+                    project_dir=self._current_project_dir,
                     proposal=proposal,
                     scene_id=scene_id,
                     transaction_id=tx_id,
                     request_id=str(uuid_mod.uuid4()),
+                    bus=self._domain_bus,
                 )
             except ValidationError as e:
                 logger.warning("State change validation failed for %s: %s", char_id, e)

@@ -159,6 +159,26 @@ class TestBuildFromEvents:
             snap = build_snapshot(char_dir, character_id="char-1")
             assert snap.relationships == {"bob": "enemy", "alice": "rival"}
 
+    def test_build_snapshot_replays_by_scene_order_before_event_id(self):
+        with tempfile.TemporaryDirectory() as td:
+            char_dir = Path(td)
+            append_events(char_dir, [
+                CharacterStateEvent(
+                    event_id=1, scene_id="scene-10", scene_order=10, event_seq=1,
+                    character_id="char-1",
+                    changes=[CharacterStoredChange(type="set_field", field="goal", value="future")],
+                ),
+                CharacterStateEvent(
+                    event_id=2, scene_id="scene-2", scene_order=2, event_seq=1,
+                    character_id="char-1",
+                    changes=[CharacterStoredChange(type="set_field", field="goal", value="past")],
+                ),
+            ])
+
+            snap = build_snapshot(char_dir, character_id="char-1")
+
+            assert snap.goal == "future"
+
 
 class TestLoadOrBuild:
     def test_load_or_build_rebuilds_when_cache_is_behind_events(self):

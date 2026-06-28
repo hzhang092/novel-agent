@@ -75,8 +75,9 @@ def build_snapshot(char_dir: Path, character_id: str = "") -> CharacterStateSnap
     if not events:
         return snap
 
-    # Sort just in case events were appended out of order
-    events.sort(key=lambda e: e.event_id)
+    # Events may be appended after later scenes during regeneration; replay by
+    # timeline position when available, then by append order inside the scene.
+    events.sort(key=_event_sort_key)
 
     for event in events:
         if event.invalidated:
@@ -87,6 +88,12 @@ def build_snapshot(char_dir: Path, character_id: str = "") -> CharacterStateSnap
         _apply_changes_to_snapshot(snap, event.changes)
 
     return snap
+
+
+def _event_sort_key(event) -> tuple[int, int, int]:
+    scene_order = event.scene_order if event.scene_order > 0 else event.event_id
+    event_seq = event.event_seq if event.event_seq > 0 else event.event_id
+    return (scene_order, event_seq, event.event_id)
 
 
 def _apply_changes_to_snapshot(

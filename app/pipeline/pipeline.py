@@ -63,6 +63,7 @@ class GenerationResult:
     total_tokens: int = 0
     extracted_facts: list[dict] = field(default_factory=list)
     state_changes: list[dict] = field(default_factory=list)
+    generated_with: dict[str, dict] = field(default_factory=dict)
 
 
 # Callback types for trace updates
@@ -131,6 +132,7 @@ class ScenePipeline:
 
         # ── Step 1: Assemble context ──
         context = self.assemble_context(project_dir, scene_id)
+        result.generated_with = context.get("read_points", {})
 
         # ── Step 2: Planner ──
         planner_trace = AgentTraceEntry(agent_name="Scene Planner", stage="planner")
