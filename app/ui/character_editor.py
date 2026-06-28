@@ -31,7 +31,9 @@ from app.storage.project_files import (
     list_character_ids,
     load_character,
     save_character,
+    save_character_definition,
 )
+from app.storage.state_repository import commit_character_state_edit
 
 logger = logging.getLogger(__name__)
 from app.ui.widgets import KeyValueTable, StringListEditor, read_table_cell
@@ -536,15 +538,30 @@ class CharacterEditorView(QWidget):
             state = self._gather_state(self._current_id)
             character = Character(core=core, state=state)
 
-            save_character(self._project_dir, character)
-            self._characters[self._current_id] = character
+            char_dir = self._project_dir / "characters" / self._current_id
+            if (char_dir / "definition.yaml").exists():
+                old_state = load_character(self._project_dir, self._current_id).state
+                commit_character_state_edit(
+                    char_dir,
+                    old_state,
+                    state,
+                    scene_id=self._current_scene_id,
+                    bus=self._bus,
+                )
+                save_character_definition(self._project_dir, core)
+            else:
+                save_character(self._project_dir, character)
+
+            saved_character = load_character(self._project_dir, self._current_id)
+            self._characters[self._current_id] = saved_character
+            self._populate_state_tab(saved_character.state)
 
             # Update list item label
             for i in range(self._list.count()):
                 item = self._list.item(i)
                 if item is not None and item.data(Qt.ItemDataRole.UserRole) == self._current_id:
-                    item.setText(name)
-                    color = TIER_COLORS.get(core.tier, QColor("#95a5a6"))
+                    item.setText(saved_character.core.name)
+                    color = TIER_COLORS.get(saved_character.core.tier, QColor("#95a5a6"))
                     item.setForeground(color)
                     break
 

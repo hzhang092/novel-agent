@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.storage.state_repository import StateRepository
+from app.storage.state_repository import StateRepository, commit_character_state_edit
 from app.storage.models import (
     StateChangeProposal,
     SetFieldChange,
@@ -223,3 +223,64 @@ class TestCommitUserEdit:
             assert snap.emotion == "happy"
 
             assert len(events_fired) == 1
+
+    def test_manual_state_edit_survives_reload_replay(self):
+        with tempfile.TemporaryDirectory() as td:
+            from app.storage.character_state import save_snapshot
+            from app.storage.models import Character, CharacterCore, CharacterState, Project
+            from app.storage.project_files import create_project, load_character, save_character
+
+            proj_dir = create_project(Path(td), Project(title="测试", genre="玄幻"))
+            save_character(
+                proj_dir,
+                Character(
+                    core=CharacterCore(id="char-hero", name="林轩"),
+                    state=CharacterState(character_id="char-hero"),
+                ),
+            )
+
+            char_dir = proj_dir / "characters" / "char-hero"
+            repo = StateRepository()
+            repo.commit_proposal(
+                char_dir,
+                StateChangeProposal(
+                    character_id="char-hero",
+                    character_name="林轩",
+                    changes=[
+                        SetFieldChange(type="set_field", field="goal", value="旧目标"),
+                        RelationshipChange(
+                            type="relationship_change",
+                            target_character_id="ally",
+                            relationship="盟友",
+                        ),
+                        KnowledgeAddChange(type="knowledge_add", fact="旧线索"),
+                    ],
+                ),
+                "scene_001",
+                "tx",
+                "req",
+            )
+
+            old_state = load_character(proj_dir, "char-hero").state
+            new_state = CharacterState(
+                character_id="char-hero",
+                current_goal="新目标",
+                current_relationships={},
+                current_knowledge=["新线索"],
+            )
+
+            event = commit_character_state_edit(char_dir, old_state, new_state, scene_id="scene_002")
+
+            assert event is not None
+            assert event.source == "user"
+            assert event.scene_id == "scene_002"
+
+            save_snapshot(
+                char_dir,
+                CharacterStateSnapshot(character_id="char-hero", goal="stale", last_event_id=1),
+            )
+
+            reloaded = load_character(proj_dir, "char-hero")
+            assert reloaded.state.current_goal == "新目标"
+            assert reloaded.state.current_relationships == {}
+            assert reloaded.state.current_knowledge == ["新线索"]

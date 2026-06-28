@@ -18,6 +18,7 @@ from app.storage.character_state import (
     _apply_changes_to_snapshot,
 )
 from app.storage.models import (
+    CharacterState,
     CharacterStateEvent,
     CharacterStoredChange,
     StateChangeProposal,
@@ -217,6 +218,82 @@ class StateRepository:
     def _publish(self, event_type: str, **payload: object) -> None:
         if self.bus is not None:
             self.bus.publish(event_type, **payload)
+
+
+def commit_character_state_edit(
+    char_dir: Path,
+    old_state: CharacterState,
+    new_state: CharacterState,
+    scene_id: str = "",
+    bus: EventBus | None = None,
+) -> CharacterStateEvent | None:
+    """Persist a manual Character State edit as a user State Event."""
+    changes = _diff_character_state(old_state, new_state)
+    return StateRepository(bus=bus).commit_user_edit(
+        char_dir,
+        new_state.character_id or old_state.character_id,
+        changes,
+        scene_id=scene_id,
+    )
+
+
+def _diff_character_state(old: CharacterState, new: CharacterState) -> list[dict]:
+    changes: list[dict] = []
+
+    for event_field, attr in (
+        ("goal", "current_goal"),
+        ("emotion", "current_emotion"),
+        ("location", "current_location"),
+        ("status", "current_status"),
+        ("power_level", "current_power_level"),
+    ):
+        old_value = _state_text(getattr(old, attr))
+        new_value = _state_text(getattr(new, attr))
+        if old_value != new_value:
+            changes.append({
+                "type": "set_field",
+                "field": event_field,
+                "value": new_value,
+                "old": old_value,
+            })
+
+    old_relationships = old.current_relationships
+    new_relationships = new.current_relationships
+    for target_id, relationship in new_relationships.items():
+        old_relationship = old_relationships.get(target_id, "")
+        if relationship != old_relationship:
+            changes.append({
+                "type": "relationship_change",
+                "target_character_id": target_id,
+                "relationship": relationship,
+                "old": old_relationship,
+            })
+    for target_id, relationship in old_relationships.items():
+        if target_id not in new_relationships:
+            changes.append({
+                "type": "relationship_remove",
+                "target_character_id": target_id,
+                "old": relationship,
+            })
+
+    changes.extend(_diff_facts("knowledge", old.current_knowledge, new.current_knowledge))
+    changes.extend(_diff_facts("secret", old.current_secrets, new.current_secrets))
+    return changes
+
+
+def _diff_facts(kind: str, old: list[str], new: list[str]) -> list[dict]:
+    changes: list[dict] = []
+    for fact in old:
+        if fact not in new:
+            changes.append({"type": f"{kind}_remove", "fact": fact})
+    for fact in new:
+        if fact not in old:
+            changes.append({"type": f"{kind}_add", "fact": fact})
+    return changes
+
+
+def _state_text(value: str | None) -> str:
+    return value or ""
 
 
 def _convert_to_stored_change(

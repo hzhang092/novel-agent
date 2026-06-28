@@ -100,6 +100,8 @@ def _apply_changes_to_snapshot(
             _set_scalar(snap, change.field, change.value)
         elif t == "relationship_change":
             snap.relationships[change.target_character_id] = change.relationship
+        elif t == "relationship_remove":
+            snap.relationships.pop(change.target_character_id, None)
         elif t == "knowledge_add":
             if change.fact not in snap.knowledge:
                 snap.knowledge.append(change.fact)

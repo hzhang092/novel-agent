@@ -229,20 +229,25 @@ def save_character(project_dir: Path, character: Character) -> None:
     """
     from app.storage.character_state import map_character_state_to_snapshot, save_snapshot
 
-    char_root = project_dir / "characters"
-    char_root.mkdir(exist_ok=True)
-    char_dir = char_root / character.core.id
-    char_dir.mkdir(exist_ok=True)
-
-    # Write definition.yaml (core)
-    definition_path = char_dir / "definition.yaml"
-    core_data = character.core.model_dump(mode="json")
-    with open(definition_path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(core_data, f, allow_unicode=True, sort_keys=False)
+    char_dir = save_character_definition(project_dir, character.core)
 
     # Write state.yaml (snapshot)
     snap = map_character_state_to_snapshot(character.state)
     save_snapshot(char_dir, snap)
+
+
+def save_character_definition(project_dir: Path, core: CharacterCore) -> Path:
+    """Write only characters/<id>/definition.yaml and return the character directory."""
+    char_root = project_dir / "characters"
+    char_root.mkdir(exist_ok=True)
+    char_dir = char_root / core.id
+    char_dir.mkdir(exist_ok=True)
+
+    definition_path = char_dir / "definition.yaml"
+    core_data = core.model_dump(mode="json")
+    with open(definition_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(core_data, f, allow_unicode=True, sort_keys=False)
+    return char_dir
 
 
 def load_character(project_dir: Path, character_id: str) -> Character:
