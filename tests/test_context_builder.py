@@ -38,27 +38,27 @@ def test_characters_are_tiered_by_tier_in_context(tmp_path):
 
     major_char = Character(
         core=CharacterCore(
-            name="林轩", tier="major", personality="坚韧不拔",
+            id="char-linxuan", name="林轩", tier="major", personality="坚韧不拔",
             background="孤儿出身", long_term_goal="成为最强",
         ),
         state=CharacterState(
-            character_id="", current_emotion="坚定",
+            character_id="char-linxuan", current_emotion="坚定",
             current_goal="通过考核", current_location="广场",
         ),
     )
     supporting_char = Character(
-        core=CharacterCore(name="苏清鸾", tier="supporting", personality="清冷高傲", speech_style="简短"),
-        state=CharacterState(character_id="", current_relationships={"林轩": "同门"}),
+        core=CharacterCore(id="char-su", name="苏清鸾", tier="supporting", personality="清冷高傲", speech_style="简短"),
+        state=CharacterState(character_id="char-su", current_relationships={"林轩": "同门"}),
     )
     bg_char = Character(
-        core=CharacterCore(name="杂役弟子甲", tier="background"),
-        state=CharacterState(character_id=""),
+        core=CharacterCore(id="char-bg", name="杂役弟子甲", tier="background"),
+        state=CharacterState(character_id="char-bg"),
     )
     save_character(proj_dir, major_char)
     save_character(proj_dir, supporting_char)
     save_character(proj_dir, bg_char)
 
-    scene = SceneOutline(title="测试场景", participating_characters=["林轩", "苏清鸾", "杂役弟子甲"])
+    scene = SceneOutline(title="测试场景", participating_character_ids=["char-linxuan", "char-su", "char-bg"])
     chapter = ChapterOutline(title="第一章", scenes=[scene])
     volume = VolumeOutline(title="第一卷", chapters=[chapter])
     save_volume_outline(proj_dir, volume)
@@ -79,7 +79,7 @@ def test_characters_are_tiered_by_tier_in_context(tmp_path):
 
 
 def test_non_participating_characters_are_excluded(tmp_path):
-    """Characters not in the scene's participating_characters list are excluded."""
+    """Characters not in the scene's participating character ID list are excluded."""
     from app.pipeline.context_builder import RetrievalEngine
     from app.storage.models import (
         Character, CharacterCore, CharacterState,
@@ -91,17 +91,17 @@ def test_non_participating_characters_are_excluded(tmp_path):
     proj_dir = create_project(tmp_path, project)
 
     char_in = Character(
-        core=CharacterCore(name="林轩", tier="major"),
-        state=CharacterState(character_id=""),
+        core=CharacterCore(id="char-linxuan", name="林轩", tier="major"),
+        state=CharacterState(character_id="char-linxuan"),
     )
     char_out = Character(
-        core=CharacterCore(name="路人乙", tier="major"),
-        state=CharacterState(character_id=""),
+        core=CharacterCore(id="char-bystander", name="路人乙", tier="major"),
+        state=CharacterState(character_id="char-bystander"),
     )
     save_character(proj_dir, char_in)
     save_character(proj_dir, char_out)
 
-    scene = SceneOutline(title="测试", participating_characters=["林轩"])
+    scene = SceneOutline(title="测试", participating_character_ids=["char-linxuan"])
     chapter = ChapterOutline(title="第一章", scenes=[scene])
     volume = VolumeOutline(title="第一卷", chapters=[chapter])
     save_volume_outline(proj_dir, volume)
@@ -138,8 +138,8 @@ def test_characters_use_previous_scene_checkpoint_in_context(tmp_path):
             state=CharacterState(character_id="char-hero", current_goal="第十场后的目标"),
         ),
     )
-    first = SceneOutline(id="scene-1", title="第一场", participating_characters=["林轩"])
-    second = SceneOutline(id="scene-2", title="第二场", participating_characters=["林轩"])
+    first = SceneOutline(id="scene-1", title="第一场", participating_character_ids=["char-hero"])
+    second = SceneOutline(id="scene-2", title="第二场", participating_character_ids=["char-hero"])
     save_volume_outline(
         proj_dir,
         VolumeOutline(
@@ -215,7 +215,7 @@ def test_canon_facts_matched_by_tag_relevance(tmp_path):
     ]
     save_canon_facts(proj_dir, facts)
 
-    scene = SceneOutline(title="测试", location="落云宗广场", participating_characters=["林轩"])
+    scene = SceneOutline(title="测试", location="落云宗广场")
     chapter = ChapterOutline(title="第一章", scenes=[scene])
     volume = VolumeOutline(title="第一卷", chapters=[chapter])
     save_volume_outline(proj_dir, volume)
@@ -276,8 +276,8 @@ def test_retrieval_engine_is_deterministic(tmp_path):
     proj_dir = create_project(tmp_path, project)
 
     char = Character(
-        core=CharacterCore(name="林轩", tier="major"),
-        state=CharacterState(character_id=""),
+        core=CharacterCore(id="char-linxuan", name="林轩", tier="major"),
+        state=CharacterState(character_id="char-linxuan"),
     )
     save_character(proj_dir, char)
 
@@ -291,7 +291,7 @@ def test_retrieval_engine_is_deterministic(tmp_path):
     ]
     save_scene_summaries(proj_dir, summaries)
 
-    scene = SceneOutline(title="测试场景", participating_characters=["林轩"])
+    scene = SceneOutline(title="测试场景", participating_character_ids=["char-linxuan"])
     chapter = ChapterOutline(title="第一章", scenes=[scene])
     volume = VolumeOutline(title="第一卷", chapters=[chapter])
     save_volume_outline(proj_dir, volume)
@@ -360,3 +360,85 @@ def test_style_guide_present_in_context(tmp_path):
     assert sg["pacing"] == "快节奏"
     assert sg["tone"] == "热血"
     assert sg["reference_passages"] == ["参考段落1"]
+
+
+def test_scene_info_derives_current_names_from_character_ids(tmp_path):
+    from app.pipeline.context_builder import RetrievalEngine
+    from app.storage.models import Character, CharacterCore, CharacterState, ChapterOutline, SceneOutline, VolumeOutline
+    from app.storage.project_files import create_project, save_character, save_volume_outline
+
+    project = Project(title="测试", genre="玄幻")
+    proj_dir = create_project(tmp_path, project)
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(id="char-hero", name="新名字", tier="major"),
+            state=CharacterState(character_id="char-hero"),
+        ),
+    )
+    scene = SceneOutline(
+        id="scene-1",
+        title="测试",
+        pov_character_id="char-hero",
+        participating_character_ids=["char-hero"],
+    )
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(title="第一卷", chapters=[ChapterOutline(title="第一章", scenes=[scene])]),
+    )
+
+    context = RetrievalEngine().assemble(proj_dir, scene_id="scene-1")
+
+    assert context["scene_info"]["pov_character"] == "新名字"
+    assert context["scene_info"]["participating_characters"] == ["新名字"]
+    assert context["characters"]["major"][0]["core"]["id"] == "char-hero"
+
+
+def test_duplicate_character_names_do_not_select_both_characters(tmp_path):
+    from app.pipeline.context_builder import RetrievalEngine
+    from app.storage.models import Character, CharacterCore, CharacterState, ChapterOutline, SceneOutline, VolumeOutline
+    from app.storage.project_files import create_project, save_character, save_volume_outline
+
+    project = Project(title="测试", genre="玄幻")
+    proj_dir = create_project(tmp_path, project)
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(id="char-a", name="Alex", tier="major"),
+            state=CharacterState(character_id="char-a"),
+        ),
+    )
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(id="char-b", name="Alex", tier="major"),
+            state=CharacterState(character_id="char-b"),
+        ),
+    )
+    scene = SceneOutline(id="scene-1", title="测试", participating_character_ids=["char-b"])
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(title="第一卷", chapters=[ChapterOutline(title="第一章", scenes=[scene])]),
+    )
+
+    context = RetrievalEngine().assemble(proj_dir, scene_id="scene-1")
+
+    assert [char["core"]["id"] for char in context["characters"]["major"]] == ["char-b"]
+    assert context["scene_info"]["participating_characters"] == ["Alex"]
+
+
+def test_missing_character_id_fails_context_assembly(tmp_path):
+    from app.pipeline.context_builder import RetrievalEngine
+    from app.storage.models import ChapterOutline, SceneOutline, VolumeOutline
+    from app.storage.project_files import create_project, save_volume_outline
+
+    project = Project(title="测试", genre="玄幻")
+    proj_dir = create_project(tmp_path, project)
+    scene = SceneOutline(id="scene-1", title="测试", participating_character_ids=["missing-char"])
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(title="第一卷", chapters=[ChapterOutline(title="第一章", scenes=[scene])]),
+    )
+
+    with pytest.raises(ValueError, match="Scene references missing character IDs: missing-char"):
+        RetrievalEngine().assemble(proj_dir, scene_id="scene-1")

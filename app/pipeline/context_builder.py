@@ -33,16 +33,17 @@ class RetrievalEngine:
         outline_context, recent_summaries, canon_facts, style_guide.
         """
         scene = self._find_scene(project_dir, scene_id)
+        scene_info = self._build_scene_info(project_dir, scene)
         characters, read_points = self._collect_characters(project_dir, scene)
 
         return {
-            "scene_info": self._build_scene_info(scene),
+            "scene_info": scene_info,
             "world_rules": self._collect_world_rules(project_dir, scene),
             "characters": characters,
             "read_points": read_points,
             "outline_context": self._build_outline_context(project_dir, scene),
             "recent_summaries": self._collect_recent_summaries(project_dir),
-            "canon_facts": self._collect_canon_facts(project_dir, scene),
+            "canon_facts": self._collect_canon_facts(project_dir, scene_info),
             "style_guide": self._collect_style_guide(project_dir),
         }
 
@@ -66,8 +67,8 @@ class RetrievalEngine:
                             "scene_title": sc.title,
                             "location": sc.location,
                             "time": sc.time,
-                            "pov_character": sc.pov_character,
-                            "participating_characters": sc.participating_characters,
+                            "pov_character_id": sc.pov_character_id,
+                            "participating_character_ids": sc.participating_character_ids,
                             "scene_goal": sc.scene_goal,
                             "conflict": sc.conflict,
                             "required_plot_beats": sc.required_plot_beats,
@@ -77,10 +78,28 @@ class RetrievalEngine:
                         }
         return {}
 
-    def _build_scene_info(self, scene: dict | None) -> dict:
+    def _build_scene_info(self, project_dir: Path, scene: dict | None) -> dict:
         if scene is None:
             return {}
-        return scene
+        if not scene:
+            return scene
+
+        from app.storage.project_files import load_all_characters
+
+        chars_by_id = {char.core.id: char for char in load_all_characters(project_dir)}
+        pov_id = scene.get("pov_character_id", "")
+        participant_ids = scene.get("participating_character_ids", [])
+        referenced_ids = [cid for cid in [pov_id, *participant_ids] if cid]
+        missing = sorted({cid for cid in referenced_ids if cid not in chars_by_id})
+        if missing:
+            raise ValueError("Scene references missing character IDs: " + ", ".join(missing))
+
+        scene_info = dict(scene)
+        scene_info["pov_character"] = chars_by_id[pov_id].core.name if pov_id else ""
+        scene_info["participating_characters"] = [
+            chars_by_id[cid].core.name for cid in participant_ids
+        ]
+        return scene_info
 
     def _collect_world_rules(self, project_dir: Path, scene: dict | None) -> dict:
         from app.storage.project_files import load_project
@@ -103,7 +122,7 @@ class RetrievalEngine:
     def _collect_characters(self, project_dir: Path, scene: dict | None) -> tuple[dict, dict]:
         from app.storage.timeline_repository import load_character_context_for_scene
 
-        participants = (scene or {}).get("participating_characters", [])
+        participants = (scene or {}).get("participating_character_ids", [])
         scene_id = (scene or {}).get("id", "")
         all_chars, read_points = load_character_context_for_scene(
             project_dir, scene_id, participants
@@ -114,7 +133,7 @@ class RetrievalEngine:
         background: list[dict] = []
 
         for char in all_chars:
-            if char.core.name not in participants:
+            if char.core.id not in participants:
                 continue
 
             if char.core.tier.value == "major":
