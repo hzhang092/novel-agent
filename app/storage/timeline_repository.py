@@ -48,14 +48,19 @@ class ScenePosition:
 def load_character_context_for_scene(
     project_dir: Path,
     scene_id: str,
-    character_names: list[str],
+    character_ids: list[str],
 ) -> tuple[list[Character], dict[str, dict]]:
     """Load participating characters with state as of before scene_id."""
-    participants = set(character_names)
+    participants = set(character_ids)
     characters = [
         char for char in load_all_characters(project_dir)
-        if char.core.name in participants
+        if char.core.id in participants
     ]
+    found_ids = {char.core.id for char in characters}
+    missing = sorted(participants - found_ids)
+    if missing:
+        raise ValueError("Scene references missing character IDs: " + ", ".join(missing))
+
     states, read_points = load_character_state_as_of_scene(
         project_dir,
         scene_id,

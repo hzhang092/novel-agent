@@ -224,3 +224,46 @@ def test_first_character_event_before_later_scene_does_not_use_latest_state_yaml
 
     assert states["char-hero"].goal == ""
     assert read_points["char-hero"]["source"] == "replay"
+
+
+def test_load_character_context_for_scene_uses_ids_with_duplicate_names(tmp_path):
+    from app.storage.timeline_repository import load_character_context_for_scene
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(id="char-major-alex", name="Alex", tier="major"),
+            state=CharacterState(character_id="char-major-alex", current_goal="selected"),
+        ),
+    )
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(id="char-support-alex", name="Alex", tier="supporting"),
+            state=CharacterState(character_id="char-support-alex", current_goal="not selected"),
+        ),
+    )
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(
+            id="vol-1",
+            title="第一卷",
+            chapters=[
+                ChapterOutline(
+                    id="ch-1",
+                    title="第一章",
+                    scenes=[SceneOutline(id="scene-1", title="第一场")],
+                )
+            ],
+        ),
+    )
+
+    characters, read_points = load_character_context_for_scene(
+        proj_dir,
+        "scene-1",
+        ["char-major-alex"],
+    )
+
+    assert [char.core.id for char in characters] == ["char-major-alex"]
+    assert set(read_points) == {"char-major-alex"}
