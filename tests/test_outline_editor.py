@@ -309,10 +309,11 @@ def test_character_selectors_store_ids_and_disambiguate_duplicate_names(editor):
     labels = [widget._scene_pov.itemText(i) for i in range(widget._scene_pov.count())]
     ids = [widget._scene_pov.itemData(i) for i in range(widget._scene_pov.count())]
     assert labels == [
+        "",
         "Alex · major · char-maj",
         "Alex · supporting · char-sup",
     ]
-    assert ids == ["char-major-alex", "char-support-alex"]
+    assert ids == ["", "char-major-alex", "char-support-alex"]
 
     item_ids = [
         widget._scene_participants.item(i).data(Qt.ItemDataRole.UserRole + 2)
@@ -341,10 +342,33 @@ def test_gather_scene_saves_character_ids_from_selectors(editor):
         ),
     )
     widget._refresh_character_dropdowns()
-    widget._scene_pov.setCurrentIndex(0)
-    widget._scene_participants.item(1).setSelected(True)
+    widget._scene_pov.setCurrentIndex(widget._scene_pov.findData("char-hero"))
+    for i in range(widget._scene_participants.count()):
+        item = widget._scene_participants.item(i)
+        item.setSelected(item.data(Qt.ItemDataRole.UserRole + 2) == "char-friend")
 
     scene = widget._gather_scene("scene-1")
 
     assert scene.pov_character_id == "char-hero"
     assert scene.participating_character_ids == ["char-friend"]
+
+
+def test_populate_scene_preserves_blank_pov_when_characters_exist(editor):
+    from app.storage.models import Character, CharacterCore, CharacterState, SceneOutline
+    from app.storage.project_files import save_character
+
+    widget, proj_dir = editor
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(id="char-hero", name="林轩", tier="major"),
+            state=CharacterState(character_id="char-hero"),
+        ),
+    )
+    widget._refresh_character_dropdowns()
+    widget._scene_pov.setCurrentIndex(widget._scene_pov.findData("char-hero"))
+
+    widget._populate_scene_form(SceneOutline(id="scene-1", pov_character_id=""))
+    scene = widget._gather_scene("scene-1")
+
+    assert scene.pov_character_id == ""

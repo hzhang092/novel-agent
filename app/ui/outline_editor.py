@@ -280,7 +280,9 @@ class OutlineEditorView(QWidget):
         self._scene_time.setText(sc.time)
 
         self._refresh_character_dropdowns()
-        idx = self._scene_pov.findData(sc.pov_character_id)
+        idx = self._scene_pov.findData(sc.pov_character_id or "")
+        if idx < 0:
+            idx = self._scene_pov.findData("")
         if idx >= 0:
             self._scene_pov.setCurrentIndex(idx)
 
@@ -302,22 +304,18 @@ class OutlineEditorView(QWidget):
 
         from app.storage.project_files import load_all_characters
 
-        tier_order = {"major": 0, "supporting": 1, "background": 2}
-        chars = sorted(
-            load_all_characters(self._project_dir),
-            key=lambda c: (tier_order.get(c.core.tier.value, 99), c.core.name, c.core.id),
-        )
+        chars = load_all_characters(self._project_dir)
         name_counts = Counter(c.core.name for c in chars)
         duplicate_names = {name for name, count in name_counts.items() if count > 1}
 
-        current_pov_id = self._scene_pov.currentData()
+        current_pov_id = self._scene_pov.currentData() or ""
         self._scene_pov.clear()
+        self._scene_pov.addItem("", "")
         for char in chars:
             self._scene_pov.addItem(self._character_label(char, duplicate_names), char.core.id)
-        if current_pov_id:
-            idx = self._scene_pov.findData(current_pov_id)
-            if idx >= 0:
-                self._scene_pov.setCurrentIndex(idx)
+        idx = self._scene_pov.findData(current_pov_id)
+        if idx >= 0:
+            self._scene_pov.setCurrentIndex(idx)
 
         current_selected = {
             self._scene_participants.item(i).data(ROLE_CHARACTER_ID)
