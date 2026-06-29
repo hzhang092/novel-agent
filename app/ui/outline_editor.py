@@ -1,6 +1,7 @@
 """Outline editor — tree view (Volumes → Chapters → Scenes) with detail forms."""
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -28,6 +29,7 @@ from app.ui.widgets import StringListEditor
 
 ROLE_NODE_TYPE = Qt.ItemDataRole.UserRole
 ROLE_NODE_ID = Qt.ItemDataRole.UserRole + 1
+ROLE_CHARACTER_ID = Qt.ItemDataRole.UserRole + 2
 
 
 class OutlineEditorView(QWidget):
@@ -221,7 +223,7 @@ class OutlineEditorView(QWidget):
         row2 = QHBoxLayout()
         row2.addWidget(QLabel("视角角色:"))
         self._scene_pov = QComboBox()
-        self._scene_pov.setEditable(True)
+        self._scene_pov.setEditable(False)
         row2.addWidget(self._scene_pov)
         form.addLayout(row2)
 
@@ -266,22 +268,26 @@ class OutlineEditorView(QWidget):
         scroll.setWidget(container)
         return scroll
 
+    def _character_label(self, character, duplicate_names: set[str]) -> str:
+        name = character.core.name
+        if name in duplicate_names:
+            return f"{name} · {character.core.tier.value} · {character.core.id[:8]}"
+        return name
+
     def _populate_scene_form(self, sc) -> None:
         self._scene_title.setText(sc.title)
         self._scene_location.setText(sc.location)
         self._scene_time.setText(sc.time)
 
         self._refresh_character_dropdowns()
-        idx = self._scene_pov.findText(sc.pov_character)
+        idx = self._scene_pov.findData(sc.pov_character_id)
         if idx >= 0:
             self._scene_pov.setCurrentIndex(idx)
 
+        selected_ids = set(sc.participating_character_ids)
         for i in range(self._scene_participants.count()):
             item = self._scene_participants.item(i)
-            if item.text() in sc.participating_characters:
-                item.setSelected(True)
-            else:
-                item.setSelected(False)
+            item.setSelected(item.data(ROLE_CHARACTER_ID) in selected_ids)
 
         self._scene_goal.setPlainText(sc.scene_goal)
         self._scene_conflict.setPlainText(sc.conflict)
@@ -296,35 +302,42 @@ class OutlineEditorView(QWidget):
 
         from app.storage.project_files import load_all_characters
 
-        chars = load_all_characters(self._project_dir)
-        names = [c.core.name for c in chars]
+        tier_order = {"major": 0, "supporting": 1, "background": 2}
+        chars = sorted(
+            load_all_characters(self._project_dir),
+            key=lambda c: (tier_order.get(c.core.tier.value, 99), c.core.name, c.core.id),
+        )
+        name_counts = Counter(c.core.name for c in chars)
+        duplicate_names = {name for name, count in name_counts.items() if count > 1}
 
-        current_pov = self._scene_pov.currentText()
+        current_pov_id = self._scene_pov.currentData()
         self._scene_pov.clear()
-        self._scene_pov.addItems(names)
-        if current_pov:
-            idx = self._scene_pov.findText(current_pov)
+        for char in chars:
+            self._scene_pov.addItem(self._character_label(char, duplicate_names), char.core.id)
+        if current_pov_id:
+            idx = self._scene_pov.findData(current_pov_id)
             if idx >= 0:
                 self._scene_pov.setCurrentIndex(idx)
 
         current_selected = {
-            self._scene_participants.item(i).text()
+            self._scene_participants.item(i).data(ROLE_CHARACTER_ID)
             for i in range(self._scene_participants.count())
             if self._scene_participants.item(i).isSelected()
         }
         self._scene_participants.clear()
-        for name in names:
-            item = QListWidgetItem(name)
-            if name in current_selected:
+        for char in chars:
+            item = QListWidgetItem(self._character_label(char, duplicate_names))
+            item.setData(ROLE_CHARACTER_ID, char.core.id)
+            if char.core.id in current_selected:
                 item.setSelected(True)
             self._scene_participants.addItem(item)
 
     def _gather_scene(self, sc_id: str):
         from app.storage.models import SceneOutline
 
-        pov = self._scene_pov.currentText().strip()
+        pov_id = self._scene_pov.currentData() or ""
         participants = [
-            self._scene_participants.item(i).text()
+            self._scene_participants.item(i).data(ROLE_CHARACTER_ID)
             for i in range(self._scene_participants.count())
             if self._scene_participants.item(i).isSelected()
         ]
@@ -334,8 +347,8 @@ class OutlineEditorView(QWidget):
             title=self._scene_title.text().strip(),
             location=self._scene_location.text().strip(),
             time=self._scene_time.text().strip(),
-            pov_character=pov,
-            participating_characters=participants,
+            pov_character_id=pov_id,
+            participating_character_ids=participants,
             scene_goal=self._scene_goal.toPlainText().strip(),
             conflict=self._scene_conflict.toPlainText().strip(),
             required_plot_beats=self._scene_beats.get_items(),
@@ -679,8 +692,8 @@ class OutlineEditorView(QWidget):
                             sc.title = gathered.title
                             sc.location = gathered.location
                             sc.time = gathered.time
-                            sc.pov_character = gathered.pov_character
-                            sc.participating_characters = gathered.participating_characters
+                            sc.pov_character_id = gathered.pov_character_id
+                            sc.participating_character_ids = gathered.participating_character_ids
                             sc.scene_goal = gathered.scene_goal
                             sc.conflict = gathered.conflict
                             sc.required_plot_beats = gathered.required_plot_beats

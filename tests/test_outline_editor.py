@@ -282,3 +282,69 @@ def test_heatmap_marks_chapter_green_when_has_hook(editor):
     chapter_item = root.child(0)
     bg = chapter_item.background(0)
     assert bg.color() == QColor("#27ae60")
+
+
+def test_character_selectors_store_ids_and_disambiguate_duplicate_names(editor):
+    from app.storage.models import Character, CharacterCore, CharacterState
+    from app.storage.project_files import save_character
+
+    widget, proj_dir = editor
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(id="char-major-alex", name="Alex", tier="major"),
+            state=CharacterState(character_id="char-major-alex"),
+        ),
+    )
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(id="char-support-alex", name="Alex", tier="supporting"),
+            state=CharacterState(character_id="char-support-alex"),
+        ),
+    )
+
+    widget._refresh_character_dropdowns()
+
+    labels = [widget._scene_pov.itemText(i) for i in range(widget._scene_pov.count())]
+    ids = [widget._scene_pov.itemData(i) for i in range(widget._scene_pov.count())]
+    assert labels == [
+        "Alex · major · char-maj",
+        "Alex · supporting · char-sup",
+    ]
+    assert ids == ["char-major-alex", "char-support-alex"]
+
+    item_ids = [
+        widget._scene_participants.item(i).data(Qt.ItemDataRole.UserRole + 2)
+        for i in range(widget._scene_participants.count())
+    ]
+    assert item_ids == ["char-major-alex", "char-support-alex"]
+
+
+def test_gather_scene_saves_character_ids_from_selectors(editor):
+    from app.storage.models import Character, CharacterCore, CharacterState
+    from app.storage.project_files import save_character
+
+    widget, proj_dir = editor
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(id="char-hero", name="林轩", tier="major"),
+            state=CharacterState(character_id="char-hero"),
+        ),
+    )
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(id="char-friend", name="苏清鸾", tier="supporting"),
+            state=CharacterState(character_id="char-friend"),
+        ),
+    )
+    widget._refresh_character_dropdowns()
+    widget._scene_pov.setCurrentIndex(0)
+    widget._scene_participants.item(1).setSelected(True)
+
+    scene = widget._gather_scene("scene-1")
+
+    assert scene.pov_character_id == "char-hero"
+    assert scene.participating_character_ids == ["char-friend"]
