@@ -1,5 +1,7 @@
 """Tests for scene timeline helpers."""
 
+import pytest
+
 from app.storage.models import (
     Character,
     CharacterCore,
@@ -267,3 +269,29 @@ def test_load_character_context_for_scene_uses_ids_with_duplicate_names(tmp_path
 
     assert [char.core.id for char in characters] == ["char-major-alex"]
     assert set(read_points) == {"char-major-alex"}
+
+
+def test_load_character_context_for_scene_raises_for_missing_ids(tmp_path):
+    from app.storage.timeline_repository import load_character_context_for_scene
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(
+            id="vol-1",
+            title="第一卷",
+            chapters=[
+                ChapterOutline(
+                    id="ch-1",
+                    title="第一章",
+                    scenes=[SceneOutline(id="scene-1", title="第一场")],
+                )
+            ],
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Scene references missing character IDs: missing-char",
+    ):
+        load_character_context_for_scene(proj_dir, "scene-1", ["missing-char"])
