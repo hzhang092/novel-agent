@@ -38,7 +38,7 @@ def project_dir():
 
         char = Character(
             core=CharacterCore(
-                name="林轩", tier=CharacterTier.MAJOR, personality="冷静果断",
+                id="char-1", name="林轩", tier=CharacterTier.MAJOR, personality="冷静果断",
                 speech_style="简洁有力",
             ),
             state=CharacterState(
@@ -53,8 +53,8 @@ def project_dir():
             title="测试场景",
             location="秘境入口",
             time="清晨",
-            pov_character="林轩",
-            participating_characters=["林轩"],
+            pov_character_id="char-1",
+            participating_character_ids=["char-1"],
             scene_goal="发现秘境秘密",
             conflict="机关陷阱",
             ending_hook="秘境深处传来低语",

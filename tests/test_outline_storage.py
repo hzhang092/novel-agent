@@ -21,8 +21,8 @@ def test_save_and_load_volume_round_trip(tmp_path):
         title="考核开始",
         location="落云宗广场",
         time="清晨",
-        pov_character="林轩",
-        participating_characters=["林轩", "苏清鸾", "长老"],
+        pov_character_id="char-linxuan",
+        participating_character_ids=["char-linxuan", "char-su", "char-elder"],
         scene_goal="林轩通过第一关考核",
         conflict="林轩修为低微，被其他弟子嘲笑",
         required_plot_beats=["入场", "嘲笑", "反击", "考核结果"],
@@ -60,8 +60,8 @@ def test_save_and_load_volume_round_trip(tmp_path):
     assert sc.title == "考核开始"
     assert sc.location == "落云宗广场"
     assert sc.time == "清晨"
-    assert sc.pov_character == "林轩"
-    assert sc.participating_characters == ["林轩", "苏清鸾", "长老"]
+    assert sc.pov_character_id == "char-linxuan"
+    assert sc.participating_character_ids == ["char-linxuan", "char-su", "char-elder"]
     assert sc.scene_goal == "林轩通过第一关考核"
     assert sc.conflict == "林轩修为低微，被其他弟子嘲笑"
     assert sc.required_plot_beats == ["入场", "嘲笑", "反击", "考核结果"]
