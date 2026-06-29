@@ -149,3 +149,78 @@ def test_commit_scene_proposal_uses_historical_state_and_rebuilds_head(tmp_path)
     assert event.changes[0].old == "after scene 1"
     assert load_checkpoint(char_dir, "scene-2").snapshot.goal == "new scene 2"
     assert load_snapshot(char_dir).goal == "after scene 3"
+
+
+def test_first_scene_context_does_not_use_latest_state_yaml(tmp_path):
+    from app.storage.timeline_repository import load_character_state_as_of_scene
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(id="char-hero", name="林轩", tier="major"),
+            state=CharacterState(character_id="char-hero", current_goal="future goal"),
+        ),
+    )
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(
+            id="vol-1",
+            title="第一卷",
+            chapters=[
+                ChapterOutline(
+                    id="ch-1",
+                    title="第一章",
+                    scenes=[SceneOutline(id="scene-1", title="第一场")],
+                )
+            ],
+        ),
+    )
+
+    states, read_points = load_character_state_as_of_scene(
+        proj_dir,
+        "scene-1",
+        ["char-hero"],
+    )
+
+    assert states["char-hero"].goal == ""
+    assert read_points["char-hero"]["source"] == "story_start"
+
+
+def test_first_character_event_before_later_scene_does_not_use_latest_state_yaml(tmp_path):
+    from app.storage.timeline_repository import load_character_state_as_of_scene
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(id="char-hero", name="林轩", tier="major"),
+            state=CharacterState(character_id="char-hero", current_goal="future goal"),
+        ),
+    )
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(
+            id="vol-1",
+            title="第一卷",
+            chapters=[
+                ChapterOutline(
+                    id="ch-1",
+                    title="第一章",
+                    scenes=[
+                        SceneOutline(id=f"scene-{i}", title=f"第{i}场")
+                        for i in range(1, 6)
+                    ],
+                )
+            ],
+        ),
+    )
+
+    states, read_points = load_character_state_as_of_scene(
+        proj_dir,
+        "scene-5",
+        ["char-hero"],
+    )
+
+    assert states["char-hero"].goal == ""
+    assert read_points["char-hero"]["source"] == "replay"

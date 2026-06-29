@@ -96,12 +96,7 @@ def load_character_state_as_of_scene(
             continue
 
         if current.scene_order <= 1:
-            events = load_events(char_dir)
-            snap = (
-                CharacterStateSnapshot(character_id=character_id)
-                if events
-                else load_or_build_snapshot(char_dir, character_id)
-            )
+            snap = CharacterStateSnapshot(character_id=character_id)
             snapshots[character_id] = snap
             read_points[character_id] = _read_point("story_start", "", snap.last_event_id, "", 0)
             continue
