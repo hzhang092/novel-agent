@@ -185,8 +185,8 @@ def test_scene_outline_full():
         title="考核开始",
         location="落云宗广场",
         time="清晨",
-        pov_character="林轩",
-        participating_characters=["林轩", "苏清鸾", "考核长老"],
+        pov_character_id="char-linxuan",
+        participating_character_ids=["char-linxuan", "char-su", "char-elder"],
         scene_goal="林轩通过第一关考核",
         conflict="林轩修为最低，被其他弟子轻视",
         required_plot_beats=["展示林轩的坚韧", "苏清鸾暗中关注"],
@@ -194,7 +194,8 @@ def test_scene_outline_full():
         ending_hook="第二关考核内容公布时，全场震惊",
         constraints=["不可暴露神秘力量"],
     )
-    assert len(so.participating_characters) == 3
+    assert so.pov_character_id == "char-linxuan"
+    assert so.participating_character_ids == ["char-linxuan", "char-su", "char-elder"]
 
 
 def test_chapter_outline():

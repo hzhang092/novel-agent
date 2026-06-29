@@ -113,8 +113,8 @@ class SceneOutline(BaseModel):
     title: str = ""
     location: str = ""
     time: str = ""
-    pov_character: str = ""
-    participating_characters: list[str] = Field(default_factory=list)
+    pov_character_id: str = ""
+    participating_character_ids: list[str] = Field(default_factory=list)
     scene_goal: str = ""
     conflict: str = ""
     required_plot_beats: list[str] = Field(default_factory=list)
