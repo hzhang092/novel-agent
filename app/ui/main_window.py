@@ -101,15 +101,6 @@ class MainWindow(QMainWindow):
         export_epub_action.triggered.connect(self._on_export_epub)
         file_menu.addAction(export_epub_action)
 
-        file_menu.addSeparator()
-        export_md_action = QAction("导出 Markdown(&M)...", self)
-        export_md_action.triggered.connect(self._on_export_markdown)
-        file_menu.addAction(export_md_action)
-
-        export_epub_action = QAction("导出 EPUB(&E)...", self)
-        export_epub_action.triggered.connect(self._on_export_epub)
-        file_menu.addAction(export_epub_action)
-
     def _setup_ui(self) -> None:
         central = QWidget()
         self.setCentralWidget(central)
