@@ -69,7 +69,8 @@ def get_provider_for_step(step_id: str, config: ProviderConfig) -> LLMProvider:
     """Resolve the right provider for a pipeline step.
 
     Args:
-        step_id: One of "planner", "characters", "writer", "reviewer", "fact_extractor"
+        step_id: One of "planner", "characters", "writer", "reviewer",
+            "fact_extractor", "state_updater"
         config: ProviderConfig with routing map.
 
     Returns:

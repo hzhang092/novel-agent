@@ -23,6 +23,7 @@ STEP_LABELS = {
     "writer": "写作 (Writer)",
     "reviewer": "审阅 (Reviewer)",
     "fact_extractor": "事实提取 (Fact Extractor)",
+    "state_updater": "状态更新 (State Updater)",
 }
 
 PROVIDER_CHOICES = ["ollama", "deepseek"]

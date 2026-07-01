@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from pydantic import BaseModel, Field
 
 from app.pipeline.pipeline import ScenePipeline
 from app.providers.base import MockProvider
@@ -155,6 +156,43 @@ async def test_full_pipeline_generates_prose(
     assert result.review is not None
     assert result.review.overall_pass is True
     assert len(result.trace) >= 4  # Planner, Characters, Writer, Reviewer
+
+
+@pytest.mark.asyncio
+async def test_fact_and_state_steps_use_separate_provider_routes(
+    project_dir, mock_planner, mock_char_agent, mock_writer, mock_reviewer, monkeypatch
+):
+    """Fact extraction and state updates should resolve separate provider routes."""
+    from app.providers import config as provider_config
+
+    class EmptyFacts(BaseModel):
+        facts: list[dict] = Field(default_factory=list)
+
+    class EmptyChanges(BaseModel):
+        changes: list[dict] = Field(default_factory=list)
+
+    requested_steps: list[str] = []
+
+    def fake_get_provider_for_step(step_id, config):
+        requested_steps.append(step_id)
+        if step_id == "fact_extractor":
+            return MockProvider(structured_response=EmptyFacts())
+        if step_id == "state_updater":
+            return MockProvider(structured_response=EmptyChanges())
+        return MockProvider()
+
+    monkeypatch.setattr(provider_config, "load_provider_config", lambda: object())
+    monkeypatch.setattr(provider_config, "get_provider_for_step", fake_get_provider_for_step)
+
+    pipeline = ScenePipeline()
+
+    async for _token, _gen_result in pipeline.generate_stream(
+        project_dir, "scene-1",
+        mock_planner, mock_char_agent, mock_writer, mock_reviewer,
+    ):
+        pass
+
+    assert requested_steps == ["fact_extractor", "state_updater"]
 
 
 @pytest.mark.asyncio

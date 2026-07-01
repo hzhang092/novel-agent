@@ -18,7 +18,8 @@ class TestProviderConfig:
         assert cfg.deepseek_api_key == ""
         assert cfg.routing["planner"] == "ollama"
         assert cfg.routing["writer"] == "ollama"
-        assert len(cfg.routing) == 5  # all 5 steps
+        assert cfg.routing["state_updater"] == "ollama"
+        assert len(cfg.routing) == 6  # all 6 steps
 
     def test_custom_routing(self):
         cfg = ProviderConfig(
@@ -28,6 +29,7 @@ class TestProviderConfig:
                 "writer": "deepseek",
                 "reviewer": "ollama",
                 "fact_extractor": "ollama",
+                "state_updater": "ollama",
             }
         )
         assert cfg.routing["writer"] == "deepseek"
@@ -65,7 +67,14 @@ class TestCreateProvider:
 class TestGetProviderForStep:
     def test_default_routing_all_ollama(self):
         cfg = ProviderConfig()
-        for step in ["planner", "characters", "writer", "reviewer", "fact_extractor"]:
+        for step in [
+            "planner",
+            "characters",
+            "writer",
+            "reviewer",
+            "fact_extractor",
+            "state_updater",
+        ]:
             provider = get_provider_for_step(step, cfg)
             assert isinstance(provider, OllamaProvider)
 
@@ -78,6 +87,7 @@ class TestGetProviderForStep:
                 "writer": "deepseek",
                 "reviewer": "ollama",
                 "fact_extractor": "ollama",
+                "state_updater": "ollama",
             },
         )
         writer = get_provider_for_step("writer", cfg)
@@ -93,6 +103,19 @@ class TestGetProviderForStep:
 
 
 class TestConfigSerialization:
+    def test_legacy_config_adds_state_updater_from_fact_extractor(self):
+        cfg = ProviderConfig.model_validate({
+            "routing": {
+                "planner": "ollama",
+                "characters": "ollama",
+                "writer": "ollama",
+                "reviewer": "ollama",
+                "fact_extractor": "deepseek",
+            }
+        })
+
+        assert cfg.routing["state_updater"] == "deepseek"
+
     def test_round_trip(self):
         cfg = ProviderConfig(
             ollama_model="qwen:32b",
@@ -103,6 +126,7 @@ class TestConfigSerialization:
                 "writer": "deepseek",
                 "reviewer": "ollama",
                 "fact_extractor": "ollama",
+                "state_updater": "ollama",
             },
         )
         data = cfg.model_dump(mode="json")

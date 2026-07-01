@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Annotated, Literal, Optional, Union
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ── Character ──────────────────────────────────────────────────────────────
@@ -25,6 +25,7 @@ class AgentStepId(str, Enum):
     WRITER = "writer"
     REVIEWER = "reviewer"
     FACT_EXTRACTOR = "fact_extractor"
+    STATE_UPDATER = "state_updater"
 
 
 class CharacterCore(BaseModel):
@@ -235,7 +236,16 @@ class ProviderConfig(BaseModel):
         "writer": "ollama",
         "reviewer": "ollama",
         "fact_extractor": "ollama",
+        "state_updater": "ollama",
     })
+
+    @model_validator(mode="after")
+    def fill_missing_routes(self) -> "ProviderConfig":
+        self.routing.setdefault(
+            "state_updater",
+            self.routing.get("fact_extractor", "ollama"),
+        )
+        return self
 
 
 # ── Agent Output Schemas ───────────────────────────────────────────────────

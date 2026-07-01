@@ -346,7 +346,7 @@ class ScenePipeline:
             from app.providers.config import get_provider_for_step, load_provider_config
             config = load_provider_config()
             fact_provider = get_provider_for_step("fact_extractor", config)
-            state_provider = get_provider_for_step("fact_extractor", config)
+            state_provider = get_provider_for_step("state_updater", config)
 
             chars = context.get("characters", {})
             major_chars = chars.get("major", [])[:max_character_agents]
