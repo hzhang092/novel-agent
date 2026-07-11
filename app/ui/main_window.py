@@ -804,29 +804,33 @@ class MainWindow(QMainWindow):
         from app.storage.models import CanonFact, StateChangeProposal
         from app.storage.project_files import load_canon_facts, save_canon_facts
 
-        try:
-            existing = load_canon_facts(self._current_project_dir)
-        except Exception:
-            existing = []
-
-        new_facts: list[CanonFact] = []
-        for fd in approved_facts:
-            fact = CanonFact(
-                description=fd.get("description", ""),
-                category=fd.get("category", "world"),
-                source_scene_id=scene_id or "",
-                importance=3,
-                tags=[],
-            )
-            is_dup = any(
-                e.description == fact.description and e.category == fact.category
-                for e in existing
-            )
-            if not is_dup:
-                new_facts.append(fact)
-
-        all_facts = list(existing) + new_facts
-        save_canon_facts(self._current_project_dir, all_facts)
+        if approved_facts:
+            try:
+                existing = load_canon_facts(self._current_project_dir)
+                new_facts: list[CanonFact] = []
+                for fd in approved_facts:
+                    fact = CanonFact(
+                        description=fd.get("description", ""),
+                        category=fd.get("category", "world"),
+                        source_scene_id=scene_id or "",
+                        importance=3,
+                        tags=[],
+                    )
+                    is_dup = any(
+                        e.description == fact.description and e.category == fact.category
+                        for e in existing
+                    )
+                    if not is_dup:
+                        new_facts.append(fact)
+                save_canon_facts(self._current_project_dir, [*existing, *new_facts])
+            except Exception:
+                logger.exception("Could not save approved canon facts")
+                QMessageBox.critical(
+                    self,
+                    "Canon Facts Error",
+                    "Could not load or save canon facts. No changes were saved.",
+                )
+                return
 
         tx_id = str(uuid_mod.uuid4())
         from app.storage.timeline_repository import commit_scene_proposal

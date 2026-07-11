@@ -58,3 +58,25 @@ def test_save_generated_scene_marks_downstream_stale_without_approval_items(
     )
 
     assert load_scene_generation_record(proj_dir, "scene-3").status == "stale"
+
+
+def test_fact_approval_keeps_corrupt_canon_file_unchanged(qtbot, tmp_path, monkeypatch):
+    from app.ui.main_window import MainWindow
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    facts_path = proj_dir / "canon" / "facts.yaml"
+    facts_path.write_text("- description: [broken\n", encoding="utf-8")
+    original = facts_path.read_bytes()
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._current_project_dir = proj_dir
+    monkeypatch.setattr("app.ui.main_window.QMessageBox.critical", lambda *args: None)
+
+    window._on_approval_batch_approved(
+        "scene-1",
+        [{"description": "新事实", "category": "world"}],
+        [],
+    )
+
+    assert facts_path.read_bytes() == original

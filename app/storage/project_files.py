@@ -4,8 +4,10 @@ creates the standard project directory layout."""
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -436,14 +438,32 @@ CANON_FACTS_YAML = "canon/facts.yaml"
 
 
 def save_canon_facts(project_dir: Path, facts: list) -> None:
-    """Write all canon facts to canon/facts.yaml, overwriting previous content."""
+    """Atomically replace canon/facts.yaml with all canon facts."""
     canon_dir = project_dir / "canon"
     canon_dir.mkdir(exist_ok=True)
 
     data = [f.model_dump(mode="json") for f in facts]
     filepath = canon_dir / "facts.yaml"
-    with open(filepath, "w", encoding="utf-8") as fh:
-        yaml.safe_dump(data, fh, allow_unicode=True, sort_keys=False)
+    serialized = yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=canon_dir,
+            prefix=".facts.",
+            suffix=".tmp",
+            delete=False,
+        ) as fh:
+            temp_path = Path(fh.name)
+            fh.write(serialized)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(temp_path, filepath)
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
 
 
 def load_canon_facts(project_dir: Path) -> list:

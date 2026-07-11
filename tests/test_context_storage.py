@@ -71,6 +71,62 @@ def test_save_canon_facts_overwrites(tmp_path):
     assert loaded[0].description == "事实B"
 
 
+def test_save_canon_facts_keeps_original_when_serialization_fails(tmp_path, monkeypatch):
+    """A failed replacement must not overwrite the existing canon file."""
+    import yaml
+    from app.storage import project_files
+    from app.storage.project_files import save_canon_facts
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_canon_facts(
+        proj_dir,
+        [CanonFact(description="原有事实", category="world", source_scene_id="s1")],
+    )
+    facts_path = proj_dir / "canon" / "facts.yaml"
+    original = facts_path.read_bytes()
+
+    def fail_dump(*args, **kwargs):
+        raise yaml.YAMLError("serialization failed")
+
+    monkeypatch.setattr(project_files.yaml, "safe_dump", fail_dump)
+
+    with pytest.raises(yaml.YAMLError):
+        save_canon_facts(
+            proj_dir,
+            [CanonFact(description="新事实", category="world", source_scene_id="s2")],
+        )
+
+    assert facts_path.read_bytes() == original
+
+
+def test_save_canon_facts_keeps_original_when_replace_fails(tmp_path, monkeypatch):
+    """A failed atomic replacement must leave the original canon file intact."""
+    from app.storage import project_files
+    from app.storage.project_files import save_canon_facts
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_canon_facts(
+        proj_dir,
+        [CanonFact(description="原有事实", category="world", source_scene_id="s1")],
+    )
+    facts_path = proj_dir / "canon" / "facts.yaml"
+    original = facts_path.read_bytes()
+
+    def fail_replace(*args, **kwargs):
+        raise PermissionError("destination is locked")
+
+    monkeypatch.setattr(project_files.os, "replace", fail_replace)
+
+    with pytest.raises(PermissionError):
+        save_canon_facts(
+            proj_dir,
+            [CanonFact(description="新事实", category="world", source_scene_id="s2")],
+        )
+
+    assert facts_path.read_bytes() == original
+    assert not list((proj_dir / "canon").glob(".facts.*.tmp"))
+
+
 def test_save_and_load_scene_summaries_round_trip(tmp_path):
     """Save scene summaries, reload, verify."""
     from app.storage.project_files import save_scene_summaries, load_scene_summaries
