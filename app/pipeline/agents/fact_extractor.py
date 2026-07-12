@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from app.pipeline.agents._prose import select_prose_excerpt
 from app.providers.base import LLMProvider, ProviderResponse
 from app.storage.models import ExtractedFact
 
@@ -87,12 +88,8 @@ def _build_fact_extractor_prompt(context: dict, prose: str) -> str:
             lines.append(f"- 角色：{'、'.join(chars)}")
         lines.append("")
 
-    # The prose (truncated)
-    prose_excerpt = prose[:6000] if len(prose) > 6000 else prose
     lines.append("【场景正文】")
-    lines.append(prose_excerpt)
-    if len(prose) > 6000:
-        lines.append(f"\n... (正文共 {len(prose)} 字，以上为前 6000 字)")
+    lines.append(select_prose_excerpt(prose))
     lines.append("")
 
     lines.append("【输出要求】")

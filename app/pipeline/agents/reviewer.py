@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.providers.base import LLMProvider, ProviderResponse
+from app.pipeline.agents._prose import select_prose_excerpt
 from app.storage.models import ReviewResult
 
 
@@ -164,12 +165,8 @@ def _build_reviewer_prompt(
             lines.append(f"- 禁用模式：{'；'.join(taboos_p)}")
         lines.append("")
 
-    # The prose to review (truncated)
-    prose_excerpt = prose[:4000] if len(prose) > 4000 else prose
     lines.append("【待审正文】")
-    lines.append(prose_excerpt)
-    if len(prose) > 4000:
-        lines.append(f"\n... (正文共 {len(prose)} 字，以上为前 4000 字)")
+    lines.append(select_prose_excerpt(prose))
     lines.append("")
 
     lines.append("【审查要求】")

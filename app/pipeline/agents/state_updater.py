@@ -7,6 +7,7 @@ in the "changes" field instead of flat scalar fields.
 from __future__ import annotations
 
 from app.providers.base import LLMProvider, ProviderResponse
+from app.pipeline.agents._prose import select_prose_excerpt
 from app.storage.models import StateChangeProposal
 
 
@@ -119,12 +120,8 @@ def _build_state_updater_prompt(
             lines.append(f"- 冲突：{scene['conflict']}")
         lines.append("")
 
-    # Prose
-    prose_excerpt = prose[:5000] if len(prose) > 5000 else prose
     lines.append("【场景正文】")
-    lines.append(prose_excerpt)
-    if len(prose) > 5000:
-        lines.append(f"\n... (正文共 {len(prose)} 字，以上为前 5000 字)")
+    lines.append(select_prose_excerpt(prose))
     lines.append("")
 
     lines.append("【输出要求】")
