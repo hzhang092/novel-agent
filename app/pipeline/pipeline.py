@@ -333,6 +333,9 @@ class ScenePipeline:
         self,
         project_dir: Path,
         result: GenerationResult,
+        *,
+        fact_provider: LLMProvider,
+        state_provider: LLMProvider,
         on_trace: TraceCallback | None = None,
         max_character_agents: int = 4,
     ) -> GenerationResult:
@@ -346,10 +349,6 @@ class ScenePipeline:
         result.trace.extend([fact_trace, state_trace])
         self._emit_trace(on_trace, result.trace)
 
-        from app.providers.config import get_provider_for_step, load_provider_config
-        config = load_provider_config()
-        fact_provider = get_provider_for_step("fact_extractor", config)
-        state_provider = get_provider_for_step("state_updater", config)
         started = time.monotonic()
 
         async def _run_facts() -> None:
@@ -386,12 +385,7 @@ class ScenePipeline:
                 if self._state_updater.last_usage:
                     state_trace.token_count = self._state_updater.last_usage.get("total_tokens", 0)
 
-        try:
-            await asyncio.gather(_run_facts(), _run_state_updates())
-        finally:
-            await asyncio.gather(
-                fact_provider.close(), state_provider.close(), return_exceptions=True
-            )
+        await asyncio.gather(_run_facts(), _run_state_updates())
         result.total_tokens = _count_trace_tokens(result.trace)
         self._emit_trace(on_trace, result.trace)
         return result

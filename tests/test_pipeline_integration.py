@@ -159,30 +159,65 @@ async def test_full_pipeline_generates_prose(
 
 
 @pytest.mark.asyncio
-async def test_fact_and_state_steps_use_separate_provider_routes(
+async def test_analyze_draft_uses_injected_fact_and_state_providers(
     project_dir, mock_planner, mock_char_agent, mock_writer, mock_reviewer, monkeypatch
 ):
-    """Fact extraction and state updates should resolve separate provider routes."""
-    from app.providers import config as provider_config
-
     class EmptyFacts(BaseModel):
         facts: list[dict] = Field(default_factory=list)
 
     class EmptyChanges(BaseModel):
         changes: list[dict] = Field(default_factory=list)
 
-    requested_steps: list[str] = []
+    class RecordingProvider(MockProvider):
+        def __init__(self, response):
+            super().__init__(structured_response=response)
+            self.structured_calls = 0
+            self.closed = False
 
-    def fake_get_provider_for_step(step_id, config):
-        requested_steps.append(step_id)
-        if step_id == "fact_extractor":
-            return MockProvider(structured_response=EmptyFacts())
-        if step_id == "state_updater":
-            return MockProvider(structured_response=EmptyChanges())
-        return MockProvider()
+        async def generate_structured(self, *args, **kwargs):
+            self.structured_calls += 1
+            return await super().generate_structured(*args, **kwargs)
 
-    monkeypatch.setattr(provider_config, "load_provider_config", lambda: object())
-    monkeypatch.setattr(provider_config, "get_provider_for_step", fake_get_provider_for_step)
+        async def close(self):
+            self.closed = True
+            await super().close()
+
+    fact_provider = RecordingProvider(
+        EmptyFacts(
+            facts=[
+                {
+                    "description": "fact provider marker",
+                    "category": "world",
+                    "confidence": 0.9,
+                    "source_excerpt": "marker",
+                }
+            ]
+        )
+    )
+    state_provider = RecordingProvider(
+        EmptyChanges(
+            changes=[
+                {
+                    "character_id": "char-1",
+                    "character_name": "林轩",
+                    "changes": [
+                        {
+                            "type": "set_field",
+                            "field": "emotion",
+                            "value": "state provider marker",
+                        }
+                    ],
+                }
+            ]
+        )
+    )
+
+    from app.providers import config as provider_config
+
+    def fail_if_config_loaded():
+        raise AssertionError("analyze_draft must not load UI provider settings")
+
+    monkeypatch.setattr(provider_config, "load_provider_config", fail_if_config_loaded)
 
     pipeline = ScenePipeline()
     result = None
@@ -194,10 +229,19 @@ async def test_fact_and_state_steps_use_separate_provider_routes(
         if gen_result is not None:
             result = gen_result
 
-    assert requested_steps == []
-    await pipeline.analyze_draft(project_dir, result)
+    await pipeline.analyze_draft(
+        project_dir,
+        result,
+        fact_provider=fact_provider,
+        state_provider=state_provider,
+    )
 
-    assert requested_steps == ["fact_extractor", "state_updater"]
+    assert fact_provider.structured_calls == 1
+    assert state_provider.structured_calls == 1
+    assert result.extracted_facts[0]["description"] == "fact provider marker"
+    assert result.state_changes[0]["changes"][0]["value"] == "state provider marker"
+    assert fact_provider.closed is False
+    assert state_provider.closed is False
 
 
 @pytest.mark.asyncio

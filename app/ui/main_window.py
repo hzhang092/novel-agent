@@ -857,9 +857,28 @@ class MainWindow(QMainWindow):
     async def _analyze_and_offer_publication(
         self, pipeline, result, record, workspace, on_trace
     ) -> None:
-        await pipeline.analyze_draft(
-            self._current_project_dir, result, on_trace=on_trace
-        )
+        from app.providers.config import get_provider_for_step, load_provider_config
+
+        providers = []
+        try:
+            config = load_provider_config()
+            fact_provider = get_provider_for_step("fact_extractor", config)
+            providers.append(fact_provider)
+            state_provider = get_provider_for_step("state_updater", config)
+            providers.append(state_provider)
+            await pipeline.analyze_draft(
+                self._current_project_dir,
+                result,
+                fact_provider=fact_provider,
+                state_provider=state_provider,
+                on_trace=on_trace,
+            )
+        finally:
+            for provider in providers:
+                try:
+                    await provider.close()
+                except Exception:
+                    pass
         from app.storage.project_files import save_scene_generation_record
 
         record.extracted_facts_raw = result.extracted_facts
