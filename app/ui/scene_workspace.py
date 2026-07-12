@@ -34,6 +34,7 @@ class SceneWorkspaceView(QWidget):
     generate_requested = pyqtSignal(str)  # emits scene_id
     retry_requested = pyqtSignal(str)  # emits agent_name
     next_scene_requested = pyqtSignal()  # emits when user clicks Next Scene
+    continue_review_requested = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -135,6 +136,10 @@ class SceneWorkspaceView(QWidget):
         self._review_label.setStyleSheet("font-size: 12px;")
         review_layout.addWidget(self._review_label)
         review_layout.addStretch()
+        self._continue_review_btn = QPushButton("仍然继续")
+        self._continue_review_btn.clicked.connect(self.continue_review_requested.emit)
+        self._continue_review_btn.hide()
+        review_layout.addWidget(self._continue_review_btn)
         self._review_bar.hide()
         layout.addWidget(self._review_bar)
 
@@ -192,9 +197,11 @@ class SceneWorkspaceView(QWidget):
         if passed:
             self._review_label.setText(f"✅ 审查通过 — {summary}")
             self._review_label.setStyleSheet("color: #27ae60; font-size: 12px;")
+            self._continue_review_btn.hide()
         else:
             self._review_label.setText(f"⚠️ 审查发现问题 — {summary}")
             self._review_label.setStyleSheet("color: #f39c12; font-size: 12px;")
+            self._continue_review_btn.show()
         self._review_bar.show()
 
     def hide_review_result(self) -> None:
@@ -204,11 +211,14 @@ class SceneWorkspaceView(QWidget):
     def show_fact_approval(
         self,
         source_scene_id: str,
+        source_revision_id: str,
         facts: list[dict],
         state_changes: list[dict],
     ) -> None:
         """Show the fact approval panel with extracted facts and state changes."""
-        self.fact_approval.show_items(source_scene_id, facts, state_changes)
+        self.fact_approval.show_items(
+            source_scene_id, source_revision_id, facts, state_changes
+        )
 
     def hide_fact_approval(self) -> None:
         """Hide the fact approval panel."""

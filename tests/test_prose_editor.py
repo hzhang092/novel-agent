@@ -12,7 +12,7 @@ def test_version_selector_emits_selected_version(qtbot):
     widget.set_versions(["v2", "v1", "legacy"], current="v2")
 
     assert widget.current_version() == "v2"
-    assert widget._version_combo.itemText(0) == "当前 (v2)"
+    assert widget._version_combo.itemText(0) == "已选 (v2)"
     widget._version_combo.setCurrentIndex(1)
     assert selected == ["v1"]
 

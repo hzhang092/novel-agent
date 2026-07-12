@@ -128,8 +128,6 @@ class ScenePipeline:
         result = GenerationResult(scene_id=scene_id)
         pipeline_start = time.monotonic()
         tracker = TokenTracker.get()
-        from app.storage.project_files import save_scene_plan, save_scene_intents, save_scene_review
-
         # ── Step 1: Assemble context ──
         context = self.assemble_context(project_dir, scene_id)
         result.generated_with = context.get("read_points", {})
@@ -148,7 +146,6 @@ class ScenePipeline:
             if self._planner.last_usage:
                 planner_trace.token_count = self._planner.last_usage.get("total_tokens", 0)
             result.plan = plan
-            save_scene_plan(project_dir, scene_id, plan.model_dump(mode='json'))
             if self._planner.last_usage:
                 tracker.log_call(
                     project_dir, scene_id, agent_name='Scene Planner',
@@ -236,11 +233,6 @@ class ScenePipeline:
             char_trace.duration_ms = sum(
                 c.duration_ms for c in char_trace.children
             )
-            if result.character_intents:
-                save_scene_intents(project_dir, scene_id, {
-                    k: v.model_dump(mode='json')
-                    for k, v in result.character_intents.items()
-                })
             for child in char_trace.children:
                 if child.token_count > 0:
                     tracker.log_call(
@@ -311,7 +303,6 @@ class ScenePipeline:
             if self._reviewer.last_usage:
                 reviewer_trace.token_count = self._reviewer.last_usage.get("total_tokens", 0)
             result.review = review
-            save_scene_review(project_dir, scene_id, review.model_dump(mode='json'))
             if self._reviewer.last_usage:
                 tracker.log_call(
                     project_dir, scene_id, agent_name='Reviewer',
@@ -332,88 +323,78 @@ class ScenePipeline:
 
         self._emit_trace(on_trace, result.trace)
 
-        # ── Step 7: Fact Extractor + State Updater (parallel) ──
-        if result.prose:
-            fact_trace = AgentTraceEntry(agent_name="Fact Extractor", stage="fact_extractor")
-            result.trace.append(fact_trace)
-            state_trace = AgentTraceEntry(agent_name="State Updater", stage="state_updater")
-            result.trace.append(state_trace)
-
-            fact_trace.status = "running"
-            state_trace.status = "running"
-            self._emit_trace(on_trace, result.trace)
-
-            from app.providers.config import get_provider_for_step, load_provider_config
-            config = load_provider_config()
-            fact_provider = get_provider_for_step("fact_extractor", config)
-            state_provider = get_provider_for_step("state_updater", config)
-
-            chars = context.get("characters", {})
-            major_chars = chars.get("major", [])[:max_character_agents]
-
-            t_fact = time.monotonic()
-            t_state = time.monotonic()
-
-            async def _run_facts():
-                nonlocal fact_trace
-                try:
-                    facts = await self._fact_extractor.generate(
-                        fact_provider, context, result.prose, scene_id
-                    )
-                    fact_trace.status = "completed"
-                    fact_trace.duration_ms = int((time.monotonic() - t_fact) * 1000)
-                    if self._fact_extractor.last_usage:
-                        fact_trace.token_count = self._fact_extractor.last_usage.get("total_tokens", 0)
-                    result.extracted_facts = [f.model_dump(mode="json") for f in facts]
-                except Exception as e:
-                    fact_trace.status = "failed"
-                    fact_trace.error_message = str(e)
-                    fact_trace.failed_prompt = self._fact_extractor.build_prompt(context, result.prose)
-
-            async def _run_state_updates():
-                nonlocal state_trace
-                try:
-                    changes = await self._state_updater.generate(
-                        state_provider, context, result.prose, scene_id, major_chars
-                    )
-                    state_trace.status = "completed"
-                    state_trace.duration_ms = int((time.monotonic() - t_state) * 1000)
-                    if self._state_updater.last_usage:
-                        state_trace.token_count = self._state_updater.last_usage.get("total_tokens", 0)
-                    result.state_changes = [c.model_dump(mode="json") for c in changes]
-                except Exception as e:
-                    state_trace.status = "failed"
-                    state_trace.error_message = str(e)
-                    state_trace.failed_prompt = self._state_updater.build_prompt(
-                        context, result.prose, major_chars
-                    )
-
-            await asyncio.gather(
-                asyncio.create_task(_run_facts()),
-                asyncio.create_task(_run_state_updates()),
-            )
-
-            self._emit_trace(on_trace, result.trace)
-
-            try:
-                await fact_provider.close()
-            except Exception:
-                pass
-            try:
-                await state_provider.close()
-            except Exception:
-                pass
-
         # ── Compute totals ──
-        total_tokens = 0
-        for entry in result.trace:
-            total_tokens += entry.token_count
-            for child in entry.children:
-                total_tokens += child.token_count
-        result.total_tokens = total_tokens
+        result.total_tokens = _count_trace_tokens(result.trace)
         result.total_duration_ms = int((time.monotonic() - pipeline_start) * 1000)
 
         yield (None, result)
+
+    async def analyze_draft(
+        self,
+        project_dir: Path,
+        result: GenerationResult,
+        on_trace: TraceCallback | None = None,
+        max_character_agents: int = 4,
+    ) -> GenerationResult:
+        """Extract memory proposals from a reviewed or explicitly overridden draft."""
+        if not result.prose:
+            return result
+        context = self.assemble_context(project_dir, result.scene_id)
+        major_chars = context.get("characters", {}).get("major", [])[:max_character_agents]
+        fact_trace = AgentTraceEntry(agent_name="Fact Extractor", stage="fact_extractor", status="running")
+        state_trace = AgentTraceEntry(agent_name="State Updater", stage="state_updater", status="running")
+        result.trace.extend([fact_trace, state_trace])
+        self._emit_trace(on_trace, result.trace)
+
+        from app.providers.config import get_provider_for_step, load_provider_config
+        config = load_provider_config()
+        fact_provider = get_provider_for_step("fact_extractor", config)
+        state_provider = get_provider_for_step("state_updater", config)
+        started = time.monotonic()
+
+        async def _run_facts() -> None:
+            try:
+                facts = await self._fact_extractor.generate(
+                    fact_provider, context, result.prose, result.scene_id
+                )
+                result.extracted_facts = [fact.model_dump(mode="json") for fact in facts]
+                fact_trace.status = "completed"
+            except Exception as exc:
+                fact_trace.status = "failed"
+                fact_trace.error_message = str(exc)
+                fact_trace.failed_prompt = self._fact_extractor.build_prompt(context, result.prose)
+            finally:
+                fact_trace.duration_ms = int((time.monotonic() - started) * 1000)
+                if self._fact_extractor.last_usage:
+                    fact_trace.token_count = self._fact_extractor.last_usage.get("total_tokens", 0)
+
+        async def _run_state_updates() -> None:
+            try:
+                changes = await self._state_updater.generate(
+                    state_provider, context, result.prose, result.scene_id, major_chars
+                )
+                result.state_changes = [change.model_dump(mode="json") for change in changes]
+                state_trace.status = "completed"
+            except Exception as exc:
+                state_trace.status = "failed"
+                state_trace.error_message = str(exc)
+                state_trace.failed_prompt = self._state_updater.build_prompt(
+                    context, result.prose, major_chars
+                )
+            finally:
+                state_trace.duration_ms = int((time.monotonic() - started) * 1000)
+                if self._state_updater.last_usage:
+                    state_trace.token_count = self._state_updater.last_usage.get("total_tokens", 0)
+
+        try:
+            await asyncio.gather(_run_facts(), _run_state_updates())
+        finally:
+            await asyncio.gather(
+                fact_provider.close(), state_provider.close(), return_exceptions=True
+            )
+        result.total_tokens = _count_trace_tokens(result.trace)
+        self._emit_trace(on_trace, result.trace)
+        return result
 
     def _emit_trace(
         self, callback: TraceCallback | None, trace: list[AgentTraceEntry]
@@ -432,3 +413,10 @@ def _enhance_context_with_plan_and_intents(
     enhanced["scene_plan"] = plan
     enhanced["character_intents"] = intents
     return enhanced
+
+
+def _count_trace_tokens(trace: list[AgentTraceEntry]) -> int:
+    return sum(
+        entry.token_count + sum(child.token_count for child in entry.children)
+        for entry in trace
+    )

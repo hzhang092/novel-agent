@@ -52,7 +52,7 @@ class ProseEditorWidget(QWidget):
         self._version_combo.currentIndexChanged.connect(self._on_version_changed)
         toolbar.addWidget(self._version_combo)
 
-        self._set_active_btn = QPushButton("设为当前")
+        self._set_active_btn = QPushButton("发布此版本")
         self._set_active_btn.setEnabled(False)
         self._set_active_btn.clicked.connect(self._on_set_active)
         toolbar.addWidget(self._set_active_btn)
@@ -124,7 +124,7 @@ class ProseEditorWidget(QWidget):
         for version in versions:
             label = "Legacy" if version == "legacy" else version
             if current is not None and version == current:
-                label = f"当前 ({label})"
+                label = f"已选 ({label})"
             self._version_combo.addItem(label, version)
         if current is not None:
             index = self._version_combo.findData(current)

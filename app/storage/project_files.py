@@ -466,7 +466,7 @@ def save_canon_facts(project_dir: Path, facts: list) -> None:
             temp_path.unlink(missing_ok=True)
 
 
-def load_canon_facts(project_dir: Path) -> list:
+def load_canon_facts(project_dir: Path, active_only: bool = True) -> list:
     """Load all canon facts from canon/facts.yaml.
 
     Returns:
@@ -495,7 +495,20 @@ def load_canon_facts(project_dir: Path) -> list:
     except Exception as e:
         raise ValueError(f"Invalid canon fact data in {filepath}: {e}") from e
 
-    return facts
+    if not active_only:
+        return facts
+    active_revisions: dict[str, str] = {}
+    for fact in facts:
+        if fact.source_scene_revision_id and fact.source_scene_id not in active_revisions:
+            active_revisions[fact.source_scene_id] = get_active_scene_revision_id(
+                project_dir, fact.source_scene_id
+            )
+    return [
+        fact
+        for fact in facts
+        if not fact.source_scene_revision_id
+        or active_revisions.get(fact.source_scene_id) == fact.source_scene_revision_id
+    ]
 
 
 # ── Scene Summaries I/O ────────────────────────────────────────────────────
@@ -632,31 +645,65 @@ def load_scene_prose_version(
 
 
 def set_active_scene_prose_version(
-    project_dir: Path, chapter_id: str, scene_id: str, version: str
+    project_dir: Path,
+    chapter_id: str,
+    scene_id: str,
+    version: str,
+    revision_id: str = "",
 ) -> None:
-    """Persist the prose version chosen for display/export."""
+    """Atomically persist the prose revision chosen for display/export."""
     chapter_dir = project_dir / "scenes" / chapter_id
     chapter_dir.mkdir(parents=True, exist_ok=True)
-    with open(chapter_dir / f"{scene_id}.active.yaml", "w", encoding="utf-8") as fh:
-        yaml.safe_dump({"version": version}, fh, allow_unicode=True, sort_keys=False)
+    filepath = chapter_dir / f"{scene_id}.active.yaml"
+    data = {"version": version}
+    if revision_id:
+        data["revision_id"] = revision_id
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=chapter_dir,
+            prefix=f".{scene_id}.active.",
+            suffix=".tmp",
+            delete=False,
+        ) as fh:
+            temp_path = Path(fh.name)
+            yaml.safe_dump(data, fh, allow_unicode=True, sort_keys=False)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(temp_path, filepath)
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+
+
+def load_scene_active_marker(
+    project_dir: Path, chapter_id: str, scene_id: str
+) -> dict[str, str]:
+    """Return the active prose marker, tolerating legacy version-only files."""
+    filepath = project_dir / "scenes" / chapter_id / f"{scene_id}.active.yaml"
+    if not filepath.exists():
+        return {}
+    try:
+        with open(filepath, "r", encoding="utf-8") as fh:
+            raw = yaml.safe_load(fh) or {}
+    except yaml.YAMLError:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        key: value
+        for key in ("version", "revision_id")
+        if isinstance((value := raw.get(key)), str)
+    }
 
 
 def get_active_scene_prose_version(
     project_dir: Path, chapter_id: str, scene_id: str
 ) -> str | None:
     """Return the persisted active prose version token, if any."""
-    filepath = project_dir / "scenes" / chapter_id / f"{scene_id}.active.yaml"
-    if not filepath.exists():
-        return None
-    try:
-        with open(filepath, "r", encoding="utf-8") as fh:
-            raw = yaml.safe_load(fh) or {}
-    except yaml.YAMLError:
-        return None
-    if not isinstance(raw, dict):
-        return None
-    version = raw.get("version")
-    return version if isinstance(version, str) else None
+    return load_scene_active_marker(project_dir, chapter_id, scene_id).get("version")
 
 
 def _latest_scene_prose_path(project_dir: Path, chapter_id: str, scene_id: str) -> Path | None:
@@ -701,10 +748,16 @@ def load_scene_prose_status(
     filepath = _latest_scene_prose_path(project_dir, chapter_id, scene_id)
     if filepath is None:
         return "", None, active_marker_exists
+    fallback_version = _scene_prose_version_from_path(scene_id, filepath)
+    fallback_record = load_scene_generation_record(
+        project_dir, scene_id, version=fallback_version
+    )
+    if fallback_record is not None and fallback_record.status == "draft":
+        return "", None, active_marker_exists
     with open(filepath, "r", encoding="utf-8") as fh:
         return (
             fh.read(),
-            _scene_prose_version_from_path(scene_id, filepath),
+            fallback_version,
             active_marker_exists,
         )
 
@@ -725,7 +778,7 @@ def load_scene_prose(project_dir: Path, chapter_id: str, scene_id: str) -> str:
 
 
 def save_scene_generation_record(project_dir: Path, record) -> None:
-    """Write a SceneGenerationRecord as scenes/<chapter>/<scene_id>.gen.json."""
+    """Write one versioned SceneGenerationRecord."""
     chapter_id = _find_chapter_for_scene(project_dir, record.scene_id)
     if chapter_id is None:
         raise ValueError(
@@ -734,15 +787,18 @@ def save_scene_generation_record(project_dir: Path, record) -> None:
         )
     chapter_dir = project_dir / "scenes" / chapter_id
     chapter_dir.mkdir(parents=True, exist_ok=True)
-    filepath = chapter_dir / f"{record.scene_id}.gen.json"
+    filepath = chapter_dir / f"{record.scene_id}.v{record.revision_number}.gen.json"
     with open(filepath, "w", encoding="utf-8") as fh:
         json.dump(record.model_dump(mode="json"), fh, ensure_ascii=False, indent=2, default=str)
 
 
-def load_scene_generation_record(project_dir: Path, scene_id: str):
-    """Load a SceneGenerationRecord from scenes/*/<scene_id>.gen.json.
-    Returns None if the file does not exist.
-    """
+def load_scene_generation_record(
+    project_dir: Path,
+    scene_id: str,
+    revision_id: str = "",
+    version: str = "",
+):
+    """Load an exact, active, or latest record, with legacy fallback."""
     from app.storage.models import SceneGenerationRecord
 
     scenes_dir = project_dir / "scenes"
@@ -752,12 +808,51 @@ def load_scene_generation_record(project_dir: Path, scene_id: str):
     for chapter_dir in scenes_dir.iterdir():
         if not chapter_dir.is_dir():
             continue
-        filepath = chapter_dir / f"{scene_id}.gen.json"
-        if filepath.exists():
+        paths = list(chapter_dir.glob(f"{scene_id}.v*.gen.json"))
+        legacy = chapter_dir / f"{scene_id}.gen.json"
+        if legacy.exists():
+            paths.append(legacy)
+        records = []
+        for filepath in paths:
             with open(filepath, "r", encoding="utf-8") as fh:
-                raw = json.load(fh)
-            return SceneGenerationRecord.model_validate(raw)
+                records.append(SceneGenerationRecord.model_validate(json.load(fh)))
+        if not records:
+            continue
+        if revision_id:
+            return next((record for record in records if record.revision_id == revision_id), None)
+        if version.startswith("v") and version[1:].isdigit():
+            number = int(version[1:])
+            return next((record for record in records if record.revision_number == number), None)
+        marker = load_scene_active_marker(project_dir, chapter_dir.name, scene_id)
+        active_revision = marker.get("revision_id", "")
+        if active_revision:
+            active = next((record for record in records if record.revision_id == active_revision), None)
+            if active is not None:
+                return active
+        active_version = marker.get("version", "")
+        if active_version.startswith("v") and active_version[1:].isdigit():
+            number = int(active_version[1:])
+            active = next((record for record in records if record.revision_number == number), None)
+            if active is not None:
+                return active
+        return max(records, key=lambda record: record.revision_number)
     return None
+
+
+def get_active_scene_revision_id(project_dir: Path, scene_id: str) -> str:
+    """Resolve the active revision ID without rewriting legacy project files."""
+    chapter_id = _find_chapter_for_scene(project_dir, scene_id)
+    if chapter_id is None:
+        return ""
+    marker = load_scene_active_marker(project_dir, chapter_id, scene_id)
+    if marker.get("revision_id"):
+        return marker["revision_id"]
+    record = load_scene_generation_record(
+        project_dir, scene_id, version=marker.get("version", "")
+    )
+    if record is None or (not marker and record.status == "draft"):
+        return ""
+    return record.revision_id
 
 
 def _find_chapter_for_scene(project_dir: Path, scene_id: str) -> str | None:

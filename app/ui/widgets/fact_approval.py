@@ -23,11 +23,12 @@ class FactApprovalPanel(QWidget):
     dicts, and approved state change dicts when the user confirms.
     """
 
-    approval_batch_approved = pyqtSignal(str, list, list)
+    approval_batch_approved = pyqtSignal(str, str, list, list)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._source_scene_id = ""
+        self._source_revision_id = ""
         self._facts: list[dict] = []
         self._state_changes: list[dict] = []
         self._fact_checkboxes: list[QCheckBox] = []
@@ -115,7 +116,7 @@ class FactApprovalPanel(QWidget):
         confirm_layout = QHBoxLayout()
         confirm_layout.addStretch()
 
-        self._confirm_btn = QPushButton("确认提交")
+        self._confirm_btn = QPushButton("发布场景")
         self._confirm_btn.setStyleSheet(
             "QPushButton { padding: 8px 24px; background: #27ae60; color: white; "
             "border: none; border-radius: 4px; font-weight: bold; }"
@@ -130,11 +131,13 @@ class FactApprovalPanel(QWidget):
     def show_items(
         self,
         source_scene_id: str,
+        source_revision_id: str,
         facts: list[dict],
         state_changes: list[dict],
     ) -> None:
         """Populate the panel with extracted facts and state changes."""
         self._source_scene_id = source_scene_id
+        self._source_revision_id = source_revision_id
         self._facts = facts
         self._state_changes = state_changes
         self._source_scene_label.setText(f"来源场景：{source_scene_id}")
@@ -147,6 +150,7 @@ class FactApprovalPanel(QWidget):
     def clear_and_hide(self) -> None:
         """Clear and hide the panel."""
         self._source_scene_id = ""
+        self._source_revision_id = ""
         self._facts = []
         self._state_changes = []
         self._source_scene_label.clear()
@@ -167,6 +171,10 @@ class FactApprovalPanel(QWidget):
         self._clear_content()
 
         # Facts section
+        if not self._facts and not self._state_changes:
+            self._content_layout.insertWidget(
+                0, QLabel("没有提取到新的设定或状态变更。仍可发布此场景。")
+            )
         if self._facts:
             facts_header = QLabel(
                 f"<b>提取的事实</b> <span style='color:#888;'>({len(self._facts)} 条)</span>"
@@ -344,6 +352,7 @@ class FactApprovalPanel(QWidget):
         ]
         self.approval_batch_approved.emit(
             self._source_scene_id,
+            self._source_revision_id,
             approved_facts,
             approved_changes,
         )

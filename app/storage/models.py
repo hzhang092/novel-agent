@@ -160,7 +160,7 @@ class SceneGenerationRecord(BaseModel):
     scene_order: int = 0
     generated_from_checkpoint_id: str = ""
     generated_with: dict[str, dict] = Field(default_factory=dict)
-    status: Literal["current", "superseded", "stale"] = "current"
+    status: Literal["draft", "current", "superseded", "stale"] = "current"
     generation_mode: str = "standard"
     scene_plan: dict = Field(default_factory=dict)
     character_intents: dict[str, dict] = Field(default_factory=dict)
@@ -172,6 +172,10 @@ class SceneGenerationRecord(BaseModel):
     state_changes_raw: list[dict] = Field(default_factory=list)  # raw StateChangeProposal dicts from pipeline
     approved_fact_ids: list[str] = Field(default_factory=list)
     approved_state_changes: list[str] = Field(default_factory=list)  # character_ids whose changes were approved
+    approved_facts: list[dict] = Field(default_factory=list)
+    approved_state_change_proposals: list[dict] = Field(default_factory=list)
+    review_overridden: bool = False
+    published_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.now)
     user_modifications: Optional[str] = None
 
@@ -184,6 +188,7 @@ class CanonFact(BaseModel):
     description: str
     category: str  # world / character / plot
     source_scene_id: str
+    source_scene_revision_id: str = ""
     importance: int = Field(default=3, ge=1, le=5)
     tags: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=datetime.now)

@@ -25,8 +25,6 @@ from app.storage.models import Project as ProjectModel
 from app.storage.repository import Repository
 import logging
 
-from pydantic import ValidationError
-
 from app.events.bus import EventBus
 from app.events.qt_bridge import QtEventBridge
 from app.ui.bible_editor import BibleEditorView
@@ -54,6 +52,7 @@ class MainWindow(QMainWindow):
         self._last_generated_scene_id: str | None = None
         self._generation_in_progress: bool = False
         self._current_prose_version: str | None = None
+        self._pending_draft: tuple | None = None
 
         self._repo = Repository(Path.home() / "NovelForge")
         self._current_project: ProjectModel | None = None
@@ -196,6 +195,13 @@ class MainWindow(QMainWindow):
                     self._on_approval_batch_approved
                 )
                 try:
+                    workspace.continue_review_requested.disconnect()
+                except TypeError:
+                    pass
+                workspace.continue_review_requested.connect(
+                    self._on_continue_review_requested
+                )
+                try:
                     workspace.retry_requested.disconnect()
                 except TypeError:
                     pass
@@ -293,6 +299,8 @@ class MainWindow(QMainWindow):
 
         self._current_project = project
         self._current_project_dir = project_dir
+        from app.storage.timeline_repository import recover_pending_publication
+        recover_pending_publication(project_dir)
         self.setWindowTitle(f"NovelForge — {project.title}")
 
         self._set_nav_items_enabled(True)
@@ -558,7 +566,7 @@ class MainWindow(QMainWindow):
         self._current_prose_version = version
 
     def _on_set_active_prose_version(self, version: str) -> None:
-        """Persist the selected prose version as the display/export version."""
+        """Offer publication for the selected revision; selection alone is view-only."""
         if self._current_project_dir is None:
             return
         workspace = self.views.get("workspace")
@@ -569,10 +577,67 @@ class MainWindow(QMainWindow):
         if not scene_id or not chapter_id or not version:
             return
 
-        from app.storage.project_files import set_active_scene_prose_version
+        from app.storage.project_files import load_scene_generation_record
 
-        set_active_scene_prose_version(self._current_project_dir, chapter_id, scene_id, version)
-        self._refresh_prose_versions(chapter_id, scene_id, version)
+        record = load_scene_generation_record(
+            self._current_project_dir, scene_id, version=version
+        )
+        if record is None:
+            QMessageBox.warning(self, "无法发布", "此旧版本没有生成记录，只能查看。")
+            return
+        if workspace.editor.is_modified():
+            self._continue_with_edited_draft(workspace, record)
+            return
+        if not record.review_overridden and not (record.review or {}).get("overall_pass", False):
+            QMessageBox.warning(self, "无法发布", "此版本未通过审查，也没有继续发布授权。")
+            return
+        facts = record.approved_facts if record.published_at else record.extracted_facts_raw
+        changes = (
+            record.approved_state_change_proposals
+            if record.published_at
+            else record.state_changes_raw
+        )
+        workspace.show_fact_approval(scene_id, record.revision_id, facts, changes)
+
+    def _continue_with_edited_draft(self, workspace, source_record) -> None:
+        """Save edited prose as a new overridden draft, then re-analyze its memory."""
+        answer = QMessageBox.question(
+            self,
+            "正文已修改",
+            "修改后的正文尚未重新审查。是否将其保存为新版本并继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        from app.pipeline.pipeline import GenerationResult, ScenePipeline
+        from app.storage.models import CharacterIntent, ScenePlan
+        from app.storage.project_files import save_scene_generation_record
+
+        result = GenerationResult(
+            scene_id=source_record.scene_id,
+            prose=workspace.editor.toPlainText(),
+            plan=ScenePlan.model_validate(source_record.scene_plan)
+            if source_record.scene_plan
+            else None,
+            character_intents={
+                name: CharacterIntent.model_validate(intent)
+                for name, intent in source_record.character_intents.items()
+            },
+            generated_with=source_record.generated_with,
+        )
+        pipeline = ScenePipeline()
+        record = self._save_generated_scene(result)
+        if record is None:
+            return
+        record.review_overridden = True
+        save_scene_generation_record(self._current_project_dir, record)
+        self._pending_draft = (pipeline, result, record)
+        asyncio.ensure_future(
+            self._analyze_and_offer_publication(
+                pipeline, result, record, workspace, workspace.trace_panel.update_trace
+            )
+        )
 
     def _on_next_scene(self) -> None:
         """Navigate to the next scene in the outline sequence."""
@@ -690,15 +755,20 @@ class MainWindow(QMainWindow):
                                     result.review.overall_pass,
                                     result.review.summary,
                                 )
-                            self._save_generated_scene(result)
-                            extracted = getattr(result, 'extracted_facts', [])
-                            state_changes = getattr(result, 'state_changes', [])
-                            if extracted or state_changes:
-                                workspace.show_fact_approval(
-                                    result.scene_id,
-                                    extracted,
-                                    state_changes,
+                            else:
+                                workspace.show_review_result(
+                                    False, "审查未完成；草稿未进入记忆，可选择仍然继续"
                                 )
+                            record = self._save_generated_scene(result)
+                            if record is None:
+                                return
+                            self._pending_draft = (pipeline, result, record)
+                            if result.review is not None and result.review.overall_pass:
+                                await self._analyze_and_offer_publication(
+                                    pipeline, result, record, workspace, on_trace
+                                )
+                            else:
+                                workspace._status_label.setText("草稿已保存")
                         elif result.plan is not None:
                             pass
                         else:
@@ -722,31 +792,26 @@ class MainWindow(QMainWindow):
 
         asyncio.ensure_future(_run())
 
-    def _save_generated_scene(self, result) -> None:
-        """Save generated prose, plan, intents, review, and generation record to disk."""
+    def _save_generated_scene(self, result):
+        """Save generated prose and artifacts as a non-canonical draft."""
         if self._current_project_dir is None:
-            return
+            return None
 
         chapter_id = self._find_chapter_for_scene(result.scene_id)
         if not chapter_id:
-            return
+            return None
 
         from app.storage.project_files import (
             save_scene_generation_record,
-            set_active_scene_prose_version,
         )
         from app.storage.models import SceneGenerationRecord
         from app.storage.timeline_repository import (
             find_scene_position,
-            prepare_scene_regeneration,
         )
 
         version = _get_next_version(self._current_project_dir, chapter_id, result.scene_id)
         _save_versioned_prose(
             self._current_project_dir, chapter_id, result.scene_id, result.prose, version
-        )
-        set_active_scene_prose_version(
-            self._current_project_dir, chapter_id, result.scene_id, f"v{version}"
         )
         self._refresh_prose_versions(chapter_id, result.scene_id, f"v{version}")
 
@@ -773,106 +838,106 @@ class MainWindow(QMainWindow):
             scene_order=position.scene_order if position else 0,
             generated_from_checkpoint_id=generated_from_checkpoint_id,
             generated_with=generated_with,
-            status="current",
+            status="draft",
             generation_mode="standard",
             scene_plan=plan_dict,
             character_intents=intents_dict,
             draft_text=result.prose,
             review=review_dict,
-            final_text=result.prose,
+            final_text="",
             extracted_facts_raw=getattr(result, 'extracted_facts', []),
             state_changes_raw=getattr(result, 'state_changes', []),
         )
         save_scene_generation_record(self._current_project_dir, record)
-        prepare_scene_regeneration(
-            self._current_project_dir,
+        workspace = self.views.get("workspace")
+        if isinstance(workspace, SceneWorkspaceView):
+            workspace.editor.setPlainText(result.prose)
+        return record
+
+    async def _analyze_and_offer_publication(
+        self, pipeline, result, record, workspace, on_trace
+    ) -> None:
+        await pipeline.analyze_draft(
+            self._current_project_dir, result, on_trace=on_trace
+        )
+        from app.storage.project_files import save_scene_generation_record
+
+        record.extracted_facts_raw = result.extracted_facts
+        record.state_changes_raw = result.state_changes
+        save_scene_generation_record(self._current_project_dir, record)
+        workspace.show_fact_approval(
             result.scene_id,
-            revision_id=record.revision_id,
+            record.revision_id,
+            result.extracted_facts,
+            result.state_changes,
+        )
+        workspace._status_label.setText("等待发布")
+
+    def _on_continue_review_requested(self) -> None:
+        if self._pending_draft is None or self._current_project_dir is None:
+            return
+        pipeline, result, record = self._pending_draft
+        workspace = self.views.get("workspace")
+        if not isinstance(workspace, SceneWorkspaceView):
+            return
+        from app.storage.project_files import save_scene_generation_record
+
+        record.review_overridden = True
+        save_scene_generation_record(self._current_project_dir, record)
+        workspace._continue_review_btn.hide()
+        asyncio.ensure_future(
+            self._analyze_and_offer_publication(
+                pipeline, result, record, workspace, workspace.trace_panel.update_trace
+            )
         )
 
     def _on_approval_batch_approved(
         self,
         scene_id: str,
+        revision_id: str,
         approved_facts: list[dict],
         approved_changes: list[dict],
     ) -> None:
-        """Save approved facts and state events for their source scene."""
+        """Publish the exact draft revision and its approved memory."""
         if self._current_project_dir is None:
             return
-        import uuid as uuid_mod
+        workspace = self.views.get("workspace")
+        if isinstance(workspace, SceneWorkspaceView) and workspace.editor.is_modified():
+            from app.storage.project_files import load_scene_generation_record
 
-        from app.storage.models import CanonFact, StateChangeProposal
-        from app.storage.project_files import load_canon_facts, save_canon_facts
-
-        if approved_facts:
-            try:
-                existing = load_canon_facts(self._current_project_dir)
-                new_facts: list[CanonFact] = []
-                for fd in approved_facts:
-                    fact = CanonFact(
-                        description=fd.get("description", ""),
-                        category=fd.get("category", "world"),
-                        source_scene_id=scene_id or "",
-                        importance=3,
-                        tags=[],
-                    )
-                    is_dup = any(
-                        e.description == fact.description and e.category == fact.category
-                        for e in existing
-                    )
-                    if not is_dup:
-                        new_facts.append(fact)
-                save_canon_facts(self._current_project_dir, [*existing, *new_facts])
-            except Exception:
-                logger.exception("Could not save approved canon facts")
-                QMessageBox.critical(
-                    self,
-                    "Canon Facts Error",
-                    "Could not load or save canon facts. No changes were saved.",
-                )
-                return
-
-        tx_id = str(uuid_mod.uuid4())
-        from app.storage.timeline_repository import commit_scene_proposal
-
-        for proposal_dict in approved_changes:
-            char_id = proposal_dict.get("character_id", "")
-            if not char_id:
-                continue
-
-            # Convert the approved dict back to a StateChangeProposal
-            changes_data = proposal_dict.get("changes", [])
-
-            if not changes_data:
-                continue
-
-            proposal = StateChangeProposal(
-                character_id=char_id,
-                character_name=proposal_dict.get("character_name", ""),
-                changes=changes_data,
+            source_record = load_scene_generation_record(
+                self._current_project_dir, scene_id, revision_id=revision_id
             )
+            if source_record is not None:
+                self._continue_with_edited_draft(workspace, source_record)
+            return
+        from app.storage.timeline_repository import publish_scene_revision
 
-            try:
-                commit_scene_proposal(
-                    project_dir=self._current_project_dir,
-                    proposal=proposal,
-                    scene_id=scene_id,
-                    transaction_id=tx_id,
-                    request_id=str(uuid_mod.uuid4()),
-                    bus=self._domain_bus,
-                )
-            except ValidationError as e:
-                logger.warning("State change validation failed for %s: %s", char_id, e)
-                QMessageBox.warning(
-                    self, "State Change Error",
-                    f"Failed to apply state change for {proposal.character_name}:\n{e}",
-                )
-            except Exception:
-                logger.exception("Unexpected error committing state change for %s", char_id)
-                QMessageBox.critical(
-                    self, "Unexpected Error",
-                    f"An unexpected error occurred while saving state for {proposal.character_name}.",
-                )
+        try:
+            publish_scene_revision(
+                self._current_project_dir,
+                scene_id,
+                revision_id,
+                approved_facts,
+                approved_changes,
+                self._domain_bus,
+            )
+        except Exception as exc:
+            logger.exception("Could not publish scene revision %s", revision_id)
+            QMessageBox.critical(self, "发布失败", str(exc))
+            return
+        chapter_id = self._find_chapter_for_scene(scene_id)
+        record = None
+        if chapter_id:
+            from app.storage.project_files import load_scene_generation_record
+            record = load_scene_generation_record(
+                self._current_project_dir, scene_id, revision_id=revision_id
+            )
+            if record is not None:
+                self._refresh_prose_versions(chapter_id, scene_id, f"v{record.revision_number}")
+        if isinstance(workspace, SceneWorkspaceView):
+            workspace._status_label.setText("已发布")
+        self._pending_draft = None
 
 
     def _retry_agent(self, agent_name: str) -> None:

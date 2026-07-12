@@ -185,14 +185,47 @@ async def test_fact_and_state_steps_use_separate_provider_routes(
     monkeypatch.setattr(provider_config, "get_provider_for_step", fake_get_provider_for_step)
 
     pipeline = ScenePipeline()
+    result = None
 
-    async for _token, _gen_result in pipeline.generate_stream(
+    async for _token, gen_result in pipeline.generate_stream(
         project_dir, "scene-1",
         mock_planner, mock_char_agent, mock_writer, mock_reviewer,
     ):
-        pass
+        if gen_result is not None:
+            result = gen_result
+
+    assert requested_steps == []
+    await pipeline.analyze_draft(project_dir, result)
 
     assert requested_steps == ["fact_extractor", "state_updater"]
+
+
+@pytest.mark.asyncio
+async def test_failed_review_does_not_analyze_memory(
+    project_dir, mock_planner, mock_char_agent, mock_writer, monkeypatch
+):
+    from app.providers import config as provider_config
+
+    requested_steps = []
+    monkeypatch.setattr(
+        provider_config,
+        "get_provider_for_step",
+        lambda step_id, config: requested_steps.append(step_id),
+    )
+    failed_review = ReviewResult(scene_id="scene-1", overall_pass=False, summary="bad")
+    pipeline = ScenePipeline()
+
+    async for _token, _result in pipeline.generate_stream(
+        project_dir,
+        "scene-1",
+        mock_planner,
+        mock_char_agent,
+        mock_writer,
+        MockProvider(structured_response=failed_review),
+    ):
+        pass
+
+    assert requested_steps == []
 
 
 @pytest.mark.asyncio

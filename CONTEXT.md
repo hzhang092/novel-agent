@@ -45,6 +45,18 @@ _Avoid_: Selected version, current draft, default version.
 A generated version of one scene's prose and derived state changes. Regenerating a scene creates a new revision; older revisions may be superseded but remain useful for audit and undo.
 _Avoid_: Scene version, draft version, rewrite.
 
+**Draft Scene Revision (场景草稿修订版)**:
+A Scene Revision that has been saved but not published. It may contain review results and memory proposals, but it cannot affect active prose, canon facts, State Events, checkpoints, export, or downstream staleness.
+_Avoid_: Current revision, latest canon.
+
+**Published Scene Revision (已发布场景修订版)**:
+The Scene Revision selected by the scene's active marker. Only memory records whose scene revision matches the Published Scene Revision participate in retrieval and state replay.
+_Avoid_: Latest revision, generated revision.
+
+**Scene Publication (场景发布)**:
+The single operation that makes a Draft Scene Revision canonical. It commits approved memory for that revision, atomically switches the active marker, rebuilds derived state, and marks downstream scenes stale.
+_Avoid_: Save, activate, approve facts.
+
 **Scene Checkpoint (场景检查点)**:
 A character state snapshot written immediately after a scene is approved. Used during context assembly so Scene N always sees state as of the end of Scene N-1, preserving temporal consistency even when scenes are generated out of order.
 _Avoid_: Scene snapshot, state checkpoint.
@@ -58,7 +70,7 @@ A scene whose generation used character state revisions that have since been sup
 _Avoid_: Dirty scene, invalid scene.
 
 **Event Invalidation (事件作废)**:
-Marking an existing event as `invalidated: true` when its source scene is regenerated. Replay skips invalidated events. New events for the regenerated scene are appended separately.
+Marking an existing event as `invalidated: true` after an explicit manual or system rejection. Replay skips invalidated events. Publishing a replacement scene revision does not invalidate old events; active-revision filtering makes them inactive.
 _Avoid_: Deletion, removal, tombstone.
 
 ## Relationships
@@ -67,4 +79,6 @@ _Avoid_: Deletion, removal, tombstone.
 - **State Event → State Snapshot**: Snapshots are derived by replaying valid (non-invalidated) events from the event log.
 - **Scene Checkpoint → Context Assembly**: When generating Scene N, the context assembler reads the checkpoint from Scene N-1 to determine what characters knew at that point.
 - **Scene Revision → Read Point → Stale Scene**: A scene revision records the read points used in its prompt; when those read points are superseded, downstream revisions become stale.
-- **Scene Regeneration → Event Invalidation → Stale Scene Detection**: Regenerating a scene invalidates its old events; revision comparison identifies downstream scenes that used now-stale state.
+- **Scene Publication → Active Revision Selection → Stale Scene Detection**: Publishing a replacement makes older revision-scoped memory inactive and marks downstream scenes that used the previous timeline stale.
+- **Draft Scene Revision → Scene Publication → Published Scene Revision**: Saving generation output creates a draft only; publication is the only operation allowed to change canonical prose or timeline memory.
+- **Published Scene Revision → Canon Facts / State Events / Checkpoints**: Revision-scoped memory is visible only when its revision matches the active marker. Legacy records without a revision remain readable.

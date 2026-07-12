@@ -9,13 +9,14 @@ from app.storage.models import (
 )
 from app.storage.project_files import (
     create_project,
+    load_scene_prose,
     load_scene_generation_record,
     save_scene_generation_record,
     save_volume_outline,
 )
 
 
-def test_save_generated_scene_marks_downstream_stale_without_approval_items(
+def test_save_generated_scene_keeps_active_timeline_unchanged(
     qtbot, tmp_path, monkeypatch
 ):
     from app.ui.main_window import MainWindow
@@ -57,13 +58,38 @@ def test_save_generated_scene_marks_downstream_stale_without_approval_items(
         )
     )
 
-    assert load_scene_generation_record(proj_dir, "scene-3").status == "stale"
+    assert load_scene_generation_record(proj_dir, "scene-3").status == "current"
+    assert load_scene_generation_record(proj_dir, "scene-2").status == "draft"
+    assert load_scene_prose(proj_dir, "ch-1", "scene-2") == ""
 
 
 def test_fact_approval_keeps_corrupt_canon_file_unchanged(qtbot, tmp_path, monkeypatch):
     from app.ui.main_window import MainWindow
 
     proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(
+            id="vol-1",
+            title="第一卷",
+            chapters=[
+                ChapterOutline(
+                    id="ch-1",
+                    title="第一章",
+                    scenes=[SceneOutline(id="scene-1", title="第一场")],
+                )
+            ],
+        ),
+    )
+    save_scene_generation_record(
+        proj_dir,
+        SceneGenerationRecord(
+            scene_id="scene-1",
+            revision_id="rev-1",
+            status="draft",
+            review={"overall_pass": True},
+        ),
+    )
     facts_path = proj_dir / "canon" / "facts.yaml"
     facts_path.write_text("- description: [broken\n", encoding="utf-8")
     original = facts_path.read_bytes()
@@ -75,6 +101,7 @@ def test_fact_approval_keeps_corrupt_canon_file_unchanged(qtbot, tmp_path, monke
 
     window._on_approval_batch_approved(
         "scene-1",
+        "rev-1",
         [{"description": "新事实", "category": "world"}],
         [],
     )

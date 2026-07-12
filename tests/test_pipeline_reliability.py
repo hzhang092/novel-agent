@@ -233,7 +233,6 @@ class TestPipelineTokenLogging:
         jsonl_path = project_dir / "token_usage.jsonl"
         assert jsonl_path.exists(), "token_usage.jsonl should exist after pipeline run"
 
-        # Check intermediate files exist
-        assert (project_dir / "scenes" / "ch-1" / "scene-1.plan.json").exists()
-        assert (project_dir / "scenes" / "ch-1" / "scene-1.intents.json").exists()
-        assert (project_dir / "scenes" / "ch-1" / "scene-1.review.json").exists()
+        # Draft artifacts are returned to the controller for versioned persistence.
+        assert result.plan == plan
+        assert result.review == review
