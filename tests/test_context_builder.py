@@ -78,6 +78,43 @@ def test_characters_are_tiered_by_tier_in_context(tmp_path):
     assert chars["background"][0]["name"] == "杂役弟子甲"
 
 
+def test_pov_character_is_included_without_being_a_participant(tmp_path):
+    from app.pipeline.context_builder import RetrievalEngine
+    from app.storage.models import (
+        Character, CharacterCore, CharacterState,
+        ChapterOutline, SceneOutline, VolumeOutline,
+    )
+    from app.storage.project_files import create_project, save_character, save_volume_outline
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(id="char-hero", name="林轩", tier="major"),
+            state=CharacterState(character_id="char-hero"),
+        ),
+    )
+    scene = SceneOutline(
+        id="scene-1",
+        title="测试",
+        pov_character_id="char-hero",
+        participating_character_ids=[],
+    )
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(
+            title="第一卷",
+            chapters=[ChapterOutline(title="第一章", scenes=[scene])],
+        ),
+    )
+
+    context = RetrievalEngine().assemble(proj_dir, scene_id="scene-1")
+
+    assert context["characters"]["major"][0]["core"]["id"] == "char-hero"
+    assert "state" in context["characters"]["major"][0]
+    assert "char-hero" in context["read_points"]
+
+
 def test_non_participating_characters_are_excluded(tmp_path):
     """Characters not in the scene's participating character ID list are excluded."""
     from app.pipeline.context_builder import RetrievalEngine
@@ -391,6 +428,7 @@ def test_scene_info_derives_current_names_from_character_ids(tmp_path):
 
     assert context["scene_info"]["pov_character"] == "新名字"
     assert context["scene_info"]["participating_characters"] == ["新名字"]
+    assert len(context["characters"]["major"]) == 1
     assert context["characters"]["major"][0]["core"]["id"] == "char-hero"
 
 

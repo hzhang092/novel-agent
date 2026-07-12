@@ -122,10 +122,15 @@ class RetrievalEngine:
     def _collect_characters(self, project_dir: Path, scene: dict | None) -> tuple[dict, dict]:
         from app.storage.timeline_repository import load_character_context_for_scene
 
-        participants = (scene or {}).get("participating_character_ids", [])
-        scene_id = (scene or {}).get("id", "")
+        scene = scene or {}
+        character_ids = list(dict.fromkeys([
+            scene.get("pov_character_id", ""),
+            *scene.get("participating_character_ids", []),
+        ]))
+        character_ids = [character_id for character_id in character_ids if character_id]
+        scene_id = scene.get("id", "")
         all_chars, read_points = load_character_context_for_scene(
-            project_dir, scene_id, participants
+            project_dir, scene_id, character_ids
         )
 
         major: list[dict] = []
@@ -133,7 +138,7 @@ class RetrievalEngine:
         background: list[dict] = []
 
         for char in all_chars:
-            if char.core.id not in participants:
+            if char.core.id not in character_ids:
                 continue
 
             if char.core.tier.value == "major":
