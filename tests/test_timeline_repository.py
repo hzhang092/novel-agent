@@ -1,6 +1,7 @@
 """Tests for scene timeline helpers."""
 
 import pytest
+from pydantic import ValidationError
 
 from app.storage.models import (
     Character,
@@ -440,6 +441,81 @@ def test_published_revision_memory_is_immutable_and_idempotent(tmp_path):
     assert len(events) == 1
     assert events[0].changes[0].field == "goal"
     assert events[0].changes[0].value == "复仇"
+
+
+def test_publish_validates_complete_batch_before_writing(tmp_path):
+    from app.storage.timeline_repository import publish_scene_revision
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(id="hero", name="林轩", tier="major"),
+            state=CharacterState(character_id="hero"),
+        ),
+    )
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(
+            id="vol-1",
+            title="第一卷",
+            chapters=[
+                ChapterOutline(
+                    id="ch-1",
+                    title="第一章",
+                    scenes=[SceneOutline(id="scene-1", title="第一场")],
+                )
+            ],
+        ),
+    )
+    record = SceneGenerationRecord(
+        scene_id="scene-1",
+        revision_id="rev-1",
+        status="draft",
+        review={"overall_pass": True},
+    )
+    save_scene_generation_record(proj_dir, record)
+    save_canon_facts(
+        proj_dir,
+        [
+            CanonFact(
+                description="existing",
+                category="plot",
+                source_scene_id="scene-0",
+            )
+        ],
+    )
+
+    with pytest.raises(ValidationError):
+        publish_scene_revision(
+            proj_dir,
+            "scene-1",
+            "rev-1",
+            [{"description": "new", "category": "plot"}],
+            [
+                {
+                    "character_id": "hero",
+                    "changes": [
+                        {"type": "set_field", "field": "goal", "value": "复仇"}
+                    ],
+                },
+                {
+                    "character_id": "hero",
+                    "changes": [{"type": "invalid_change"}],
+                },
+            ],
+        )
+
+    assert get_active_scene_revision_id(proj_dir, "scene-1") == ""
+    assert [
+        fact.description for fact in load_canon_facts(proj_dir, active_only=False)
+    ] == ["existing"]
+    assert load_events(proj_dir / "characters" / "hero") == []
+    unchanged = load_scene_generation_record(
+        proj_dir, "scene-1", revision_id="rev-1"
+    )
+    assert unchanged.approved_facts == []
+    assert unchanged.approved_state_change_proposals == []
 
 
 def test_draft_memory_is_invisible_until_revision_is_active(tmp_path):

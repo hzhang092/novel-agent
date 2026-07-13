@@ -945,6 +945,8 @@ class MainWindow(QMainWindow):
             logger.exception("Could not publish scene revision %s", revision_id)
             QMessageBox.critical(self, "发布失败", str(exc))
             return
+        if isinstance(workspace, SceneWorkspaceView):
+            workspace.hide_fact_approval()
         chapter_id = self._find_chapter_for_scene(scene_id)
         record = None
         if chapter_id:

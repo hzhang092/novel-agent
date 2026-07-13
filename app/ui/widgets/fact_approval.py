@@ -356,4 +356,3 @@ class FactApprovalPanel(QWidget):
             approved_facts,
             approved_changes,
         )
-        self.clear_and_hide()

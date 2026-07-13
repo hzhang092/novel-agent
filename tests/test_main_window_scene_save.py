@@ -98,12 +98,38 @@ def test_fact_approval_keeps_corrupt_canon_file_unchanged(qtbot, tmp_path, monke
     qtbot.addWidget(window)
     window._current_project_dir = proj_dir
     monkeypatch.setattr("app.ui.main_window.QMessageBox.critical", lambda *args: None)
+    workspace = window.views["workspace"]
+    fact = {"description": "新事实", "category": "world"}
+    workspace.fact_approval.show_items("scene-1", "rev-1", [fact], [])
 
     window._on_approval_batch_approved(
         "scene-1",
         "rev-1",
-        [{"description": "新事实", "category": "world"}],
+        [fact],
         [],
     )
 
     assert facts_path.read_bytes() == original
+    assert not workspace.fact_approval.isHidden()
+    assert workspace.fact_approval._facts == [fact]
+
+
+def test_successful_fact_approval_clears_panel(qtbot, tmp_path, monkeypatch):
+    from app.ui.main_window import MainWindow
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._current_project_dir = tmp_path
+    workspace = window.views["workspace"]
+    fact = {"description": "新事实", "category": "world"}
+    workspace.fact_approval.show_items("scene-1", "rev-1", [fact], [])
+    monkeypatch.setattr(
+        "app.storage.timeline_repository.publish_scene_revision",
+        lambda *args: None,
+    )
+    monkeypatch.setattr(window, "_find_chapter_for_scene", lambda scene_id: None)
+
+    window._on_approval_batch_approved("scene-1", "rev-1", [fact], [])
+
+    assert workspace.fact_approval.isHidden()
+    assert workspace.fact_approval._facts == []

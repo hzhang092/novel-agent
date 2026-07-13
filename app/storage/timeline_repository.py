@@ -445,13 +445,12 @@ def _stage_revision_events(
     project_dir: Path,
     scene_id: str,
     revision_id: str,
-    approved_state_changes: list[dict],
+    proposals: list[StateChangeProposal],
 ) -> list[CharacterStateEvent]:
     _remove_revision_events(project_dir, scene_id, revision_id)
     transaction_id = str(uuid.uuid4())
     events: list[CharacterStateEvent] = []
-    for proposal_data in approved_state_changes:
-        proposal = StateChangeProposal.model_validate(proposal_data)
+    for proposal in proposals:
         built = _build_scene_proposal_event(
             project_dir,
             proposal,
@@ -503,15 +502,7 @@ def publish_scene_revision(
     else:
         if active_revision_id == revision_id:
             raise ValueError("Active legacy revision cannot be republished without metadata")
-        record.approved_facts = approved_facts
-        record.approved_state_change_proposals = approved_state_changes
-        save_scene_generation_record(project_dir, record)
-
-        all_facts = [
-            fact for fact in load_canon_facts(project_dir, active_only=False)
-            if fact.source_scene_revision_id != revision_id
-        ]
-        all_facts.extend(
+        staged_facts = [
             CanonFact(
                 description=fact.get("description", ""),
                 category=fact.get("category", "world"),
@@ -522,10 +513,23 @@ def publish_scene_revision(
             )
             for fact in approved_facts
             if fact.get("description")
-        )
+        ]
+        proposals = [
+            StateChangeProposal.model_validate(proposal)
+            for proposal in approved_state_changes
+        ]
+        record.approved_facts = approved_facts
+        record.approved_state_change_proposals = approved_state_changes
+        save_scene_generation_record(project_dir, record)
+
+        all_facts = [
+            fact for fact in load_canon_facts(project_dir, active_only=False)
+            if fact.source_scene_revision_id != revision_id
+        ]
+        all_facts.extend(staged_facts)
         save_canon_facts(project_dir, all_facts)
         published_events = _stage_revision_events(
-            project_dir, scene_id, revision_id, approved_state_changes
+            project_dir, scene_id, revision_id, proposals
         )
 
     previous_revision_id = previous.revision_id if previous is not None else ""

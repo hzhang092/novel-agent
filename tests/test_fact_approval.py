@@ -23,3 +23,6 @@ def test_confirm_emits_source_scene_id(qtbot):
     panel._on_confirm()
 
     assert got == [("scene-a", "rev-a", [fact], [change])]
+    assert not panel.isHidden()
+    assert panel._facts == [fact]
+    assert panel._state_changes == [change]
