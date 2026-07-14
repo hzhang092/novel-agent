@@ -12,7 +12,9 @@ from typing import TYPE_CHECKING
 
 from app.storage.character_events import append_events, load_events, get_latest_event_id
 from app.storage.character_state import (
+    load_snapshot,
     load_or_build_snapshot,
+    map_snapshot_to_character_state,
     save_snapshot,
     save_checkpoint,
     _apply_changes_to_snapshot,
@@ -20,6 +22,7 @@ from app.storage.character_state import (
 from app.storage.models import (
     CharacterState,
     CharacterStateEvent,
+    CharacterStateSnapshot,
     CharacterStoredChange,
     StateChangeProposal,
     SceneStateCheckpoint,
@@ -55,6 +58,7 @@ class StateRepository:
 
         Returns the stored event, or None if there are no changes to apply.
         """
+        ensure_initial_state_event(char_dir, proposal.character_id)
         changes = proposal.changes
         if not changes:
             return None
@@ -120,6 +124,41 @@ class StateRepository:
 
     # ── User-initiated manual edit ─────────────────────────────────────────
 
+    def commit_initial_state(
+        self,
+        char_dir: Path,
+        state: CharacterState,
+        source: str = "user",
+    ) -> CharacterStateEvent:
+        """Write the replayable state seed before any scene events exist."""
+        if load_events(char_dir):
+            raise ValueError(f"Character already has state events: {char_dir}")
+
+        snapshot = CharacterStateSnapshot(character_id=state.character_id)
+        stored_changes = _stored_changes_from_dicts(
+            _diff_character_state(CharacterState(character_id=state.character_id), state)
+        )
+        _apply_changes_to_snapshot(snapshot, stored_changes)
+        snapshot.last_event_id = 1
+        snapshot.last_scene_id = state.last_updated_scene or ""
+        snapshot.generated_at = datetime.now(timezone.utc).isoformat()
+
+        event = CharacterStateEvent(
+            event_id=1,
+            transaction_id=str(uuid.uuid4()),
+            scene_id=snapshot.last_scene_id,
+            event_seq=1,
+            character_id=state.character_id,
+            source=source,
+            request_id=str(uuid.uuid4()),
+            created_at=snapshot.generated_at,
+            changes=stored_changes,
+        )
+        append_events(char_dir, [event])
+        save_snapshot(char_dir, snapshot)
+        self._publish("character_state_updated", character_id=state.character_id, event_id=1)
+        return event
+
     def commit_user_edit(
         self,
         char_dir: Path,
@@ -128,24 +167,14 @@ class StateRepository:
         scene_id: str = "",
     ) -> CharacterStateEvent | None:
         """Commit a user-initiated state edit. Accepts dicts with type/field/value/old."""
+        ensure_initial_state_event(char_dir, character_id)
         if not changes:
             return None
 
         snapshot = load_or_build_snapshot(char_dir, character_id)
         snapshot.character_id = character_id or snapshot.character_id
 
-        stored_changes: list[CharacterStoredChange] = []
-        for c in changes:
-            sc = CharacterStoredChange(
-                type=c.get("type", ""),
-                field=c.get("field", ""),
-                value=c.get("value", ""),
-                old=c.get("old", ""),
-                fact=c.get("fact", ""),
-                target_character_id=c.get("target_character_id", ""),
-                relationship=c.get("relationship", ""),
-            )
-            stored_changes.append(sc)
+        stored_changes = _stored_changes_from_dicts(changes)
 
         next_id = get_latest_event_id(char_dir) + 1
         _apply_changes_to_snapshot(snapshot, stored_changes)
@@ -168,15 +197,16 @@ class StateRepository:
         append_events(char_dir, [event])
         save_snapshot(char_dir, snapshot)
 
-        checkpoint = SceneStateCheckpoint(
-            scene_id=scene_id,
-            checkpoint_id=str(uuid.uuid4()),
-            event_id=next_id,
-            character_id=snapshot.character_id,
-            created_at=now,
-            snapshot=snapshot,
-        )
-        save_checkpoint(char_dir, checkpoint)
+        if scene_id:
+            checkpoint = SceneStateCheckpoint(
+                scene_id=scene_id,
+                checkpoint_id=str(uuid.uuid4()),
+                event_id=next_id,
+                character_id=snapshot.character_id,
+                created_at=now,
+                snapshot=snapshot,
+            )
+            save_checkpoint(char_dir, checkpoint)
 
         self._publish("character_state_updated", character_id=snapshot.character_id, event_id=next_id)
 
@@ -237,6 +267,18 @@ def commit_character_state_edit(
     )
 
 
+def ensure_initial_state_event(
+    char_dir: Path,
+    character_id: str,
+) -> CharacterStateEvent | None:
+    """Import an eventless legacy snapshot once, without touching eventful logs."""
+    if load_events(char_dir):
+        return None
+    state = map_snapshot_to_character_state(load_snapshot(char_dir))
+    state.character_id = character_id or state.character_id
+    return StateRepository().commit_initial_state(char_dir, state, source="system")
+
+
 def _diff_character_state(old: CharacterState, new: CharacterState) -> list[dict]:
     changes: list[dict] = []
 
@@ -290,6 +332,21 @@ def _diff_facts(kind: str, old: list[str], new: list[str]) -> list[dict]:
         if fact not in old:
             changes.append({"type": f"{kind}_add", "fact": fact})
     return changes
+
+
+def _stored_changes_from_dicts(changes: list[dict]) -> list[CharacterStoredChange]:
+    return [
+        CharacterStoredChange(
+            type=change.get("type", ""),
+            field=change.get("field", ""),
+            value=change.get("value", ""),
+            old=change.get("old", ""),
+            fact=change.get("fact", ""),
+            target_character_id=change.get("target_character_id", ""),
+            relationship=change.get("relationship", ""),
+        )
+        for change in changes
+    ]
 
 
 def _state_text(value: str | None) -> str:

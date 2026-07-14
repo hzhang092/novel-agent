@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from app.storage.state_repository import StateRepository, commit_character_state_edit
+from app.storage.state_repository import (
+    StateRepository,
+    commit_character_state_edit,
+    ensure_initial_state_event,
+)
 from app.storage.models import (
     StateChangeProposal,
     SetFieldChange,
@@ -20,6 +24,16 @@ from app.storage.models import (
 from app.storage.character_state import load_snapshot
 from app.storage.character_events import append_events, load_events, get_latest_event_id
 from app.events.bus import EventBus
+
+
+def test_existing_event_log_is_never_backfilled(tmp_path):
+    append_events(
+        tmp_path,
+        [CharacterStateEvent(event_id=1, scene_id="scene-1", character_id="hero")],
+    )
+
+    assert ensure_initial_state_event(tmp_path, "hero") is None
+    assert len(load_events(tmp_path)) == 1
 
 
 class TestCommitProposal:
@@ -61,7 +75,7 @@ class TestCommitProposal:
 
             # Event has the right structure
             assert event is not None
-            assert event.event_id == 1
+            assert event.event_id == 2
             assert len(event.changes) == 2
             assert event.changes[0].old == "become_elder"
             assert event.changes[0].value == "revenge"
@@ -70,13 +84,14 @@ class TestCommitProposal:
 
             # events.jsonl has the event
             all_events = load_events(char_dir)
-            assert len(all_events) == 1
+            assert len(all_events) == 2
+            assert all_events[0].source == "system"
 
             # snapshot is updated
             snap = load_snapshot(char_dir)
             assert snap.goal == "revenge"
             assert snap.emotion == "angry"
-            assert snap.last_event_id == 1
+            assert snap.last_event_id == 2
 
             # Domain event was published
             assert len(events_fired) == 1
@@ -178,8 +193,8 @@ class TestInvalidateEvent:
             snap = load_snapshot(char_dir)
             assert snap.goal == "second"
 
-            # Invalidate event 2
-            deleted = repo.invalidate_event(char_dir, event_id=2)
+            # Invalidate the second proposal event (the seed is event 1).
+            deleted = repo.invalidate_event(char_dir, event_id=3)
             assert deleted is True
 
             # State should revert to "first"
@@ -216,7 +231,7 @@ class TestCommitUserEdit:
             event = repo.commit_user_edit(char_dir, "char-1", changes, scene_id="scene_003")
             assert event is not None
             assert event.source == "user"
-            assert event.event_id == 1
+            assert event.event_id == 2
 
             snap = load_snapshot(char_dir)
             assert snap.goal == "new_goal"

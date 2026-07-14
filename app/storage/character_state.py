@@ -91,7 +91,9 @@ def build_snapshot(char_dir: Path, character_id: str = "") -> CharacterStateSnap
 
 
 def _event_sort_key(event) -> tuple[int, int, int]:
-    scene_order = event.scene_order if event.scene_order > 0 else event.event_id
+    scene_order = 0 if not event.scene_id else (
+        event.scene_order if event.scene_order > 0 else event.event_id
+    )
     event_seq = event.event_seq if event.event_seq > 0 else event.event_id
     return (scene_order, event_seq, event.event_id)
 

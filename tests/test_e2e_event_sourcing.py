@@ -48,7 +48,7 @@ def test_full_event_sourcing_flow():
 
         # Verify event written
         assert event is not None
-        assert event.event_id == 1
+        assert event.event_id == 2
         assert event.changes[0].old == "通过考核"  # old goal from snapshot
         assert event.changes[0].value == "复仇"
         assert event.changes[1].old == "紧张"
@@ -62,9 +62,9 @@ def test_full_event_sourcing_flow():
         snap = load_snapshot(char_dir)
         assert snap.goal == "复仇"
         assert snap.emotion == "愤怒"
-        assert snap.last_event_id == 1
+        assert snap.last_event_id == 2
 
         # Verify domain event emitted
         assert len(events_fired) == 1
         assert events_fired[0]["character_id"] == "char-hero"
-        assert events_fired[0]["event_id"] == 1
+        assert events_fired[0]["event_id"] == 2

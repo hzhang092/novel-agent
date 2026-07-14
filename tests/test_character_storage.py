@@ -51,6 +51,17 @@ def test_save_and_load_character_round_trip(tmp_path):
     save_character(proj_dir, character)
     loaded = load_character(proj_dir, character.core.id)
 
+    from app.storage.character_events import load_events
+    events = load_events(proj_dir / "characters" / character.core.id)
+    assert len(events) == 1
+    assert events[0].source == "user"
+    assert {change.type for change in events[0].changes} == {
+        "set_field",
+        "relationship_change",
+        "knowledge_add",
+        "secret_add",
+    }
+
     # Core fields
     assert loaded.core.id == core.id
     assert loaded.core.name == "林轩"
@@ -98,6 +109,38 @@ def test_save_character_minimal(tmp_path):
     assert loaded.core.tier == CharacterTier.SUPPORTING  # default
     assert loaded.core.aliases == []
     assert loaded.state.current_goal == ""
+
+
+def test_save_character_update_is_replayable(tmp_path):
+    from app.storage.character_events import load_events
+    from app.storage.project_files import load_character, save_character
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    core = CharacterCore(id="hero", name="林轩")
+    save_character(
+        proj_dir,
+        Character(
+            core=core,
+            state=CharacterState(character_id="hero", current_goal="生存"),
+        ),
+    )
+    save_character(
+        proj_dir,
+        Character(
+            core=core,
+            state=CharacterState(character_id="hero", current_goal="复仇"),
+        ),
+    )
+
+    char_dir = proj_dir / "characters" / "hero"
+    events = load_events(char_dir)
+    assert len(events) == 2
+    assert events[1].source == "user"
+    assert events[1].changes[0].old == "生存"
+    assert events[1].changes[0].value == "复仇"
+
+    (char_dir / "state.yaml").unlink()
+    assert load_character(proj_dir, "hero").state.current_goal == "复仇"
 
 
 def test_load_character_missing_file(tmp_path):

@@ -39,7 +39,7 @@ from app.storage.project_files import (
     save_scene_generation_record,
     set_active_scene_prose_version,
 )
-from app.storage.state_repository import _convert_to_stored_change
+from app.storage.state_repository import _convert_to_stored_change, ensure_initial_state_event
 
 if TYPE_CHECKING:
     from app.events.bus import EventBus
@@ -101,6 +101,7 @@ def load_character_state_as_of_scene(
     read_points: dict[str, dict] = {}
     for character_id in character_ids:
         char_dir = project_dir / "characters" / character_id
+        ensure_initial_state_event(char_dir, character_id)
         if current is None:
             snap = load_or_build_snapshot(char_dir, character_id)
             snapshots[character_id] = snap
@@ -108,7 +109,12 @@ def load_character_state_as_of_scene(
             continue
 
         if current.scene_order <= 1:
-            snap = CharacterStateSnapshot(character_id=character_id)
+            snap = _replay_snapshot(
+                char_dir,
+                character_id,
+                max_scene_order=0,
+                scene_orders=scene_orders,
+            )
             snapshots[character_id] = snap
             read_points[character_id] = _read_point("story_start", "", snap.last_event_id, "", 0)
             continue
@@ -350,6 +356,8 @@ def _replay_snapshot(
 
 
 def _event_scene_order(event: CharacterStateEvent, scene_orders: dict[str, int]) -> int:
+    if not event.scene_id:
+        return 0
     if event.scene_order > 0:
         return event.scene_order
     return scene_orders.get(event.scene_id, event.event_id)

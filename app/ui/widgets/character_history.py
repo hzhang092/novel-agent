@@ -102,11 +102,12 @@ class CharacterHistoryWidget(QWidget):
         for event in events:
             if event.invalidated:
                 continue
+            scene_name = event.scene_id or "故事起点"
             source_badge = SOURCE_LABELS.get(event.source, event.source)
             source_color = SOURCE_COLORS.get(event.source, "#888")
 
             header = QLabel(
-                f"<b>Scene {event.scene_id}</b> "
+                f"<b>{scene_name}</b> "
                 f"<span style='color:{source_color};'>[{source_badge}]</span>"
             )
             header.setStyleSheet("font-size: 13px; padding-top: 4px;")
@@ -127,7 +128,8 @@ class CharacterHistoryWidget(QWidget):
         for event in events:
             if event.scene_id != current_scene:
                 current_scene = event.scene_id
-                scene_label = QLabel(f"<b>━━ Scene {event.scene_id}</b>")
+                scene_name = event.scene_id or "故事起点"
+                scene_label = QLabel(f"<b>━━ {scene_name}</b>")
                 scene_label.setStyleSheet("color: #f39c12; padding-top: 8px; font-size: 13px;")
                 self._content_layout.insertWidget(self._content_layout.count() - 1, scene_label)
 

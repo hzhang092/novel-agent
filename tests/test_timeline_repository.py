@@ -23,6 +23,7 @@ from app.storage.models import (
 from app.storage.character_events import append_events, load_events
 from app.storage.character_state import (
     load_checkpoint,
+    load_or_build_snapshot,
     load_snapshot,
     save_checkpoint,
     save_snapshot,
@@ -164,7 +165,7 @@ def test_commit_scene_proposal_uses_historical_state_and_rebuilds_head(tmp_path)
     assert load_snapshot(char_dir).goal == "after scene 3"
 
 
-def test_first_scene_context_does_not_use_latest_state_yaml(tmp_path):
+def test_first_scene_context_uses_authored_initial_state(tmp_path):
     from app.storage.timeline_repository import load_character_state_as_of_scene
 
     proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
@@ -172,7 +173,7 @@ def test_first_scene_context_does_not_use_latest_state_yaml(tmp_path):
         proj_dir,
         Character(
             core=CharacterCore(id="char-hero", name="林轩", tier="major"),
-            state=CharacterState(character_id="char-hero", current_goal="future goal"),
+            state=CharacterState(character_id="char-hero", current_goal="starting goal"),
         ),
     )
     save_volume_outline(
@@ -196,11 +197,12 @@ def test_first_scene_context_does_not_use_latest_state_yaml(tmp_path):
         ["char-hero"],
     )
 
-    assert states["char-hero"].goal == ""
+    assert states["char-hero"].goal == "starting goal"
     assert read_points["char-hero"]["source"] == "story_start"
+    assert read_points["char-hero"]["max_event_id"] == 1
 
 
-def test_first_character_event_before_later_scene_does_not_use_latest_state_yaml(tmp_path):
+def test_later_scene_replay_includes_authored_initial_state(tmp_path):
     from app.storage.timeline_repository import load_character_state_as_of_scene
 
     proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
@@ -208,7 +210,7 @@ def test_first_character_event_before_later_scene_does_not_use_latest_state_yaml
         proj_dir,
         Character(
             core=CharacterCore(id="char-hero", name="林轩", tier="major"),
-            state=CharacterState(character_id="char-hero", current_goal="future goal"),
+            state=CharacterState(character_id="char-hero", current_goal="starting goal"),
         ),
     )
     save_volume_outline(
@@ -235,8 +237,163 @@ def test_first_character_event_before_later_scene_does_not_use_latest_state_yaml
         ["char-hero"],
     )
 
-    assert states["char-hero"].goal == ""
+    assert states["char-hero"].goal == "starting goal"
     assert read_points["char-hero"]["source"] == "replay"
+
+
+def test_scene_change_preserves_unchanged_authored_state_through_replay(tmp_path):
+    from app.storage.timeline_repository import (
+        commit_scene_proposal,
+        load_character_state_as_of_scene,
+    )
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(id="hero", name="林轩", tier="major"),
+            state=CharacterState(
+                character_id="hero",
+                current_goal="寻找妹妹",
+                current_location="河村",
+            ),
+        ),
+    )
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(
+            id="vol-1",
+            title="第一卷",
+            chapters=[
+                ChapterOutline(
+                    id="ch-1",
+                    title="第一章",
+                    scenes=[
+                        SceneOutline(id="scene-1", title="第一场"),
+                        SceneOutline(id="scene-2", title="第二场"),
+                    ],
+                )
+            ],
+        ),
+    )
+
+    event = commit_scene_proposal(
+        proj_dir,
+        StateChangeProposal(
+            character_id="hero",
+            changes=[
+                SetFieldChange(type="set_field", field="emotion", value="害怕")
+            ],
+        ),
+        "scene-1",
+        "tx",
+        "req",
+    )
+
+    assert event is not None
+    assert event.event_id == 2
+    assert [change.field for change in event.changes] == ["emotion"]
+    checkpoint = load_checkpoint(proj_dir / "characters" / "hero", "scene-1")
+    assert checkpoint is not None
+    assert checkpoint.snapshot.goal == "寻找妹妹"
+    assert checkpoint.snapshot.location == "河村"
+    assert checkpoint.snapshot.emotion == "害怕"
+
+    states, _ = load_character_state_as_of_scene(proj_dir, "scene-2", ["hero"])
+    assert states["hero"].goal == "寻找妹妹"
+    assert states["hero"].location == "河村"
+    assert states["hero"].emotion == "害怕"
+
+    char_dir = proj_dir / "characters" / "hero"
+    (char_dir / "state.yaml").unlink()
+    rebuilt = load_or_build_snapshot(char_dir, "hero")
+    assert rebuilt.goal == "寻找妹妹"
+    assert rebuilt.location == "河村"
+    assert rebuilt.emotion == "害怕"
+
+
+def test_eventless_snapshot_is_backfilled_once_before_story_start_replay(tmp_path):
+    from app.storage.project_files import save_character_definition
+    from app.storage.timeline_repository import load_character_state_as_of_scene
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_character_definition(
+        proj_dir,
+        CharacterCore(id="hero", name="林轩", tier="major"),
+    )
+    char_dir = proj_dir / "characters" / "hero"
+    save_snapshot(
+        char_dir,
+        CharacterStateSnapshot(character_id="hero", goal="寻找妹妹"),
+    )
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(
+            id="vol-1",
+            title="第一卷",
+            chapters=[
+                ChapterOutline(
+                    id="ch-1",
+                    title="第一章",
+                    scenes=[SceneOutline(id="scene-1", title="第一场")],
+                )
+            ],
+        ),
+    )
+
+    first, _ = load_character_state_as_of_scene(proj_dir, "scene-1", ["hero"])
+    second, _ = load_character_state_as_of_scene(proj_dir, "scene-1", ["hero"])
+
+    assert first["hero"].goal == "寻找妹妹"
+    assert second["hero"].goal == "寻找妹妹"
+    events = load_events(char_dir)
+    assert len(events) == 1
+    assert events[0].source == "system"
+    assert events[0].scene_id == ""
+
+
+def test_eventless_snapshot_with_scene_anchor_does_not_leak_backwards(tmp_path):
+    from app.storage.project_files import save_character_definition
+    from app.storage.timeline_repository import load_character_state_as_of_scene
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_character_definition(
+        proj_dir,
+        CharacterCore(id="hero", name="林轩", tier="major"),
+    )
+    char_dir = proj_dir / "characters" / "hero"
+    save_snapshot(
+        char_dir,
+        CharacterStateSnapshot(
+            character_id="hero",
+            goal="scene-one goal",
+            last_scene_id="scene-1",
+        ),
+    )
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(
+            id="vol-1",
+            title="第一卷",
+            chapters=[
+                ChapterOutline(
+                    id="ch-1",
+                    title="第一章",
+                    scenes=[
+                        SceneOutline(id="scene-1", title="第一场"),
+                        SceneOutline(id="scene-2", title="第二场"),
+                    ],
+                )
+            ],
+        ),
+    )
+
+    before, _ = load_character_state_as_of_scene(proj_dir, "scene-1", ["hero"])
+    after, _ = load_character_state_as_of_scene(proj_dir, "scene-2", ["hero"])
+
+    assert before["hero"].goal == ""
+    assert after["hero"].goal == "scene-one goal"
+    assert load_events(char_dir)[0].scene_id == "scene-1"
 
 
 def test_load_character_context_for_scene_uses_ids_with_duplicate_names(tmp_path):
@@ -438,9 +595,9 @@ def test_published_revision_memory_is_immutable_and_idempotent(tmp_path):
     publish_scene_revision(proj_dir, "scene-1", "rev-1", [], approved)
 
     events = load_events(char_dir)
-    assert len(events) == 1
-    assert events[0].changes[0].field == "goal"
-    assert events[0].changes[0].value == "复仇"
+    assert len(events) == 2
+    assert events[1].changes[0].field == "goal"
+    assert events[1].changes[0].value == "复仇"
 
 
 def test_publish_validates_complete_batch_before_writing(tmp_path):
@@ -510,7 +667,10 @@ def test_publish_validates_complete_batch_before_writing(tmp_path):
     assert [
         fact.description for fact in load_canon_facts(proj_dir, active_only=False)
     ] == ["existing"]
-    assert load_events(proj_dir / "characters" / "hero") == []
+    events = load_events(proj_dir / "characters" / "hero")
+    assert len(events) == 1
+    assert events[0].scene_id == ""
+    assert events[0].changes == []
     unchanged = load_scene_generation_record(
         proj_dir, "scene-1", revision_id="rev-1"
     )

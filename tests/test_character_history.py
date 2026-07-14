@@ -23,3 +23,22 @@ def test_history_widget_creation(qtbot):
         ])
         widget.set_character(char_dir, "scene_001")
         # Should render without error
+
+
+def test_history_labels_initial_event_as_story_start(qtbot):
+    from PyQt6.QtWidgets import QLabel
+    from app.ui.widgets.character_history import CharacterHistoryWidget
+
+    widget = CharacterHistoryWidget()
+    qtbot.addWidget(widget)
+
+    with tempfile.TemporaryDirectory() as td:
+        char_dir = Path(td)
+        append_events(
+            char_dir,
+            [CharacterStateEvent(event_id=1, scene_id="", source="user")],
+        )
+        widget.set_character(char_dir)
+        widget._switch_view("timeline")
+
+        assert any("故事起点" in label.text() for label in widget.findChildren(QLabel))

@@ -226,16 +226,25 @@ def save_style_guide(project_dir: Path, style: StyleGuide) -> None:
 def save_character(project_dir: Path, character: Character) -> None:
     """Write a character to characters/<id>/ in per-directory layout.
 
-    Creates definition.yaml (core) and state.yaml (snapshot from character.state).
-    Legacy flat files are no longer written.
+    Character State is persisted as events; state.yaml remains a derived snapshot.
     """
-    from app.storage.character_state import map_character_state_to_snapshot, save_snapshot
+    from app.storage.state_repository import StateRepository, commit_character_state_edit
 
+    char_root = project_dir / "characters"
+    char_dir = char_root / character.core.id
+    definition_exists = (char_dir / "definition.yaml").exists()
+    legacy_exists = (char_root / f"{character.core.id}.yaml").exists()
+    old_state = load_character(project_dir, character.core.id).state if definition_exists else None
     char_dir = save_character_definition(project_dir, character.core)
 
-    # Write state.yaml (snapshot)
-    snap = map_character_state_to_snapshot(character.state)
-    save_snapshot(char_dir, snap)
+    if old_state is not None:
+        commit_character_state_edit(char_dir, old_state, character.state)
+    else:
+        StateRepository().commit_initial_state(
+            char_dir,
+            character.state,
+            source="system" if legacy_exists else "user",
+        )
 
 
 def save_character_definition(project_dir: Path, core: CharacterCore) -> Path:
