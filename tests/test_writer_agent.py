@@ -3,7 +3,7 @@ import asyncio
 
 import pytest
 
-from app.pipeline.agents.writer import WriterAgent
+from app.pipeline.agents.writer import WriterAgent, _build_messages
 from app.providers.base import MockProvider
 
 
@@ -77,6 +77,20 @@ class TestWriterPrompt:
         assert "快节奏" in prompt
         assert "热血" in prompt
         assert "第三人称" in prompt
+
+    def test_system_prompt_respects_style_guide_pov(self):
+        first_person = _build_messages(
+            {"style_guide": {"pov": "第一人称"}}
+        )[0]["content"]
+        third_person = _build_messages(
+            {"style_guide": {"pov": "第三人称"}}
+        )[0]["content"]
+        default = _build_messages({})[0]["content"]
+
+        assert "使用第一人称叙述" in first_person
+        assert "使用第三人称叙述" not in first_person
+        assert "使用第三人称叙述" in third_person
+        assert "使用第三人称叙述" in default
 
     def test_build_prompt_includes_world_rules(self):
         agent = WriterAgent()

@@ -44,12 +44,13 @@ class WriterAgent:
 
 def _build_messages(context: dict) -> list[dict[str, str]]:
     """Build the messages list: system prompt + assembled context."""
+    pov = (context.get("style_guide") or {}).get("pov") or "第三人称"
     system = (
         "你是一位专业的网文作家，精通中文网络小说的写作。"
         "你需要根据提供的场景规划、角色意图、世界观设定和风格指南，写出场景的完整小说正文。"
         "严格遵循场景规划中的情节节拍和断章要求。"
         "角色的言行必须符合其角色意图（情绪、目标、禁止行为）。"
-        "使用第三人称叙述，保持文风一致。"
+        f"使用{pov}叙述，保持文风一致。"
         "直接输出小说正文，不要添加任何解释、标记或JSON包装。"
     )
     return [
