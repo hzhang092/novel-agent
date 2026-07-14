@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, Field
 
+from app.pipeline.agents.character import CharacterIntentAgent
 from app.pipeline.pipeline import ScenePipeline
 from app.providers.base import MockProvider
 from app.storage.models import (
@@ -156,6 +157,50 @@ async def test_full_pipeline_generates_prose(
     assert result.review is not None
     assert result.review.overall_pass is True
     assert len(result.trace) >= 4  # Planner, Characters, Writer, Reviewer
+
+
+@pytest.mark.asyncio
+async def test_parallel_character_agents_keep_their_own_usage(
+    project_dir, mock_planner, mock_char_agent, mock_writer, mock_reviewer, monkeypatch
+):
+    pipeline = ScenePipeline()
+    monkeypatch.setattr(
+        pipeline,
+        "assemble_context",
+        lambda *_: {
+            "characters": {
+                "major": [
+                    {"core": {"name": "A"}, "state": {}},
+                    {"core": {"name": "B"}, "state": {}},
+                ]
+            }
+        },
+    )
+
+    async def generate(self, _provider, _context, _plan, core, _state):
+        tokens = {"A": 11, "B": 22}[core["name"]]
+        self.last_usage = {"total_tokens": tokens}
+        await asyncio.sleep(0)
+        return CharacterIntent(character_name=core["name"])
+
+    monkeypatch.setattr(CharacterIntentAgent, "generate", generate)
+
+    result = None
+    async for _token, gen_result in pipeline.generate_stream(
+        project_dir,
+        "scene-1",
+        mock_planner,
+        mock_char_agent,
+        mock_writer,
+        mock_reviewer,
+    ):
+        result = gen_result or result
+
+    character_trace = next(entry for entry in result.trace if entry.stage == "characters")
+    assert {child.agent_name: child.token_count for child in character_trace.children} == {
+        "A": 11,
+        "B": 22,
+    }
 
 
 @pytest.mark.asyncio

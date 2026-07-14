@@ -98,7 +98,6 @@ class ScenePipeline:
     def __init__(self) -> None:
         self._engine = RetrievalEngine()
         self._planner = ScenePlannerAgent()
-        self._character_agent = CharacterIntentAgent()
         self._writer = WriterAgent()
         self._reviewer = ReviewerAgent()
         self._fact_extractor = FactExtractorAgent()
@@ -189,15 +188,16 @@ class ScenePipeline:
             self._emit_trace(on_trace, result.trace)
 
             async def _run_char_intent(mc: dict) -> tuple[str, CharacterIntent | None, int, str]:
+                agent = CharacterIntentAgent()
                 name = mc["core"]["name"]
                 t0_c = time.monotonic()
                 try:
-                    intent = await self._character_agent.generate(
+                    intent = await agent.generate(
                         char_provider, context, plan_dict,
                         mc.get("core", {}), mc.get("state", {}),
                     )
                     dur = int((time.monotonic() - t0_c) * 1000)
-                    tokens = self._character_agent.last_usage.get("total_tokens", 0) if self._character_agent.last_usage else 0
+                    tokens = (agent.last_usage or {}).get("total_tokens", 0)
                     return (name, intent, tokens, f"completed:{dur}")
                 except Exception as e:
                     dur = int((time.monotonic() - t0_c) * 1000)
