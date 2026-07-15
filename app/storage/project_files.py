@@ -603,6 +603,53 @@ def load_scene_summaries(project_dir: Path, active_only: bool = True) -> list:
 _SCENE_PROSE_VERSION_RE = re.compile(r"\.v(\d+)$")
 
 
+def save_scene_writer_draft(project_dir: Path, scene_id: str, prose: str) -> None:
+    """Atomically save completed Writer prose before post-processing starts."""
+    chapter_id = _find_chapter_for_scene(project_dir, scene_id)
+    if chapter_id is None:
+        raise ValueError(f"Scene {scene_id} was not found in any chapter outline")
+    chapter_dir = project_dir / "scenes" / chapter_id
+    chapter_dir.mkdir(parents=True, exist_ok=True)
+    filepath = chapter_dir / f"{scene_id}.writer-draft.md"
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=chapter_dir,
+            prefix=f".{scene_id}.writer-draft.",
+            suffix=".tmp",
+            delete=False,
+        ) as fh:
+            temp_path = Path(fh.name)
+            fh.write(prose)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(temp_path, filepath)
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+
+
+def load_scene_writer_draft(project_dir: Path, scene_id: str) -> str:
+    chapter_id = _find_chapter_for_scene(project_dir, scene_id)
+    if chapter_id is None:
+        return ""
+    filepath = project_dir / "scenes" / chapter_id / f"{scene_id}.writer-draft.md"
+    if not filepath.exists():
+        return ""
+    return filepath.read_text(encoding="utf-8")
+
+
+def discard_scene_writer_draft(project_dir: Path, scene_id: str) -> None:
+    chapter_id = _find_chapter_for_scene(project_dir, scene_id)
+    if chapter_id is None:
+        return
+    (project_dir / "scenes" / chapter_id / f"{scene_id}.writer-draft.md").unlink(
+        missing_ok=True
+    )
+
+
 def save_scene_prose(project_dir: Path, chapter_id: str, scene_id: str, prose: str) -> None:
     """Write scene prose so the next load returns this content.
 
@@ -793,7 +840,7 @@ def load_scene_prose(project_dir: Path, chapter_id: str, scene_id: str) -> str:
 
 
 def save_scene_generation_record(project_dir: Path, record) -> None:
-    """Write one versioned SceneGenerationRecord."""
+    """Atomically write one versioned SceneGenerationRecord."""
     chapter_id = _find_chapter_for_scene(project_dir, record.scene_id)
     if chapter_id is None:
         raise ValueError(
@@ -803,8 +850,30 @@ def save_scene_generation_record(project_dir: Path, record) -> None:
     chapter_dir = project_dir / "scenes" / chapter_id
     chapter_dir.mkdir(parents=True, exist_ok=True)
     filepath = chapter_dir / f"{record.scene_id}.v{record.revision_number}.gen.json"
-    with open(filepath, "w", encoding="utf-8") as fh:
-        json.dump(record.model_dump(mode="json"), fh, ensure_ascii=False, indent=2, default=str)
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=chapter_dir,
+            prefix=f".{record.scene_id}.v{record.revision_number}.gen.",
+            suffix=".tmp",
+            delete=False,
+        ) as fh:
+            temp_path = Path(fh.name)
+            json.dump(
+                record.model_dump(mode="json"),
+                fh,
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(temp_path, filepath)
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
 
 
 def load_scene_generation_record(
@@ -823,6 +892,12 @@ def load_scene_generation_record(
     for chapter_dir in scenes_dir.iterdir():
         if not chapter_dir.is_dir():
             continue
+        if version.startswith("v") and version[1:].isdigit():
+            filepath = chapter_dir / f"{scene_id}.{version}.gen.json"
+            if not filepath.exists():
+                continue
+            with open(filepath, "r", encoding="utf-8") as fh:
+                return SceneGenerationRecord.model_validate(json.load(fh))
         paths = list(chapter_dir.glob(f"{scene_id}.v*.gen.json"))
         legacy = chapter_dir / f"{scene_id}.gen.json"
         if legacy.exists():
@@ -835,9 +910,6 @@ def load_scene_generation_record(
             continue
         if revision_id:
             return next((record for record in records if record.revision_id == revision_id), None)
-        if version.startswith("v") and version[1:].isdigit():
-            number = int(version[1:])
-            return next((record for record in records if record.revision_number == number), None)
         marker = load_scene_active_marker(project_dir, chapter_dir.name, scene_id)
         active_revision = marker.get("revision_id", "")
         if active_revision:

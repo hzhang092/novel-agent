@@ -269,10 +269,13 @@ class ScenePipeline:
                 tokens_collected.append(token)
                 yield (token, None)
 
+            result.prose = "".join(tokens_collected)
+            from app.storage.project_files import save_scene_writer_draft
+
+            save_scene_writer_draft(project_dir, scene_id, result.prose)
             writer_trace.status = "completed"
             writer_trace.duration_ms = int((time.monotonic() - t_writer) * 1000)
             writer_trace.token_count = len(tokens_collected)
-            result.prose = "".join(tokens_collected)
         except Exception as e:
             writer_trace.status = "failed"
             writer_trace.error_message = str(e)

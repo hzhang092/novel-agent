@@ -160,6 +160,39 @@ async def test_full_pipeline_generates_prose(
 
 
 @pytest.mark.asyncio
+async def test_writer_prose_is_saved_before_reviewer_finishes(
+    project_dir, mock_planner, mock_char_agent, mock_writer
+):
+    from app.storage.project_files import load_scene_writer_draft
+
+    observed_during_review = False
+
+    class InspectingReviewer(MockProvider):
+        async def generate_structured(self, *args, **kwargs):
+            nonlocal observed_during_review
+            observed_during_review = (
+                load_scene_writer_draft(project_dir, "scene-1") == "测试正文内容"
+            )
+            raise RuntimeError("review crashed")
+
+    result = None
+    async for _token, generated in ScenePipeline().generate_stream(
+        project_dir,
+        "scene-1",
+        mock_planner,
+        mock_char_agent,
+        mock_writer,
+        InspectingReviewer(),
+    ):
+        result = generated or result
+
+    assert result is not None
+    assert result.review is None
+    assert observed_during_review is True
+    assert load_scene_writer_draft(project_dir, "scene-1") == "测试正文内容"
+
+
+@pytest.mark.asyncio
 async def test_parallel_character_agents_keep_their_own_usage(
     project_dir, mock_planner, mock_char_agent, mock_writer, mock_reviewer, monkeypatch
 ):

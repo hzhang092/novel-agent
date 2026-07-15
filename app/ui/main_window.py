@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import os
 from pathlib import Path
+import tempfile
 
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QAction, QDesktopServices
@@ -494,12 +496,77 @@ class MainWindow(QMainWindow):
         self, workspace: SceneWorkspaceView, chapter_id: str, scene_id: str
     ) -> None:
         """Load active scene prose and update the version selector."""
-        from app.storage.project_files import load_scene_prose_status
+        from app.storage.project_files import (
+            discard_scene_writer_draft,
+            load_scene_generation_record,
+            load_scene_prose_status,
+            load_scene_prose_version,
+            load_scene_writer_draft,
+            list_scene_prose_versions,
+        )
+
+        recovered_prose = load_scene_writer_draft(self._current_project_dir, scene_id)
+        if recovered_prose:
+            recovered_record = None
+            partial_version = None
+            for candidate_version in list_scene_prose_versions(
+                self._current_project_dir, chapter_id, scene_id
+            ):
+                if candidate_version == "legacy":
+                    continue
+                try:
+                    candidate_record = load_scene_generation_record(
+                        self._current_project_dir,
+                        scene_id,
+                        version=candidate_version,
+                    )
+                except ValueError:
+                    candidate_record = None
+                if (
+                    candidate_record is not None
+                    and candidate_record.status == "draft"
+                    and candidate_record.draft_text == recovered_prose
+                ):
+                    recovered_record = candidate_record
+                    break
+                if candidate_record is None and load_scene_prose_version(
+                    self._current_project_dir,
+                    chapter_id,
+                    scene_id,
+                    candidate_version,
+                ) == recovered_prose:
+                    partial_version = int(candidate_version[1:])
+                    break
+            if recovered_record is None:
+                from app.pipeline.pipeline import GenerationResult
+
+                recovered_record = self._save_generated_scene(
+                    GenerationResult(scene_id=scene_id, prose=recovered_prose),
+                    version=partial_version,
+                )
+            else:
+                discard_scene_writer_draft(self._current_project_dir, scene_id)
+                self._refresh_prose_versions(
+                    chapter_id, scene_id, f"v{recovered_record.revision_number}"
+                )
+                workspace.editor.setPlainText(recovered_prose)
+            if recovered_record is not None:
+                QMessageBox.information(
+                    self,
+                    "已恢复未完成草稿",
+                    f"写作完成后的正文已恢复为 v{recovered_record.revision_number} 草稿；审查尚未完成。",
+                )
+                return
 
         prose, version, active_missing = load_scene_prose_status(
             self._current_project_dir, chapter_id, scene_id
         )
-        self._refresh_prose_versions(chapter_id, scene_id, version)
+        versions = self._refresh_prose_versions(chapter_id, scene_id, version)
+        if version is None and not active_missing and versions:
+            version = versions[0]
+            prose = load_scene_prose_version(
+                self._current_project_dir, chapter_id, scene_id, version
+            )
         workspace.editor.setPlainText(prose)
         if active_missing:
             QMessageBox.warning(
@@ -796,7 +863,7 @@ class MainWindow(QMainWindow):
 
         asyncio.ensure_future(_run())
 
-    def _save_generated_scene(self, result):
+    def _save_generated_scene(self, result, version: int | None = None):
         """Save generated prose and artifacts as a non-canonical draft."""
         if self._current_project_dir is None:
             return None
@@ -806,6 +873,7 @@ class MainWindow(QMainWindow):
             return None
 
         from app.storage.project_files import (
+            discard_scene_writer_draft,
             save_scene_generation_record,
         )
         from app.storage.models import SceneGenerationRecord
@@ -813,7 +881,10 @@ class MainWindow(QMainWindow):
             find_scene_position,
         )
 
-        version = _get_next_version(self._current_project_dir, chapter_id, result.scene_id)
+        if version is None:
+            version = _get_next_version(
+                self._current_project_dir, chapter_id, result.scene_id
+            )
         _save_versioned_prose(
             self._current_project_dir, chapter_id, result.scene_id, result.prose, version
         )
@@ -853,6 +924,7 @@ class MainWindow(QMainWindow):
             state_changes_raw=getattr(result, 'state_changes', []),
         )
         save_scene_generation_record(self._current_project_dir, record)
+        discard_scene_writer_draft(self._current_project_dir, result.scene_id)
         workspace = self.views.get("workspace")
         if isinstance(workspace, SceneWorkspaceView):
             workspace.editor.setPlainText(result.prose)
@@ -1091,9 +1163,25 @@ def _get_next_version(project_dir: Path, chapter_id: str, scene_id: str) -> int:
 def _save_versioned_prose(
     project_dir: Path, chapter_id: str, scene_id: str, prose: str, version: int
 ) -> None:
-    """Write scene prose to scenes/<chapter>/<scene_id>.v{version}.md."""
+    """Atomically write scene prose to its versioned Markdown file."""
     chapter_dir = project_dir / "scenes" / chapter_id
     chapter_dir.mkdir(parents=True, exist_ok=True)
     filepath = chapter_dir / f"{scene_id}.v{version}.md"
-    with open(filepath, "w", encoding="utf-8") as fh:
-        fh.write(prose)
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=chapter_dir,
+            prefix=f".{scene_id}.v{version}.",
+            suffix=".tmp",
+            delete=False,
+        ) as fh:
+            temp_path = Path(fh.name)
+            fh.write(prose)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(temp_path, filepath)
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
