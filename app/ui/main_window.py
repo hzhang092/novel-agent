@@ -689,16 +689,16 @@ class MainWindow(QMainWindow):
         import asyncio
 
         plan_loop = asyncio.get_event_loop()
-        plan_decision: asyncio.Future[bool] | None = None
+        plan_decision: asyncio.Future[tuple[bool, dict | None]] | None = None
 
-        def _on_plan_approved():
+        def _on_plan_approved(edited_plan: dict):
             if plan_decision is not None and not plan_decision.done():
-                plan_decision.set_result(True)
+                plan_decision.set_result((True, edited_plan))
                 workspace.planner_checkpoint.hide_plan()
 
         def _on_plan_rejected():
             if plan_decision is not None and not plan_decision.done():
-                plan_decision.set_result(False)
+                plan_decision.set_result((False, None))
                 workspace.planner_checkpoint.hide_plan()
                 workspace.set_generating(False)
                 self._generation_in_progress = False
@@ -721,8 +721,12 @@ class MainWindow(QMainWindow):
             plan_decision = plan_loop.create_future()
             workspace.planner_checkpoint.show_plan(plan.model_dump(mode="json"))
             try:
-                result = await plan_decision
-                return result
+                approved, edited_plan = await plan_decision
+                if approved and edited_plan is not None:
+                    validated = type(plan).model_validate(edited_plan)
+                    for field, value in validated.model_dump().items():
+                        setattr(plan, field, value)
+                return approved
             finally:
                 plan_decision = None
 

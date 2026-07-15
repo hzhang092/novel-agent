@@ -33,6 +33,8 @@ class FactApprovalPanel(QWidget):
         self._state_changes: list[dict] = []
         self._fact_checkboxes: list[QCheckBox] = []
         self._change_checkboxes: list[QCheckBox] = []
+        self._change_locations: list[tuple[int, int | None]] = []
+        self._change_editors: list[QLineEdit] = []
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -144,6 +146,8 @@ class FactApprovalPanel(QWidget):
         self._source_scene_label.show()
         self._fact_checkboxes.clear()
         self._change_checkboxes.clear()
+        self._change_locations.clear()
+        self._change_editors.clear()
         self._populate()
         self.show()
 
@@ -157,6 +161,8 @@ class FactApprovalPanel(QWidget):
         self._source_scene_label.hide()
         self._fact_checkboxes.clear()
         self._change_checkboxes.clear()
+        self._change_locations.clear()
+        self._change_editors.clear()
         self._clear_content()
         self.hide()
 
@@ -169,6 +175,10 @@ class FactApprovalPanel(QWidget):
 
     def _populate(self) -> None:
         self._clear_content()
+        self._fact_checkboxes.clear()
+        self._change_checkboxes.clear()
+        self._change_locations.clear()
+        self._change_editors.clear()
 
         # Facts section
         if not self._facts and not self._state_changes:
@@ -253,71 +263,66 @@ class FactApprovalPanel(QWidget):
 
     def _make_change_row(self, index: int, change: dict) -> QWidget:
         row = QWidget()
-        layout = QHBoxLayout(row)
+        layout = QVBoxLayout(row)
         layout.setContentsMargins(4, 2, 4, 2)
-
-        cb = QCheckBox()
-        cb.setChecked(True)
-        self._change_checkboxes.append(cb)
-        layout.addWidget(cb)
 
         name = change.get("character_name", "未知")
         name_label = QLabel(f"<b>{name}</b>")
         name_label.setStyleSheet("color: #e67e22;")
         layout.addWidget(name_label)
 
-        # Build summary from the new 'changes' list
         changes_list = change.get("changes", [])
-        summaries: list[str] = []
-        for c in changes_list:
-            t = c.get("type", "")
-            if t == "set_field":
-                summaries.append(f"{c.get('field','')}→{c.get('value','')}")
-            elif t == "relationship_change":
-                summaries.append(f"关系:{c.get('target_character_id','')}→{c.get('relationship','')}")
-            elif t == "knowledge_add":
-                summaries.append("+知识")
-            elif t == "knowledge_remove":
-                summaries.append("-知识")
-            elif t == "secret_add":
-                summaries.append("+秘密")
-            elif t == "secret_remove":
-                summaries.append("-秘密")
+        for change_index, item in enumerate(changes_list):
+            change_row = QWidget()
+            change_layout = QHBoxLayout(change_row)
+            change_layout.setContentsMargins(16, 0, 0, 0)
+            cb = QCheckBox()
+            cb.setChecked(True)
+            self._change_checkboxes.append(cb)
+            self._change_locations.append((index, change_index))
+            change_layout.addWidget(cb)
 
-        # Fallback: check for old format flat fields
-        if not summaries:
-            if change.get("emotion"):
-                summaries.append(f"情绪→{change['emotion']}")
-            if change.get("goal"):
-                summaries.append(f"目标→{change['goal']}")
-            if change.get("location"):
-                summaries.append(f"位置→{change['location']}")
-            if change.get("status"):
-                summaries.append(f"状态→{change['status']}")
+            change_type = item.get("type", "")
+            value_key = "fact"
+            label = change_type
+            if change_type == "set_field":
+                value_key = "value"
+                label = item.get("field", "")
+            elif change_type == "relationship_change":
+                value_key = "relationship"
+                label = f"关系 {item.get('target_character_id', '')}"
+            elif change_type == "knowledge_add":
+                label = "+知识"
+            elif change_type == "knowledge_remove":
+                label = "-知识"
+            elif change_type == "secret_add":
+                label = "+秘密"
+            elif change_type == "secret_remove":
+                label = "-秘密"
+            change_layout.addWidget(QLabel(label))
 
-        summary = "；".join(summaries) if summaries else "无变化"
-        summary_label = QLabel(summary)
-        summary_label.setStyleSheet("color: #ccc; font-size: 11px;")
-        layout.addWidget(summary_label, stretch=1)
+            editor = QLineEdit(str(item.get(value_key, "")))
+            editor.textChanged.connect(
+                lambda text, proposal=index, change_no=change_index, key=value_key:
+                self._set_change_value(proposal, change_no, key, text)
+            )
+            self._change_editors.append(editor)
+            change_layout.addWidget(editor, stretch=1)
+            layout.addWidget(change_row)
 
-        # Tooltip with full details
-        tooltip_lines = []
-        for c in changes_list:
-            t = c.get("type", "")
-            if t == "set_field":
-                tooltip_lines.append(f"{c.get('field','')}: {c.get('value','')}")
-            elif t == "relationship_change":
-                tooltip_lines.append(f"关系 {c.get('target_character_id','')}: {c.get('relationship','')}")
-            elif t in ("knowledge_add", "knowledge_remove", "secret_add", "secret_remove"):
-                tooltip_lines.append(f"{t}: {c.get('fact','')}")
-        # Fallback: old format
-        if not tooltip_lines:
-            for k in ["emotion", "goal", "location", "status"]:
-                if change.get(k):
-                    tooltip_lines.append(f"{k}: {change[k]}")
-        row.setToolTip("\n".join(tooltip_lines))
+        if not changes_list:
+            cb = QCheckBox("批准旧格式状态变更")
+            cb.setChecked(True)
+            self._change_checkboxes.append(cb)
+            self._change_locations.append((index, None))
+            layout.addWidget(cb)
 
         return row
+
+    def _set_change_value(
+        self, proposal_index: int, change_index: int, key: str, value: str
+    ) -> None:
+        self._state_changes[proposal_index]["changes"][change_index][key] = value
 
     def _approve_all(self) -> None:
         for cb in self._fact_checkboxes + self._change_checkboxes:
@@ -345,11 +350,28 @@ class FactApprovalPanel(QWidget):
             for i, cb in enumerate(self._fact_checkboxes)
             if cb.isChecked()
         ]
-        approved_changes = [
-            self._state_changes[i]
-            for i, cb in enumerate(self._change_checkboxes)
-            if cb.isChecked()
-        ]
+        selected: dict[int, list[dict] | None] = {}
+        for (proposal_index, change_index), cb in zip(
+            self._change_locations, self._change_checkboxes
+        ):
+            if not cb.isChecked():
+                continue
+            if change_index is None:
+                selected[proposal_index] = None
+            elif proposal_index not in selected:
+                selected[proposal_index] = [
+                    self._state_changes[proposal_index]["changes"][change_index]
+                ]
+            elif selected[proposal_index] is not None:
+                selected[proposal_index].append(
+                    self._state_changes[proposal_index]["changes"][change_index]
+                )
+        approved_changes = []
+        for proposal_index, changes in selected.items():
+            proposal = self._state_changes[proposal_index]
+            approved_changes.append(
+                proposal if changes is None else {**proposal, "changes": changes}
+            )
         self.approval_batch_approved.emit(
             self._source_scene_id,
             self._source_revision_id,

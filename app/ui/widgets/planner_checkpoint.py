@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
     QFrame,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -21,7 +24,7 @@ class PlannerCheckpointWidget(QWidget):
     provides Approve / Regenerate buttons.
     """
 
-    approved = pyqtSignal()
+    approved = pyqtSignal(dict)
     rejected = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -50,15 +53,27 @@ class PlannerCheckpointWidget(QWidget):
         sep.setFrameShadow(QFrame.Shadow.Sunken)
         layout.addWidget(sep)
 
-        # Plan content (scrollable)
-        self._content_label = QLabel()
-        self._content_label.setWordWrap(True)
-        self._content_label.setTextFormat(Qt.TextFormat.RichText)
-        self._content_label.setStyleSheet("color: #ccc; font-size: 12px;")
+        # Editable plan content (scrollable)
+        content = QWidget()
+        form = QFormLayout(content)
+        self._scene_goal_edit = QLineEdit()
+        self._conflict_edit = QLineEdit()
+        self._emotional_arc_edit = QLineEdit()
+        self._ending_hook_edit = QLineEdit()
+        self._required_beats_edit = QPlainTextEdit()
+        self._continuity_constraints_edit = QPlainTextEdit()
+        self._required_beats_edit.setMaximumHeight(100)
+        self._continuity_constraints_edit.setMaximumHeight(80)
+        form.addRow("场景目标", self._scene_goal_edit)
+        form.addRow("核心冲突", self._conflict_edit)
+        form.addRow("剧情节拍（每行一项）", self._required_beats_edit)
+        form.addRow("情绪曲线", self._emotional_arc_edit)
+        form.addRow("断章钩子", self._ending_hook_edit)
+        form.addRow("连续性约束（每行一项）", self._continuity_constraints_edit)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setWidget(self._content_label)
+        scroll.setWidget(content)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setMaximumHeight(300)
         layout.addWidget(scroll)
@@ -90,8 +105,15 @@ class PlannerCheckpointWidget(QWidget):
 
     def show_plan(self, plan_dict: dict) -> None:
         """Display the plan and show the widget."""
-        self._plan = plan_dict
-        self._content_label.setText(_format_plan_html(plan_dict))
+        self._plan = dict(plan_dict)
+        self._scene_goal_edit.setText(plan_dict.get("scene_goal", ""))
+        self._conflict_edit.setText(plan_dict.get("conflict", ""))
+        self._emotional_arc_edit.setText(plan_dict.get("emotional_arc", ""))
+        self._ending_hook_edit.setText(plan_dict.get("ending_hook", ""))
+        self._required_beats_edit.setPlainText("\n".join(plan_dict.get("required_beats", [])))
+        self._continuity_constraints_edit.setPlainText(
+            "\n".join(plan_dict.get("continuity_constraints", []))
+        )
         self._approve_btn.setEnabled(True)
         self._reject_btn.setEnabled(True)
         self.show()
@@ -109,38 +131,23 @@ class PlannerCheckpointWidget(QWidget):
     def _on_approve(self) -> None:
         self._approve_btn.setEnabled(False)
         self._reject_btn.setEnabled(False)
-        self.approved.emit()
+        plan = dict(self._plan or {})
+        plan.update({
+            "scene_goal": self._scene_goal_edit.text(),
+            "conflict": self._conflict_edit.text(),
+            "emotional_arc": self._emotional_arc_edit.text(),
+            "ending_hook": self._ending_hook_edit.text(),
+            "required_beats": _nonempty_lines(self._required_beats_edit.toPlainText()),
+            "continuity_constraints": _nonempty_lines(
+                self._continuity_constraints_edit.toPlainText()
+            ),
+        })
+        self.approved.emit(plan)
 
     def _on_reject(self) -> None:
         self._approve_btn.setEnabled(False)
         self._reject_btn.setEnabled(False)
         self.rejected.emit()
 
-
-def _format_plan_html(plan: dict) -> str:
-    """Format a plan dict as simple HTML for display."""
-    parts = []
-
-    if plan.get("scene_goal"):
-        parts.append(f"<p><b>🎯 场景目标</b><br>{plan['scene_goal']}</p>")
-
-    if plan.get("conflict"):
-        parts.append(f"<p><b>⚔️ 核心冲突</b><br>{plan['conflict']}</p>")
-
-    beats = plan.get("required_beats", [])
-    if beats:
-        beats_html = "<br>".join(f"{i+1}. {b}" for i, b in enumerate(beats))
-        parts.append(f"<p><b>📋 剧情节拍</b><br>{beats_html}</p>")
-
-    if plan.get("emotional_arc"):
-        parts.append(f"<p><b>📈 情绪曲线</b><br>{plan['emotional_arc']}</p>")
-
-    if plan.get("ending_hook"):
-        parts.append(f"<p><b>🪝 断章钩子</b><br>{plan['ending_hook']}</p>")
-
-    constraints = plan.get("continuity_constraints", [])
-    if constraints:
-        cons_html = "<br>".join(f"• {c}" for c in constraints)
-        parts.append(f"<p><b>🔒 连续性约束</b><br>{cons_html}</p>")
-
-    return "".join(parts) if parts else "<p><i>规划为空</i></p>"
+def _nonempty_lines(text: str) -> list[str]:
+    return [line.strip() for line in text.splitlines() if line.strip()]
