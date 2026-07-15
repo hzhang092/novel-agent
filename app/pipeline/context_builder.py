@@ -35,6 +35,12 @@ class RetrievalEngine:
         scene = self._find_scene(project_dir, scene_id)
         scene_info = self._build_scene_info(project_dir, scene)
         characters, read_points = self._collect_characters(project_dir, scene)
+        from app.storage.timeline_repository import load_scene_positions
+
+        scene_orders = {
+            position.scene_id: position.scene_order
+            for position in load_scene_positions(project_dir)
+        }
 
         return {
             "scene_info": scene_info,
@@ -42,8 +48,12 @@ class RetrievalEngine:
             "characters": characters,
             "read_points": read_points,
             "outline_context": self._build_outline_context(project_dir, scene),
-            "recent_summaries": self._collect_recent_summaries(project_dir),
-            "canon_facts": self._collect_canon_facts(project_dir, scene_info),
+            "recent_summaries": self._collect_recent_summaries(
+                project_dir, scene_info, scene_orders
+            ),
+            "canon_facts": self._collect_canon_facts(
+                project_dir, scene_info, scene_orders
+            ),
             "style_guide": self._collect_style_guide(project_dir),
         }
 
@@ -177,17 +187,41 @@ class RetrievalEngine:
             "chapter_title": scene.get("chapter_title", ""),
         }
 
-    def _collect_recent_summaries(self, project_dir: Path) -> list[dict]:
+    def _collect_recent_summaries(
+        self,
+        project_dir: Path,
+        scene: dict | None,
+        scene_orders: dict[str, int],
+    ) -> list[dict]:
         from app.storage.project_files import load_scene_summaries
 
         summaries = load_scene_summaries(project_dir)
+        current_order = scene_orders.get((scene or {}).get("id", ""))
+        if current_order is not None:
+            summaries = [
+                summary for summary in summaries
+                if scene_orders.get(summary.scene_id, current_order) < current_order
+            ]
+            summaries.sort(key=lambda summary: scene_orders[summary.scene_id])
         recent = summaries[-self._max_summaries:]
         return [s.model_dump(mode="json") for s in recent]
 
-    def _collect_canon_facts(self, project_dir: Path, scene: dict | None) -> list[dict]:
+    def _collect_canon_facts(
+        self,
+        project_dir: Path,
+        scene: dict | None,
+        scene_orders: dict[str, int],
+    ) -> list[dict]:
         from app.storage.project_files import load_canon_facts
 
         facts = load_canon_facts(project_dir)
+        current_order = scene_orders.get((scene or {}).get("id", ""))
+        if current_order is not None:
+            facts = [
+                fact for fact in facts
+                if not fact.source_scene_id
+                or scene_orders.get(fact.source_scene_id, current_order) < current_order
+            ]
 
         # Build a keyword set from the scene outline
         scene_keywords = set()

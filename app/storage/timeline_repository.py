@@ -285,6 +285,11 @@ def find_scene_position(project_dir: Path, scene_id: str) -> ScenePosition | Non
     return _find_position(_scene_positions(project_dir), scene_id)
 
 
+def load_scene_positions(project_dir: Path) -> list[ScenePosition]:
+    """Return every outlined scene in story order."""
+    return _scene_positions(project_dir)
+
+
 def _scene_positions(project_dir: Path) -> list[ScenePosition]:
     positions: list[ScenePosition] = []
     scene_order = 0

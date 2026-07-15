@@ -222,8 +222,9 @@ def test_canon_facts_filtered_by_importance(tmp_path):
     ]
     save_canon_facts(proj_dir, facts)
 
+    source_scene = SceneOutline(id="s1", title="事实来源")
     scene = SceneOutline(title="测试")
-    chapter = ChapterOutline(title="第一章", scenes=[scene])
+    chapter = ChapterOutline(title="第一章", scenes=[source_scene, scene])
     volume = VolumeOutline(title="第一卷", chapters=[chapter])
     save_volume_outline(proj_dir, volume)
 
@@ -252,8 +253,9 @@ def test_canon_facts_matched_by_tag_relevance(tmp_path):
     ]
     save_canon_facts(proj_dir, facts)
 
+    source_scene = SceneOutline(id="s1", title="事实来源")
     scene = SceneOutline(title="测试", location="落云宗广场")
-    chapter = ChapterOutline(title="第一章", scenes=[scene])
+    chapter = ChapterOutline(title="第一章", scenes=[source_scene, scene])
     volume = VolumeOutline(title="第一卷", chapters=[chapter])
     save_volume_outline(proj_dir, volume)
 
@@ -284,8 +286,14 @@ def test_recent_summaries_capped_by_max_summaries(tmp_path):
     ]
     save_scene_summaries(proj_dir, summaries)
 
-    scene = SceneOutline(title="测试")
-    chapter = ChapterOutline(title="第一章", scenes=[scene])
+    scene = SceneOutline(id="s10", title="测试")
+    chapter = ChapterOutline(
+        title="第一章",
+        scenes=[
+            *[SceneOutline(id=f"s{i}", title=f"第{i}场") for i in range(10)],
+            scene,
+        ],
+    )
     volume = VolumeOutline(title="第一卷", chapters=[chapter])
     save_volume_outline(proj_dir, volume)
 
@@ -295,6 +303,46 @@ def test_recent_summaries_capped_by_max_summaries(tmp_path):
     assert len(context["recent_summaries"]) == 3
     summary_ids = {s["scene_id"] for s in context["recent_summaries"]}
     assert summary_ids == {"s7", "s8", "s9"}
+
+
+def test_summaries_and_facts_only_use_prior_story_scenes(tmp_path):
+    from app.pipeline.context_builder import RetrievalEngine
+    from app.storage.models import CanonFact, ChapterOutline, SceneOutline, SceneSummary, VolumeOutline
+    from app.storage.project_files import create_project, save_canon_facts, save_scene_summaries, save_volume_outline
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    scenes = [SceneOutline(id=f"scene-{i}", title=f"第{i}场") for i in range(1, 5)]
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(
+            title="第一卷",
+            chapters=[ChapterOutline(id="chapter-1", title="第一章", scenes=scenes)],
+        ),
+    )
+    save_scene_summaries(
+        proj_dir,
+        [
+            SceneSummary(scene_id="scene-4", chapter_id="chapter-1", summary="未来摘要"),
+            SceneSummary(scene_id="scene-3", chapter_id="chapter-1", summary="当前场摘要"),
+            SceneSummary(scene_id="missing-scene", chapter_id="chapter-1", summary="未知来源摘要"),
+            SceneSummary(scene_id="scene-2", chapter_id="chapter-1", summary="第二场摘要"),
+            SceneSummary(scene_id="scene-1", chapter_id="chapter-1", summary="第一场摘要"),
+        ],
+    )
+    save_canon_facts(
+        proj_dir,
+        [
+            CanonFact(description="第一场事实", category="plot", source_scene_id="scene-1", importance=5),
+            CanonFact(description="当前场事实", category="plot", source_scene_id="scene-3", importance=5),
+            CanonFact(description="第四场事实", category="plot", source_scene_id="scene-4", importance=5),
+            CanonFact(description="未知来源事实", category="plot", source_scene_id="missing-scene", importance=5),
+        ],
+    )
+
+    context = RetrievalEngine(max_summaries=2).assemble(proj_dir, scene_id="scene-3")
+
+    assert [item["scene_id"] for item in context["recent_summaries"]] == ["scene-1", "scene-2"]
+    assert [item["description"] for item in context["canon_facts"]] == ["第一场事实"]
 
 
 def test_retrieval_engine_is_deterministic(tmp_path):
@@ -328,8 +376,9 @@ def test_retrieval_engine_is_deterministic(tmp_path):
     ]
     save_scene_summaries(proj_dir, summaries)
 
+    source_scene = SceneOutline(id="s0", title="事实来源")
     scene = SceneOutline(title="测试场景", participating_character_ids=["char-linxuan"])
-    chapter = ChapterOutline(title="第一章", scenes=[scene])
+    chapter = ChapterOutline(title="第一章", scenes=[source_scene, scene])
     volume = VolumeOutline(title="第一卷", chapters=[chapter])
     save_volume_outline(proj_dir, volume)
 
