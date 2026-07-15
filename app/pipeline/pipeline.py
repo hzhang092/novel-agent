@@ -337,13 +337,12 @@ class ScenePipeline:
         fact_provider: LLMProvider,
         state_provider: LLMProvider,
         on_trace: TraceCallback | None = None,
-        max_character_agents: int = 4,
     ) -> GenerationResult:
         """Extract memory proposals from a reviewed or explicitly overridden draft."""
         if not result.prose:
             return result
         context = self.assemble_context(project_dir, result.scene_id)
-        major_chars = context.get("characters", {}).get("major", [])[:max_character_agents]
+        major_chars = context.get("characters", {}).get("major", [])
         fact_trace = AgentTraceEntry(agent_name="Fact Extractor", stage="fact_extractor", status="running")
         state_trace = AgentTraceEntry(agent_name="State Updater", stage="state_updater", status="running")
         result.trace.extend([fact_trace, state_trace])

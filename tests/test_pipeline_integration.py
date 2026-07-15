@@ -290,6 +290,43 @@ async def test_analyze_draft_uses_injected_fact_and_state_providers(
 
 
 @pytest.mark.asyncio
+async def test_analyze_draft_updates_all_major_characters(monkeypatch):
+    from app.pipeline.pipeline import GenerationResult
+
+    pipeline = ScenePipeline()
+    major_characters = [
+        {"core": {"id": f"char-{number}", "name": f"角色{number}"}, "state": {}}
+        for number in range(5)
+    ]
+    monkeypatch.setattr(
+        pipeline,
+        "assemble_context",
+        lambda *args: {"characters": {"major": major_characters}},
+    )
+
+    async def generate_facts(*args):
+        return []
+
+    seen_character_ids = []
+
+    async def generate_state_changes(provider, context, prose, scene_id, characters):
+        seen_character_ids.extend(character["core"]["id"] for character in characters)
+        return []
+
+    monkeypatch.setattr(pipeline._fact_extractor, "generate", generate_facts)
+    monkeypatch.setattr(pipeline._state_updater, "generate", generate_state_changes)
+
+    await pipeline.analyze_draft(
+        Path("."),
+        GenerationResult(scene_id="scene-1", prose="正文"),
+        fact_provider=object(),
+        state_provider=object(),
+    )
+
+    assert seen_character_ids == [f"char-{number}" for number in range(5)]
+
+
+@pytest.mark.asyncio
 async def test_failed_review_does_not_analyze_memory(
     project_dir, mock_planner, mock_char_agent, mock_writer, monkeypatch
 ):
