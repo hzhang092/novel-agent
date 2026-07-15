@@ -715,29 +715,6 @@ def get_active_scene_prose_version(
     return load_scene_active_marker(project_dir, chapter_id, scene_id).get("version")
 
 
-def _latest_scene_prose_path(project_dir: Path, chapter_id: str, scene_id: str) -> Path | None:
-    """Find the latest versioned prose path, falling back to legacy unversioned prose."""
-    chapter_dir = project_dir / "scenes" / chapter_id
-    if not chapter_dir.exists():
-        return None
-
-    latest_version = _latest_scene_prose_version(chapter_dir, scene_id)
-    if latest_version is not None:
-        return chapter_dir / f"{scene_id}.v{latest_version}.md"
-
-    legacy_path = chapter_dir / f"{scene_id}.md"
-    if legacy_path.exists():
-        return legacy_path
-    return None
-
-
-def _scene_prose_version_from_path(scene_id: str, path: Path) -> str:
-    if path.name == f"{scene_id}.md":
-        return "legacy"
-    version = _extract_scene_prose_version(path)
-    return f"v{version}" if version is not None else ""
-
-
 def load_scene_prose_status(
     project_dir: Path, chapter_id: str, scene_id: str
 ) -> tuple[str, str | None, bool]:
@@ -754,21 +731,20 @@ def load_scene_prose_status(
         with open(active_path, "r", encoding="utf-8") as fh:
             return fh.read(), active, False
 
-    filepath = _latest_scene_prose_path(project_dir, chapter_id, scene_id)
-    if filepath is None:
-        return "", None, active_marker_exists
-    fallback_version = _scene_prose_version_from_path(scene_id, filepath)
-    fallback_record = load_scene_generation_record(
-        project_dir, scene_id, version=fallback_version
-    )
-    if fallback_record is not None and fallback_record.status == "draft":
-        return "", None, active_marker_exists
-    with open(filepath, "r", encoding="utf-8") as fh:
-        return (
-            fh.read(),
-            fallback_version,
-            active_marker_exists,
-        )
+    for fallback_version in list_scene_prose_versions(
+        project_dir, chapter_id, scene_id
+    ):
+        if fallback_version != "legacy":
+            fallback_record = load_scene_generation_record(
+                project_dir, scene_id, version=fallback_version
+            )
+            if fallback_record is not None and fallback_record.status == "draft":
+                continue
+        filepath = _scene_prose_version_path(chapter_dir, scene_id, fallback_version)
+        if filepath is not None:
+            with open(filepath, "r", encoding="utf-8") as fh:
+                return fh.read(), fallback_version, active_marker_exists
+    return "", None, active_marker_exists
 
 
 def load_scene_prose(project_dir: Path, chapter_id: str, scene_id: str) -> str:

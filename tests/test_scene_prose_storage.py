@@ -62,6 +62,43 @@ def test_load_scene_prose_falls_back_to_legacy_file(tmp_path):
     assert loaded == "legacy"
 
 
+def test_load_scene_prose_skips_unpublished_draft(tmp_path):
+    from app.storage.models import ChapterOutline, SceneOutline, VolumeOutline
+    from app.storage.project_files import (
+        load_scene_prose,
+        save_scene_generation_record,
+        save_volume_outline,
+    )
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(
+            id="vol-1",
+            title="第一卷",
+            chapters=[
+                ChapterOutline(
+                    id="ch-1",
+                    title="第一章",
+                    scenes=[SceneOutline(id="scene-1", title="第一场")],
+                )
+            ],
+        ),
+    )
+    chapter_dir = proj_dir / "scenes" / "ch-1"
+    chapter_dir.mkdir(parents=True)
+    (chapter_dir / "scene-1.md").write_text("accepted", encoding="utf-8")
+    (chapter_dir / "scene-1.v1.md").write_text("draft", encoding="utf-8")
+    save_scene_generation_record(
+        proj_dir,
+        SceneGenerationRecord(
+            scene_id="scene-1", revision_number=1, status="draft"
+        ),
+    )
+
+    assert load_scene_prose(proj_dir, "ch-1", "scene-1") == "accepted"
+
+
 def test_load_scene_prose_ignores_malformed_versions(tmp_path):
     """Malformed v-suffix files should not beat valid prose files."""
     from app.storage.project_files import load_scene_prose
