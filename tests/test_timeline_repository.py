@@ -887,3 +887,97 @@ def test_recovery_finishes_publication_after_pointer_swap(tmp_path, monkeypatch)
         proj_dir, "scene-1", revision_id="old"
     ).status == "superseded"
     assert not (proj_dir / ".publish.pending.json").exists()
+
+
+def test_publish_replaces_legacy_unscoped_memory(tmp_path):
+    from app.storage.timeline_repository import (
+        load_character_state_as_of_scene,
+        publish_scene_revision,
+    )
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(id="hero", name="林轩", tier="major"),
+            state=CharacterState(character_id="hero"),
+        ),
+    )
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(
+            id="vol-1",
+            title="第一卷",
+            chapters=[
+                ChapterOutline(
+                    id="ch-1",
+                    title="第一章",
+                    scenes=[
+                        SceneOutline(id="scene-1", title="第一场"),
+                        SceneOutline(id="scene-2", title="第二场"),
+                    ],
+                )
+            ],
+        ),
+    )
+    save_scene_generation_record(
+        proj_dir,
+        SceneGenerationRecord(
+            scene_id="scene-1",
+            revision_id="old",
+            revision_number=1,
+            status="current",
+        ),
+    )
+    save_scene_generation_record(
+        proj_dir,
+        SceneGenerationRecord(
+            scene_id="scene-1",
+            revision_id="new",
+            revision_number=2,
+            status="draft",
+            review={"overall_pass": True},
+        ),
+    )
+    save_canon_facts(
+        proj_dir,
+        [CanonFact(description="old fact", category="plot", source_scene_id="scene-1")],
+    )
+    append_events(
+        proj_dir / "characters" / "hero",
+        [
+            CharacterStateEvent(
+                event_id=2,
+                scene_id="scene-1",
+                scene_order=1,
+                character_id="hero",
+                changes=[
+                    CharacterStoredChange(
+                        type="set_field", field="goal", value="old goal"
+                    )
+                ],
+            )
+        ],
+    )
+
+    publish_scene_revision(
+        proj_dir,
+        "scene-1",
+        "new",
+        [{"description": "new fact", "category": "plot"}],
+        [],
+    )
+
+    assert get_active_scene_revision_id(proj_dir, "scene-1") == "new"
+    assert [fact.description for fact in load_canon_facts(proj_dir)] == ["new fact"]
+    all_facts = load_canon_facts(proj_dir, active_only=False)
+    assert {
+        fact.description: fact.source_scene_revision_id for fact in all_facts
+    } == {"old fact": "old", "new fact": "new"}
+    states, _ = load_character_state_as_of_scene(proj_dir, "scene-2", ["hero"])
+    assert states["hero"].goal == ""
+    assert next(
+        event
+        for event in load_events(proj_dir / "characters" / "hero")
+        if event.scene_id == "scene-1"
+    ).scene_revision_id == "old"

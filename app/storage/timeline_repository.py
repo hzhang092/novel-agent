@@ -418,24 +418,52 @@ def _remove_revision_events(project_dir: Path, scene_id: str, revision_id: str) 
         ]
         if len(kept) == len(events):
             continue
-        events_file = char_dir / "events.jsonl"
-        temp_path: Path | None = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w", encoding="utf-8", dir=char_dir, delete=False
-            ) as fh:
-                temp_path = Path(fh.name)
-                for event in kept:
-                    fh.write(
-                        json.dumps(event.model_dump(mode="json"), ensure_ascii=False)
-                        + "\n"
-                    )
-                fh.flush()
-                os.fsync(fh.fileno())
-            os.replace(temp_path, events_file)
-        finally:
-            if temp_path is not None:
-                temp_path.unlink(missing_ok=True)
+        _save_events(char_dir, kept)
+
+
+def _save_events(char_dir: Path, events: list[CharacterStateEvent]) -> None:
+    events_file = char_dir / "events.jsonl"
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=char_dir, delete=False
+        ) as fh:
+            temp_path = Path(fh.name)
+            for event in events:
+                fh.write(
+                    json.dumps(event.model_dump(mode="json"), ensure_ascii=False)
+                    + "\n"
+                )
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(temp_path, events_file)
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+
+
+def _scope_legacy_scene_memory(
+    project_dir: Path, scene_id: str, revision_id: str
+) -> None:
+    facts = load_canon_facts(project_dir, active_only=False)
+    changed = False
+    for fact in facts:
+        if fact.source_scene_id == scene_id and not fact.source_scene_revision_id:
+            fact.source_scene_revision_id = revision_id
+            changed = True
+    if changed:
+        save_canon_facts(project_dir, facts)
+
+    for character_id in list_character_ids(project_dir):
+        char_dir = project_dir / "characters" / character_id
+        events = load_events(char_dir)
+        changed = False
+        for event in events:
+            if event.scene_id == scene_id and not event.scene_revision_id:
+                event.scene_revision_id = revision_id
+                changed = True
+        if changed:
+            _save_events(char_dir, events)
 
 
 def _revision_events(
@@ -526,6 +554,10 @@ def publish_scene_revision(
             StateChangeProposal.model_validate(proposal)
             for proposal in approved_state_changes
         ]
+
+    if active_revision_id and active_revision_id != revision_id:
+        _scope_legacy_scene_memory(project_dir, scene_id, active_revision_id)
+    if record.published_at is None:
         record.approved_facts = approved_facts
         record.approved_state_change_proposals = approved_state_changes
         save_scene_generation_record(project_dir, record)

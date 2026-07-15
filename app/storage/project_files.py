@@ -820,6 +820,9 @@ def load_scene_generation_record(
             active = next((record for record in records if record.revision_number == number), None)
             if active is not None:
                 return active
+        current = [record for record in records if record.status == "current"]
+        if current:
+            return max(current, key=lambda record: record.revision_number)
         return max(records, key=lambda record: record.revision_number)
     return None
 
