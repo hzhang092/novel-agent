@@ -678,6 +678,150 @@ def test_publish_validates_complete_batch_before_writing(tmp_path):
     assert unchanged.approved_state_change_proposals == []
 
 
+def test_partial_event_staging_is_invisible_and_retryable(tmp_path, monkeypatch):
+    import app.storage.timeline_repository as timeline
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    for character_id in ("hero", "ally"):
+        save_character(
+            proj_dir,
+            Character(
+                core=CharacterCore(id=character_id, name=character_id, tier="major"),
+                state=CharacterState(character_id=character_id),
+            ),
+        )
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(
+            id="vol-1",
+            title="第一卷",
+            chapters=[
+                ChapterOutline(
+                    id="ch-1",
+                    title="第一章",
+                    scenes=[
+                        SceneOutline(id="scene-1", title="第一场"),
+                        SceneOutline(id="scene-2", title="第二场"),
+                    ],
+                )
+            ],
+        ),
+    )
+    save_scene_generation_record(
+        proj_dir,
+        SceneGenerationRecord(
+            scene_id="scene-1",
+            revision_id="old",
+            revision_number=1,
+            status="current",
+            published_at="2026-01-01T00:00:00Z",
+        ),
+    )
+    save_scene_generation_record(
+        proj_dir,
+        SceneGenerationRecord(
+            scene_id="scene-1",
+            revision_id="new",
+            revision_number=2,
+            status="draft",
+            review={"overall_pass": True},
+        ),
+    )
+    set_active_scene_prose_version(proj_dir, "ch-1", "scene-1", "v1", "old")
+    save_canon_facts(
+        proj_dir,
+        [
+            CanonFact(
+                description="old fact",
+                category="plot",
+                source_scene_id="scene-1",
+                source_scene_revision_id="old",
+            )
+        ],
+    )
+    for character_id in ("hero", "ally"):
+        append_events(
+            proj_dir / "characters" / character_id,
+            [
+                CharacterStateEvent(
+                    event_id=2,
+                    scene_id="scene-1",
+                    scene_revision_id="old",
+                    scene_order=1,
+                    character_id=character_id,
+                    changes=[
+                        CharacterStoredChange(
+                            type="set_field", field="goal", value="old"
+                        )
+                    ],
+                )
+            ],
+        )
+    approved = [
+        StateChangeProposal(
+            character_id=character_id,
+            changes=[SetFieldChange(type="set_field", field="goal", value="changed")],
+        ).model_dump(mode="json")
+        for character_id in ("hero", "ally")
+    ]
+    append = timeline.append_events
+    calls = 0
+
+    def fail_second_append(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("disk full")
+        return append(*args, **kwargs)
+
+    monkeypatch.setattr(timeline, "append_events", fail_second_append)
+    with pytest.raises(OSError, match="disk full"):
+        timeline.publish_scene_revision(
+            proj_dir,
+            "scene-1",
+            "new",
+            [{"description": "new fact", "category": "plot"}],
+            approved,
+        )
+
+    assert get_active_scene_revision_id(proj_dir, "scene-1") == "old"
+    assert [fact.description for fact in load_canon_facts(proj_dir)] == ["old fact"]
+    states, _ = timeline.load_character_state_as_of_scene(
+        proj_dir, "scene-2", ["hero", "ally"]
+    )
+    assert {character_id: state.goal for character_id, state in states.items()} == {
+        "hero": "old",
+        "ally": "old",
+    }
+
+    monkeypatch.setattr(timeline, "append_events", append)
+    timeline.publish_scene_revision(
+        proj_dir,
+        "scene-1",
+        "new",
+        [{"description": "new fact", "category": "plot"}],
+        approved,
+    )
+
+    assert get_active_scene_revision_id(proj_dir, "scene-1") == "new"
+    assert [fact.description for fact in load_canon_facts(proj_dir)] == ["new fact"]
+    states, _ = timeline.load_character_state_as_of_scene(
+        proj_dir, "scene-2", ["hero", "ally"]
+    )
+    assert {character_id: state.goal for character_id, state in states.items()} == {
+        "hero": "changed",
+        "ally": "changed",
+    }
+    for character_id in ("hero", "ally"):
+        events = [
+            event
+            for event in load_events(proj_dir / "characters" / character_id)
+            if event.scene_revision_id == "new"
+        ]
+        assert len(events) == 1
+        assert events[0].changes[0].value == "changed"
+
+
 def test_draft_memory_is_invisible_until_revision_is_active(tmp_path):
     from app.storage.timeline_repository import load_character_state_as_of_scene
 
