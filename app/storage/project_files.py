@@ -526,17 +526,34 @@ SCENE_SUMMARIES_YAML = "canon/summaries.yaml"
 
 
 def save_scene_summaries(project_dir: Path, summaries: list) -> None:
-    """Write all scene summaries to canon/summaries.yaml, overwriting."""
+    """Atomically replace canon/summaries.yaml with all scene summaries."""
     canon_dir = project_dir / "canon"
     canon_dir.mkdir(exist_ok=True)
 
     data = [s.model_dump(mode="json") for s in summaries]
     filepath = canon_dir / "summaries.yaml"
-    with open(filepath, "w", encoding="utf-8") as fh:
-        yaml.safe_dump(data, fh, allow_unicode=True, sort_keys=False)
+    serialized = yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=canon_dir,
+            prefix=".summaries.",
+            suffix=".tmp",
+            delete=False,
+        ) as fh:
+            temp_path = Path(fh.name)
+            fh.write(serialized)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(temp_path, filepath)
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
 
 
-def load_scene_summaries(project_dir: Path) -> list:
+def load_scene_summaries(project_dir: Path, active_only: bool = True) -> list:
     """Load all scene summaries from canon/summaries.yaml.
 
     Returns:
@@ -565,7 +582,20 @@ def load_scene_summaries(project_dir: Path) -> list:
     except Exception as e:
         raise ValueError(f"Invalid scene summary data in {filepath}: {e}") from e
 
-    return summaries
+    if not active_only:
+        return summaries
+    active_revisions: dict[str, str] = {}
+    for summary in summaries:
+        if summary.source_scene_revision_id and summary.scene_id not in active_revisions:
+            active_revisions[summary.scene_id] = get_active_scene_revision_id(
+                project_dir, summary.scene_id
+            )
+    return [
+        summary
+        for summary in summaries
+        if not summary.source_scene_revision_id
+        or active_revisions.get(summary.scene_id) == summary.source_scene_revision_id
+    ]
 
 
 # ── Scene Prose I/O ───────────────────────────────────────────────────────

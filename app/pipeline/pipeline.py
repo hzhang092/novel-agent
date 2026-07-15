@@ -63,6 +63,7 @@ class GenerationResult:
     total_tokens: int = 0
     extracted_facts: list[dict] = field(default_factory=list)
     state_changes: list[dict] = field(default_factory=list)
+    scene_summary: dict | None = None
     generated_with: dict[str, dict] = field(default_factory=dict)
 
 
@@ -388,6 +389,21 @@ class ScenePipeline:
                     state_trace.token_count = self._state_updater.last_usage.get("total_tokens", 0)
 
         await asyncio.gather(_run_facts(), _run_state_updates())
+        if fact_trace.status != "completed":
+            result.total_tokens = _count_trace_tokens(result.trace)
+            self._emit_trace(on_trace, result.trace)
+            raise RuntimeError(
+                "Scene summary generation failed: " + fact_trace.error_message
+            )
+        from app.storage.models import SceneSummary
+
+        scene_info = context.get("scene_info", {})
+        result.scene_summary = SceneSummary(
+            scene_id=result.scene_id,
+            chapter_id=scene_info.get("chapter_id", ""),
+            summary=self._fact_extractor.last_summary,
+            open_threads=self._fact_extractor.last_open_threads,
+        ).model_dump(mode="json")
         result.total_tokens = _count_trace_tokens(result.trace)
         self._emit_trace(on_trace, result.trace)
         return result

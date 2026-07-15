@@ -15,6 +15,7 @@ from app.storage.models import (
     Project,
     SceneGenerationRecord,
     SceneOutline,
+    SceneSummary,
     SceneStateCheckpoint,
     SetFieldChange,
     StateChangeProposal,
@@ -33,9 +34,11 @@ from app.storage.project_files import (
     get_active_scene_revision_id,
     load_canon_facts,
     load_scene_generation_record,
+    load_scene_summaries,
     save_character,
     save_canon_facts,
     save_scene_generation_record,
+    save_scene_summaries,
     set_active_scene_prose_version,
     save_volume_outline,
 )
@@ -725,6 +728,14 @@ def test_partial_event_staging_is_invisible_and_retryable(tmp_path, monkeypatch)
             revision_number=2,
             status="draft",
             review={"overall_pass": True},
+            scene_summary_raw={
+                "scene_id": "scene-1",
+                "chapter_id": "ch-1",
+                "summary": "new summary",
+                "new_facts": ["rejected fact"],
+                "character_state_changes": {"rejected": "rejected change"},
+                "relationship_changes": ["rejected relationship"],
+            },
         ),
     )
     set_active_scene_prose_version(proj_dir, "ch-1", "scene-1", "v1", "old")
@@ -738,6 +749,10 @@ def test_partial_event_staging_is_invisible_and_retryable(tmp_path, monkeypatch)
                 source_scene_revision_id="old",
             )
         ],
+    )
+    save_scene_summaries(
+        proj_dir,
+        [SceneSummary(scene_id="scene-1", chapter_id="ch-1", summary="old summary")],
     )
     for character_id in ("hero", "ally"):
         append_events(
@@ -786,6 +801,9 @@ def test_partial_event_staging_is_invisible_and_retryable(tmp_path, monkeypatch)
 
     assert get_active_scene_revision_id(proj_dir, "scene-1") == "old"
     assert [fact.description for fact in load_canon_facts(proj_dir)] == ["old fact"]
+    assert [summary.summary for summary in load_scene_summaries(proj_dir)] == [
+        "old summary"
+    ]
     states, _ = timeline.load_character_state_as_of_scene(
         proj_dir, "scene-2", ["hero", "ally"]
     )
@@ -805,6 +823,19 @@ def test_partial_event_staging_is_invisible_and_retryable(tmp_path, monkeypatch)
 
     assert get_active_scene_revision_id(proj_dir, "scene-1") == "new"
     assert [fact.description for fact in load_canon_facts(proj_dir)] == ["new fact"]
+    active_summaries = load_scene_summaries(proj_dir)
+    assert [summary.summary for summary in active_summaries] == ["new summary"]
+    assert active_summaries[0].new_facts == ["new fact"]
+    assert active_summaries[0].character_state_changes == {
+        "hero": "goal→changed",
+        "ally": "goal→changed",
+    }
+    assert active_summaries[0].relationship_changes == []
+    all_summaries = load_scene_summaries(proj_dir, active_only=False)
+    assert {
+        summary.summary: summary.source_scene_revision_id
+        for summary in all_summaries
+    } == {"old summary": "old", "new summary": "new"}
     states, _ = timeline.load_character_state_as_of_scene(
         proj_dir, "scene-2", ["hero", "ally"]
     )

@@ -170,6 +170,7 @@ class SceneGenerationRecord(BaseModel):
     extracted_facts: list[dict] = Field(default_factory=list)
     extracted_facts_raw: list[dict] = Field(default_factory=list)  # raw ExtractedFact dicts from pipeline
     state_changes_raw: list[dict] = Field(default_factory=list)  # raw StateChangeProposal dicts from pipeline
+    scene_summary_raw: Optional[dict] = None
     approved_fact_ids: list[str] = Field(default_factory=list)
     approved_state_changes: list[str] = Field(default_factory=list)  # character_ids whose changes were approved
     approved_facts: list[dict] = Field(default_factory=list)
@@ -197,6 +198,7 @@ class CanonFact(BaseModel):
 class SceneSummary(BaseModel):
     scene_id: str
     chapter_id: str = ""
+    source_scene_revision_id: str = ""
     summary: str = ""
     new_facts: list[str] = Field(default_factory=list)
     character_state_changes: dict[str, str] = Field(default_factory=dict)

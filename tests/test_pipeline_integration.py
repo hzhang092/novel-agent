@@ -209,6 +209,8 @@ async def test_analyze_draft_uses_injected_fact_and_state_providers(
 ):
     class EmptyFacts(BaseModel):
         facts: list[dict] = Field(default_factory=list)
+        summary: str = "scene summary marker"
+        open_threads: list[str] = Field(default_factory=lambda: ["open thread marker"])
 
     class EmptyChanges(BaseModel):
         changes: list[dict] = Field(default_factory=list)
@@ -285,8 +287,42 @@ async def test_analyze_draft_uses_injected_fact_and_state_providers(
     assert state_provider.structured_calls == 1
     assert result.extracted_facts[0]["description"] == "fact provider marker"
     assert result.state_changes[0]["changes"][0]["value"] == "state provider marker"
+    assert result.scene_summary["summary"] == "scene summary marker"
+    assert result.scene_summary["open_threads"] == ["open thread marker"]
     assert fact_provider.closed is False
     assert state_provider.closed is False
+
+
+@pytest.mark.asyncio
+async def test_analysis_rejects_missing_scene_summary(monkeypatch):
+    from app.pipeline.pipeline import GenerationResult
+
+    class FactsOnly(BaseModel):
+        facts: list[dict] = Field(default_factory=list)
+
+    pipeline = ScenePipeline()
+    monkeypatch.setattr(
+        pipeline,
+        "assemble_context",
+        lambda *args: {"characters": {"major": []}, "scene_info": {}},
+    )
+
+    async def no_state_changes(*args):
+        return []
+
+    monkeypatch.setattr(pipeline._state_updater, "generate", no_state_changes)
+
+    with pytest.raises(RuntimeError, match="Scene summary generation failed"):
+        await pipeline.analyze_draft(
+            Path("."),
+            GenerationResult(
+                scene_id="scene-1",
+                prose="正文",
+                review=ReviewResult(scene_id="scene-1", overall_pass=True),
+            ),
+            fact_provider=MockProvider(structured_response=FactsOnly()),
+            state_provider=object(),
+        )
 
 
 @pytest.mark.asyncio

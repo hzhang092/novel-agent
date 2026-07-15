@@ -25,6 +25,7 @@ from app.storage.models import (
     CanonFact,
     CharacterStateEvent,
     CharacterStateSnapshot,
+    SceneSummary,
     SceneStateCheckpoint,
     StateChangeProposal,
 )
@@ -35,8 +36,10 @@ from app.storage.project_files import (
     load_all_characters,
     load_all_volumes,
     load_scene_generation_record,
+    load_scene_summaries,
     save_canon_facts,
     save_scene_generation_record,
+    save_scene_summaries,
     set_active_scene_prose_version,
 )
 from app.storage.state_repository import _convert_to_stored_change, ensure_initial_state_event
@@ -459,6 +462,15 @@ def _scope_legacy_scene_memory(
     if changed:
         save_canon_facts(project_dir, facts)
 
+    summaries = load_scene_summaries(project_dir, active_only=False)
+    changed = False
+    for summary in summaries:
+        if summary.scene_id == scene_id and not summary.source_scene_revision_id:
+            summary.source_scene_revision_id = revision_id
+            changed = True
+    if changed:
+        save_scene_summaries(project_dir, summaries)
+
     for character_id in list_character_ids(project_dir):
         char_dir = project_dir / "characters" / character_id
         events = load_events(char_dir)
@@ -507,6 +519,37 @@ def _stage_revision_events(
         append_events(project_dir / "characters" / proposal.character_id, [event])
         events.append(event)
     return events
+
+
+def _approved_summary_fields(
+    approved_facts: list[dict], approved_state_changes: list[dict]
+) -> tuple[list[str], dict[str, str], list[str]]:
+    new_facts = [
+        fact.get("description", "")
+        for fact in approved_facts
+        if fact.get("description")
+    ]
+    state_summary: dict[str, str] = {}
+    relationship_changes: list[str] = []
+    for proposal in approved_state_changes:
+        character = proposal.get("character_name") or proposal.get("character_id", "")
+        changes: list[str] = []
+        for change in proposal.get("changes", []):
+            change_type = change.get("type", "")
+            if change_type == "set_field":
+                changes.append(f"{change.get('field', '')}→{change.get('value', '')}")
+            elif change_type == "relationship_change":
+                relationship_changes.append(
+                    f"{character}→{change.get('target_character_id', '')}:"
+                    f"{change.get('relationship', '')}"
+                )
+            elif change_type.endswith("_add"):
+                changes.append(f"+{change.get('fact', '')}")
+            elif change_type.endswith("_remove"):
+                changes.append(f"-{change.get('fact', '')}")
+        if changes:
+            state_summary[character] = "；".join(changes)
+    return new_facts, state_summary, relationship_changes
 
 
 def publish_scene_revision(
@@ -560,6 +603,20 @@ def publish_scene_revision(
             StateChangeProposal.model_validate(proposal)
             for proposal in approved_state_changes
         ]
+        staged_summary = None
+        if record.scene_summary_raw is not None:
+            new_facts, state_summary, relationship_changes = _approved_summary_fields(
+                approved_facts, approved_state_changes
+            )
+            staged_summary = SceneSummary.model_validate({
+                **record.scene_summary_raw,
+                "scene_id": scene_id,
+                "chapter_id": position.chapter_id,
+                "source_scene_revision_id": revision_id,
+                "new_facts": new_facts,
+                "character_state_changes": state_summary,
+                "relationship_changes": relationship_changes,
+            })
 
     if active_revision_id and active_revision_id != revision_id:
         _scope_legacy_scene_memory(project_dir, scene_id, active_revision_id)
@@ -574,6 +631,17 @@ def publish_scene_revision(
         ]
         all_facts.extend(staged_facts)
         save_canon_facts(project_dir, all_facts)
+        if staged_summary is not None:
+            all_summaries = [
+                summary
+                for summary in load_scene_summaries(project_dir, active_only=False)
+                if not (
+                    summary.scene_id == scene_id
+                    and summary.source_scene_revision_id == revision_id
+                )
+            ]
+            all_summaries.append(staged_summary)
+            save_scene_summaries(project_dir, all_summaries)
         published_events = _stage_revision_events(
             project_dir, scene_id, revision_id, proposals
         )

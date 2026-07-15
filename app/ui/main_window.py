@@ -888,6 +888,7 @@ class MainWindow(QMainWindow):
 
         record.extracted_facts_raw = result.extracted_facts
         record.state_changes_raw = result.state_changes
+        record.scene_summary_raw = result.scene_summary
         save_scene_generation_record(self._current_project_dir, record)
         workspace.show_fact_approval(
             result.scene_id,
