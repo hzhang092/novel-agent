@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -489,6 +490,30 @@ async def test_analysis_saves_scene_summary_on_draft_record(qtbot, tmp_path, mon
 
     saved = load_scene_generation_record(proj_dir, "scene-1", revision_id="rev-1")
     assert saved.scene_summary_raw["summary"] == "saved summary marker"
+
+
+@pytest.mark.asyncio
+async def test_detached_analysis_failure_restores_visible_retry(qtbot, monkeypatch):
+    from app.ui.main_window import MainWindow
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    workspace = window.views["workspace"]
+    workspace._continue_review_btn.hide()
+
+    async def fail_analysis(*args, **kwargs):
+        raise RuntimeError("summary extraction failed")
+
+    monkeypatch.setattr(window, "_analyze_and_offer_publication", fail_analysis)
+    window._schedule_analysis_with_retry(
+        object(), object(), object(), workspace, lambda trace: None
+    )
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert workspace._status_label.text() == "记忆分析失败"
+    assert not workspace._continue_review_btn.isHidden()
+    assert "草稿已保存，可重试" in workspace._review_label.text()
 
 
 def test_successful_fact_approval_clears_panel(qtbot, tmp_path, monkeypatch):

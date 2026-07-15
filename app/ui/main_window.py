@@ -700,10 +700,8 @@ class MainWindow(QMainWindow):
         record.review_overridden = True
         save_scene_generation_record(self._current_project_dir, record)
         self._pending_draft = (pipeline, result, record)
-        asyncio.ensure_future(
-            self._analyze_and_offer_publication(
-                pipeline, result, record, workspace, workspace.trace_panel.update_trace
-            )
+        self._schedule_analysis_with_retry(
+            pipeline, result, record, workspace, workspace.trace_panel.update_trace
         )
 
     def _on_next_scene(self) -> None:
@@ -970,6 +968,24 @@ class MainWindow(QMainWindow):
         )
         workspace._status_label.setText("等待发布")
 
+    def _schedule_analysis_with_retry(
+        self, pipeline, result, record, workspace, on_trace
+    ) -> None:
+        """Run detached memory analysis and restore its retry control on failure."""
+
+        async def _run() -> None:
+            try:
+                await self._analyze_and_offer_publication(
+                    pipeline, result, record, workspace, on_trace
+                )
+            except Exception:
+                workspace._status_label.setText("记忆分析失败")
+                workspace.show_review_result(
+                    False, "记忆分析失败；草稿已保存，可重试"
+                )
+
+        asyncio.ensure_future(_run())
+
     def _on_continue_review_requested(self) -> None:
         if self._pending_draft is None or self._current_project_dir is None:
             return
@@ -982,10 +998,8 @@ class MainWindow(QMainWindow):
         record.review_overridden = True
         save_scene_generation_record(self._current_project_dir, record)
         workspace._continue_review_btn.hide()
-        asyncio.ensure_future(
-            self._analyze_and_offer_publication(
-                pipeline, result, record, workspace, workspace.trace_panel.update_trace
-            )
+        self._schedule_analysis_with_retry(
+            pipeline, result, record, workspace, workspace.trace_panel.update_trace
         )
 
     def _on_approval_batch_approved(
