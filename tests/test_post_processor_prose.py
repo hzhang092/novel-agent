@@ -22,11 +22,11 @@ def test_post_processors_keep_complete_prose_at_limit(prompt: str) -> None:
 
 
 @pytest.mark.parametrize("prompt", _prompts("A" * 3000 + "MIDDLE" + "Z" * 3000))
-def test_post_processors_preserve_both_ends_when_prose_is_too_long(prompt: str) -> None:
+def test_post_processors_keep_complete_long_prose(prompt: str) -> None:
     assert "A" * 3000 in prompt
+    assert "MIDDLE" in prompt
     assert "Z" * 3000 in prompt
-    assert "MIDDLE" not in prompt
-    assert "中间省略，正文共 6006 字" in prompt
+    assert "中间省略" not in prompt
 
 
 def test_state_updater_sees_current_power_level() -> None:
