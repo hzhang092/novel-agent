@@ -336,11 +336,14 @@ class ScenePipeline:
         *,
         fact_provider: LLMProvider,
         state_provider: LLMProvider,
+        review_overridden: bool = False,
         on_trace: TraceCallback | None = None,
     ) -> GenerationResult:
         """Extract memory proposals from a reviewed or explicitly overridden draft."""
         if not result.prose:
             return result
+        if not (result.review is not None and result.review.overall_pass) and not review_overridden:
+            raise ValueError("Memory analysis requires a passed review or explicit override")
         context = self.assemble_context(project_dir, result.scene_id)
         major_chars = context.get("characters", {}).get("major", [])
         fact_trace = AgentTraceEntry(agent_name="Fact Extractor", stage="fact_extractor", status="running")

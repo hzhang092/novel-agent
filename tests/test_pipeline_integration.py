@@ -321,37 +321,70 @@ async def test_analyze_draft_updates_all_major_characters(monkeypatch):
         GenerationResult(scene_id="scene-1", prose="正文"),
         fact_provider=object(),
         state_provider=object(),
+        review_overridden=True,
     )
 
     assert seen_character_ids == [f"char-{number}" for number in range(5)]
 
 
 @pytest.mark.asyncio
-async def test_failed_review_does_not_analyze_memory(
-    project_dir, mock_planner, mock_char_agent, mock_writer, monkeypatch
+@pytest.mark.parametrize(
+    "review",
+    [None, ReviewResult(scene_id="scene-1", overall_pass=False, summary="bad")],
+)
+async def test_failed_or_missing_review_does_not_analyze_memory(
+    project_dir, monkeypatch, review
 ):
-    from app.providers import config as provider_config
+    from app.pipeline.pipeline import GenerationResult
 
-    requested_steps = []
-    monkeypatch.setattr(
-        provider_config,
-        "get_provider_for_step",
-        lambda step_id, config: requested_steps.append(step_id),
-    )
-    failed_review = ReviewResult(scene_id="scene-1", overall_pass=False, summary="bad")
     pipeline = ScenePipeline()
 
-    async for _token, _result in pipeline.generate_stream(
-        project_dir,
-        "scene-1",
-        mock_planner,
-        mock_char_agent,
-        mock_writer,
-        MockProvider(structured_response=failed_review),
-    ):
-        pass
+    async def fail_if_called(*args):
+        raise AssertionError("memory agents must not run after failed review")
 
-    assert requested_steps == []
+    monkeypatch.setattr(pipeline._fact_extractor, "generate", fail_if_called)
+    monkeypatch.setattr(pipeline._state_updater, "generate", fail_if_called)
+
+    with pytest.raises(ValueError, match="passed review or explicit override"):
+        await pipeline.analyze_draft(
+            project_dir,
+            GenerationResult(scene_id="scene-1", prose="正文", review=review),
+            fact_provider=object(),
+            state_provider=object(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_failed_review_can_be_explicitly_overridden(project_dir, monkeypatch):
+    from app.pipeline.pipeline import GenerationResult
+
+    pipeline = ScenePipeline()
+    calls = []
+
+    async def generate_facts(*args):
+        calls.append("facts")
+        return []
+
+    async def generate_state_changes(*args):
+        calls.append("state")
+        return []
+
+    monkeypatch.setattr(pipeline._fact_extractor, "generate", generate_facts)
+    monkeypatch.setattr(pipeline._state_updater, "generate", generate_state_changes)
+
+    await pipeline.analyze_draft(
+        project_dir,
+        GenerationResult(
+            scene_id="scene-1",
+            prose="正文",
+            review=ReviewResult(scene_id="scene-1", overall_pass=False, summary="bad"),
+        ),
+        fact_provider=object(),
+        state_provider=object(),
+        review_overridden=True,
+    )
+
+    assert set(calls) == {"facts", "state"}
 
 
 @pytest.mark.asyncio

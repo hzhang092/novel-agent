@@ -871,6 +871,7 @@ class MainWindow(QMainWindow):
                 result,
                 fact_provider=fact_provider,
                 state_provider=state_provider,
+                review_overridden=record.review_overridden,
                 on_trace=on_trace,
             )
         finally:
