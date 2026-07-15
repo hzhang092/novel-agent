@@ -22,15 +22,37 @@ def _make_context() -> dict:
             "constraints": ["林轩不能暴露全部修为", "苏清鸾旁观"],
         },
         "world_rules": {
+            "geography": "东荒地理标记",
+            "factions": [{"name": "青云盟标记", "goal": "守护灵脉"}],
+            "history": "百年前大战标记",
             "rules": ["修真界以实力为尊", "隐藏修为是大忌"],
             "taboos": ["不得在考核中使用禁术"],
-            "power_system": {"realms": ["炼气", "筑基", "金丹"], "limitations": ["越级挑战会损伤根基"]},
+            "technology_level": "灵能机关标记",
+            "social_structure": "宗门阶序标记",
+            "terminology": {"灵契": "术语解释标记"},
+            "power_system": {
+                "realms": ["炼气", "筑基", "金丹"],
+                "abilities": {"筑基": "御剑标记"},
+                "limitations": ["越级挑战会损伤根基"],
+                "costs": ["燃烧寿元标记"],
+                "rare_resources": ["星砂标记"],
+                "forbidden_methods": ["夺舍术标记"],
+            },
         },
         "characters": {
             "major": [
                 {
                     "core": {"name": "林轩", "tier": "major", "personality": "隐忍、果断", "speech_style": "简练", "core_skills": ["剑术", "火系法术"]},
-                    "state": {"current_emotion": "平静中带着警惕", "current_goal": "通过考核但不暴露全部实力", "current_location": "落云宗广场"},
+                    "state": {
+                        "current_emotion": "平静中带着警惕",
+                        "current_goal": "通过考核但不暴露全部实力",
+                        "current_location": "落云宗广场状态标记",
+                        "current_power_level": "筑基初期标记",
+                        "current_relationships": {"苏清鸾": "盟友标记"},
+                        "current_knowledge": ["密道入口标记"],
+                        "current_secrets": ["前世身份标记"],
+                        "current_status": "轻伤标记",
+                    },
                 }
             ],
             "supporting": [
@@ -40,7 +62,11 @@ def _make_context() -> dict:
                 {"name": "考核长老", "tier": "background"},
             ],
         },
-        "outline_context": {"chapter_title": "第一章", "volume_title": "第一卷"},
+        "outline_context": {
+            "chapter_title": "第一章",
+            "volume_title": "第一卷",
+            "volume_summary": "本卷追查失落灵脉标记",
+        },
         "recent_summaries": [],
         "canon_facts": [],
         "style_guide": {
@@ -99,6 +125,19 @@ class TestWriterPrompt:
 
         assert "修真界以实力为尊" in prompt
         assert "不得在考核中使用禁术" in prompt
+
+    def test_build_prompt_uses_all_assembled_world_outline_and_major_state(self):
+        prompt = WriterAgent().build_prompt(_make_context())
+
+        markers = [
+            "东荒地理标记", "青云盟标记", "百年前大战标记", "灵能机关标记",
+            "宗门阶序标记", "术语解释标记", "御剑标记", "燃烧寿元标记",
+            "星砂标记", "夺舍术标记", "落云宗广场状态标记", "筑基初期标记",
+            "盟友标记", "密道入口标记", "前世身份标记", "轻伤标记",
+            "本卷追查失落灵脉标记",
+        ]
+        for marker in markers:
+            assert marker in prompt
 
     def test_build_prompt_includes_character_info(self):
         agent = WriterAgent()

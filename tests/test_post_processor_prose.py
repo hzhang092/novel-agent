@@ -27,3 +27,18 @@ def test_post_processors_preserve_both_ends_when_prose_is_too_long(prompt: str) 
     assert "Z" * 3000 in prompt
     assert "MIDDLE" not in prompt
     assert "中间省略，正文共 6006 字" in prompt
+
+
+def test_state_updater_sees_current_power_level() -> None:
+    prompt = StateUpdaterAgent().build_prompt(
+        {},
+        "正文",
+        [
+            {
+                "core": {"id": "char-1", "name": "林轩"},
+                "state": {"current_power_level": "筑基初期标记"},
+            }
+        ],
+    )
+
+    assert "筑基初期标记" in prompt

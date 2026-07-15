@@ -114,20 +114,53 @@ def _build_writer_prompt(context: dict) -> str:
     world = context.get("world_rules", {})
     if world:
         lines.append("【世界观设定】")
+        if world.get("geography"):
+            lines.append(f"- 地理：{world['geography']}")
+        factions = world.get("factions", [])
+        if factions:
+            lines.append("- 势力：" + "；".join(
+                "，".join(f"{key}：{value}" for key, value in faction.items())
+                for faction in factions
+            ))
+        if world.get("history"):
+            lines.append(f"- 历史：{world['history']}")
         rules = world.get("rules", [])
         if rules:
             lines.append(f"- 世界规则：{'；'.join(rules)}")
         taboos = world.get("taboos", [])
         if taboos:
             lines.append(f"- 禁忌：{'；'.join(taboos)}")
+        if world.get("technology_level"):
+            lines.append(f"- 技术水平：{world['technology_level']}")
+        if world.get("social_structure"):
+            lines.append(f"- 社会结构：{world['social_structure']}")
+        terminology = world.get("terminology", {})
+        if terminology:
+            lines.append("- 术语：" + "；".join(
+                f"{term}：{meaning}" for term, meaning in terminology.items()
+            ))
         ps = world.get("power_system", {})
         if ps:
             realms = ps.get("realms", [])
             if realms:
                 lines.append(f"- 修炼境界：{' → '.join(realms)}")
+            abilities = ps.get("abilities", {})
+            if abilities:
+                lines.append("- 境界能力：" + "；".join(
+                    f"{realm}：{ability}" for realm, ability in abilities.items()
+                ))
             limitations = ps.get("limitations", [])
             if limitations:
                 lines.append(f"- 修炼限制：{'；'.join(limitations)}")
+            costs = ps.get("costs", [])
+            if costs:
+                lines.append(f"- 修炼代价：{'；'.join(costs)}")
+            resources = ps.get("rare_resources", [])
+            if resources:
+                lines.append(f"- 稀有资源：{'；'.join(resources)}")
+            forbidden = ps.get("forbidden_methods", [])
+            if forbidden:
+                lines.append(f"- 禁术：{'；'.join(forbidden)}")
         lines.append("")
 
     # ── Characters ──
@@ -153,6 +186,24 @@ def _build_writer_prompt(context: dict) -> str:
                     lines.append(f"  当前情绪：{state['current_emotion']}")
                 if state.get("current_goal"):
                     lines.append(f"  当前目标：{state['current_goal']}")
+                if state.get("current_location"):
+                    lines.append(f"  当前位置：{state['current_location']}")
+                if state.get("current_power_level"):
+                    lines.append(f"  当前实力：{state['current_power_level']}")
+                relationships = state.get("current_relationships", {})
+                if relationships:
+                    lines.append("  当前关系：" + "；".join(
+                        f"{name}：{relationship}"
+                        for name, relationship in relationships.items()
+                    ))
+                knowledge = state.get("current_knowledge", [])
+                if knowledge:
+                    lines.append(f"  已知信息：{'；'.join(knowledge)}")
+                secrets = state.get("current_secrets", [])
+                if secrets:
+                    lines.append(f"  当前秘密：{'；'.join(secrets)}")
+                if state.get("current_status"):
+                    lines.append(f"  当前状态：{state['current_status']}")
             for sc in supporting:
                 lines.append(f"\n· {sc.get('name', '')}（配角）")
                 if sc.get("relationship"):
@@ -188,6 +239,8 @@ def _build_writer_prompt(context: dict) -> str:
         lines.append("【大纲背景】")
         if outline.get("volume_title"):
             lines.append(f"- 卷：{outline['volume_title']}")
+        if outline.get("volume_summary"):
+            lines.append(f"- 本卷概要：{outline['volume_summary']}")
         if outline.get("chapter_title"):
             lines.append(f"- 章：{outline['chapter_title']}")
         lines.append("")

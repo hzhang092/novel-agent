@@ -97,6 +97,7 @@ def _build_state_updater_prompt(
         lines.append(f"  情绪：{state.get('current_emotion', '')}")
         lines.append(f"  目标：{state.get('current_goal', '')}")
         lines.append(f"  位置：{state.get('current_location', '')}")
+        lines.append(f"  实力：{state.get('current_power_level', '')}")
         rels = state.get("current_relationships", {})
         if rels:
             lines.append(f"  关系：{'；'.join(f'{k}:{v}' for k, v in rels.items())}")
