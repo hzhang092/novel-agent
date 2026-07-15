@@ -513,6 +513,7 @@ def publish_scene_revision(
     bus: EventBus | None = None,
 ) -> None:
     """Publish one reviewed revision; this is the only canon mutation seam."""
+    recover_pending_publication(project_dir)
     record = load_scene_generation_record(project_dir, scene_id, revision_id=revision_id)
     if record is None:
         raise ValueError(f"Unknown scene revision: {revision_id}")

@@ -976,10 +976,17 @@ def test_publication_failure_before_pointer_preserves_old_canon(
     assert not (proj_dir / ".publish.pending.json").exists()
 
 
-def test_recovery_finishes_publication_after_pointer_swap(tmp_path, monkeypatch):
+def test_retry_finishes_publication_after_pointer_swap(tmp_path, monkeypatch):
     import app.storage.timeline_repository as timeline
 
     proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(id="hero", name="林轩", tier="major"),
+            state=CharacterState(character_id="hero"),
+        ),
+    )
     save_volume_outline(
         proj_dir,
         VolumeOutline(
@@ -1011,6 +1018,13 @@ def test_recovery_finishes_publication_after_pointer_swap(tmp_path, monkeypatch)
     save_scene_generation_record(proj_dir, old)
     save_scene_generation_record(proj_dir, record)
     set_active_scene_prose_version(proj_dir, "ch-1", "scene-1", "v1", "old")
+    approved_facts = [{"description": "new fact", "category": "plot"}]
+    approved_changes = [
+        StateChangeProposal(
+            character_id="hero",
+            changes=[SetFieldChange(type="set_field", field="goal", value="changed")],
+        ).model_dump(mode="json")
+    ]
     finish = timeline._finish_publication
     monkeypatch.setattr(
         timeline,
@@ -1019,18 +1033,30 @@ def test_recovery_finishes_publication_after_pointer_swap(tmp_path, monkeypatch)
     )
 
     with pytest.raises(OSError, match="interrupted"):
-        timeline.publish_scene_revision(proj_dir, "scene-1", "new", [], [])
+        timeline.publish_scene_revision(
+            proj_dir, "scene-1", "new", approved_facts, approved_changes
+        )
 
     assert get_active_scene_revision_id(proj_dir, "scene-1") == "new"
     assert (proj_dir / ".publish.pending.json").exists()
     monkeypatch.setattr(timeline, "_finish_publication", finish)
-    timeline.recover_pending_publication(proj_dir)
+    timeline.publish_scene_revision(
+        proj_dir, "scene-1", "new", approved_facts, approved_changes
+    )
 
     assert load_scene_generation_record(proj_dir, "scene-1").status == "current"
     assert load_scene_generation_record(
         proj_dir, "scene-1", revision_id="old"
     ).status == "superseded"
     assert not (proj_dir / ".publish.pending.json").exists()
+    assert [fact.description for fact in load_canon_facts(proj_dir)] == ["new fact"]
+    events = [
+        event
+        for event in load_events(proj_dir / "characters" / "hero")
+        if event.scene_revision_id == "new"
+    ]
+    assert len(events) == 1
+    assert events[0].changes[0].value == "changed"
 
 
 def test_publish_replaces_legacy_unscoped_memory(tmp_path):
