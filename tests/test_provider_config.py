@@ -1,9 +1,16 @@
 """Tests for ProviderConfig, factory, and per-step routing."""
 
+from unittest.mock import patch
+
 import pytest
 
 from app.providers.base import MockProvider
-from app.providers.config import create_provider, get_provider_for_step
+from app.providers.config import (
+    create_provider,
+    get_provider_for_step,
+    load_provider_config,
+    save_provider_config,
+)
 from app.providers.deepseek import DeepSeekProvider
 from app.providers.ollama import OllamaProvider
 from app.storage.models import ProviderConfig
@@ -116,7 +123,7 @@ class TestConfigSerialization:
 
         assert cfg.routing["state_updater"] == "deepseek"
 
-    def test_round_trip(self):
+    def test_round_trip_excludes_api_key(self):
         cfg = ProviderConfig(
             ollama_model="qwen:32b",
             deepseek_api_key="sk-secret",
@@ -132,5 +139,43 @@ class TestConfigSerialization:
         data = cfg.model_dump(mode="json")
         restored = ProviderConfig.model_validate(data)
         assert restored.ollama_model == "qwen:32b"
-        assert restored.deepseek_api_key == "sk-secret"
+        assert restored.deepseek_api_key == ""
         assert restored.routing["planner"] == "deepseek"
+
+
+class TestSecureConfigStorage:
+    def test_save_keeps_api_key_out_of_qsettings(self):
+        config = ProviderConfig(deepseek_api_key="sk-secret")
+
+        with (
+            patch("PyQt6.QtCore.QSettings") as qsettings,
+            patch("app.providers.config.keyring.set_password") as set_password,
+        ):
+            save_provider_config(config)
+
+        set_password.assert_called_once_with("NovelForge", "DeepSeek API key", "sk-secret")
+        saved = qsettings.return_value.setValue.call_args.args[1]
+        assert "deepseek_api_key" not in saved
+
+    def test_load_migrates_legacy_api_key(self):
+        with (
+            patch("PyQt6.QtCore.QSettings") as qsettings,
+            patch("app.providers.config.keyring.get_password", return_value=None),
+            patch("app.providers.config.keyring.set_password") as set_password,
+        ):
+            qsettings.return_value.value.return_value = {"deepseek_api_key": "sk-legacy"}
+            config = load_provider_config()
+
+        assert config.deepseek_api_key == "sk-legacy"
+        set_password.assert_called_once_with("NovelForge", "DeepSeek API key", "sk-legacy")
+        saved = qsettings.return_value.setValue.call_args.args[1]
+        assert "deepseek_api_key" not in saved
+
+    def test_save_empty_key_removes_stored_credential(self):
+        with (
+            patch("PyQt6.QtCore.QSettings"),
+            patch("app.providers.config.keyring.delete_password") as delete_password,
+        ):
+            save_provider_config(ProviderConfig())
+
+        delete_password.assert_called_once_with("NovelForge", "DeepSeek API key")

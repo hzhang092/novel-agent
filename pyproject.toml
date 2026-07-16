@@ -8,6 +8,7 @@ dependencies = [
     "pydantic>=2.7",
     "pyyaml>=6.0",
     "qasync>=0.27",
+    "keyring>=25.7",
 ]
 
 [project.optional-dependencies]

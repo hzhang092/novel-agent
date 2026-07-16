@@ -236,7 +236,7 @@ class ProviderConfig(BaseModel):
     ollama_model: str = "qwen:14b"
     deepseek_model: str = "deepseek-chat"
     deepseek_base_url: str = "https://api.deepseek.com/v1"
-    deepseek_api_key: str = ""
+    deepseek_api_key: str = Field(default="", exclude=True)
     routing: dict[str, str] = Field(default_factory=lambda: {
         "planner": "ollama",
         "characters": "ollama",

@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import keyring
+from keyring.errors import PasswordDeleteError
+
 from app.providers.base import LLMProvider
 from app.storage.models import ProviderConfig
+
+_CREDENTIAL_SERVICE = "NovelForge"
+_CREDENTIAL_ACCOUNT = "DeepSeek API key"
 
 
 def _get_default_config() -> ProviderConfig:
@@ -17,16 +23,39 @@ def load_provider_config() -> ProviderConfig:
     settings = QSettings()
     raw = settings.value("providers/config")
     if raw is None:
-        return _get_default_config()
-    try:
-        return ProviderConfig.model_validate(raw)
-    except Exception:
-        return _get_default_config()
+        config = _get_default_config()
+    else:
+        try:
+            config = ProviderConfig.model_validate(raw)
+        except Exception:
+            config = _get_default_config()
+
+    legacy_key = config.deepseek_api_key
+    stored_key = keyring.get_password(_CREDENTIAL_SERVICE, _CREDENTIAL_ACCOUNT)
+    if legacy_key:
+        if stored_key is None:
+            keyring.set_password(_CREDENTIAL_SERVICE, _CREDENTIAL_ACCOUNT, legacy_key)
+            stored_key = legacy_key
+        settings.setValue("providers/config", config.model_dump(mode="json"))
+    config.deepseek_api_key = stored_key or ""
+    return config
 
 
 def save_provider_config(config: ProviderConfig) -> None:
-    """Persist provider config to QSettings."""
+    """Persist non-secret config to QSettings and the API key to keyring."""
     from PyQt6.QtCore import QSettings
+
+    if config.deepseek_api_key:
+        keyring.set_password(
+            _CREDENTIAL_SERVICE,
+            _CREDENTIAL_ACCOUNT,
+            config.deepseek_api_key,
+        )
+    else:
+        try:
+            keyring.delete_password(_CREDENTIAL_SERVICE, _CREDENTIAL_ACCOUNT)
+        except PasswordDeleteError:
+            pass
 
     settings = QSettings()
     settings.setValue("providers/config", config.model_dump(mode="json"))
