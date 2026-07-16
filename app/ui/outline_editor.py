@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from app.ui.display_labels import character_tier_label
 from app.ui.widgets import StringListEditor
 
 ROLE_NODE_TYPE = Qt.ItemDataRole.UserRole
@@ -271,7 +272,7 @@ class OutlineEditorView(QWidget):
     def _character_label(self, character, duplicate_names: set[str]) -> str:
         name = character.core.name
         if name in duplicate_names:
-            return f"{name} · {character.core.tier.value} · {character.core.id[:8]}"
+            return f"{name} · {character_tier_label(character.core.tier)} · {character.core.id[:8]}"
         return name
 
     def _populate_scene_form(self, sc) -> None:

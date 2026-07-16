@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import tempfile
 
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import QSignalBlocker, Qt, QUrl
 from PyQt6.QtGui import QAction, QDesktopServices
 from PyQt6.QtWidgets import (
     QFileDialog,
@@ -152,10 +152,18 @@ class MainWindow(QMainWindow):
 
     def _on_nav_changed(self, index: int) -> None:
         # Auto-save Bible editor when navigating away from it
-        if self._previous_tab_index == 1:
+        if self._previous_tab_index == 1 and index != 1:
             bible = self.views["bible"]
-            if isinstance(bible, BibleEditorView) and bible._project_dir is not None:
-                bible._on_save()
+            if (
+                isinstance(bible, BibleEditorView)
+                and bible._project_dir is not None
+                and bible.is_dirty
+                and not bible.save_all()
+            ):
+                blocker = QSignalBlocker(self.sidebar)
+                self.sidebar.setCurrentRow(self._previous_tab_index)
+                del blocker
+                return
 
         # Auto-save Outline editor when navigating away from it
         if self._previous_tab_index == 2:
@@ -442,6 +450,10 @@ class MainWindow(QMainWindow):
         """Handle scene selection: assemble context, find chapter, load prose, update workspace."""
         if self._current_project_dir is None:
             return
+
+        bible = self.views.get("bible")
+        if isinstance(bible, BibleEditorView):
+            bible._character_tab.set_current_scene_id(scene_id)
 
         workspace = self.views.get("workspace")
         if not isinstance(workspace, SceneWorkspaceView):

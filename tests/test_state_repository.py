@@ -213,6 +213,19 @@ class TestInvalidateEvent:
 
 
 class TestCommitUserEdit:
+    def test_commit_user_edit_accepts_manual_event_source(self, tmp_path):
+        repo = StateRepository()
+
+        event = repo.commit_user_edit(
+            tmp_path,
+            "char-1",
+            [{"type": "set_field", "field": "goal", "value": "new", "old": ""}],
+            source="manual_event",
+        )
+
+        assert event is not None
+        assert event.source == "manual_event"
+
     def test_commit_user_edit(self):
         with tempfile.TemporaryDirectory() as td:
             char_dir = Path(td)

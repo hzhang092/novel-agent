@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 )
 
 from app.storage.models import Project as ProjectModel
-from app.storage.models import StyleGuide, WorldSetting
+from app.storage.models import PowerSystem, StyleGuide, WorldSetting
 from app.storage.project_files import (
     load_project,
     save_style_guide,
@@ -35,6 +35,11 @@ from app.storage.project_files import (
 )
 from app.ui.character_editor import CharacterEditorView
 from app.ui.widgets import KeyValueTable, StringListEditor, read_table_cell, set_combo as _set_combo, combo_val as _combo_val
+from app.utils.template_merge import (
+    TemplateMergeMode,
+    merge_style_guide,
+    merge_world_setting,
+)
 from app.utils.xianxia_template import get_xianxia_template
 
 
@@ -46,11 +51,19 @@ class BibleEditorView(QWidget):
     """
 
     saved = pyqtSignal()
+    dirty_changed = pyqtSignal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._project_dir: Path | None = None
+        self._baseline_world: WorldSetting | None = None
+        self._baseline_style: StyleGuide | None = None
+        self._world_dirty = False
+        self._style_dirty = False
+        self._populating = False
+        self._last_dirty = False
         self._setup_ui()
+        self._connect_dirty_tracking()
 
     # ── Public API ─────────────────────────────────────────────────────────
 
@@ -58,9 +71,22 @@ class BibleEditorView(QWidget):
         """Load project data from disk and populate the editor."""
         self._project_dir = project_dir
         project = load_project(project_dir)
-        self._populate_world_tab(project.world_setting)
-        self._populate_style_tab(project.style_guide)
-        self._character_tab.load_project_dir(project_dir)
+        self._populating = True
+        try:
+            self._populate_world_tab(project.world_setting)
+            self._populate_style_tab(project.style_guide)
+            self._character_tab.load_project_dir(project_dir)
+        finally:
+            self._populating = False
+        self._baseline_world = self._gather_world()
+        self._baseline_style = self._gather_style()
+        self._world_dirty = False
+        self._style_dirty = False
+        self._update_aggregate_dirty_state()
+
+    @property
+    def is_dirty(self) -> bool:
+        return self._world_dirty or self._style_dirty or self._character_tab.is_dirty
 
     # ── UI Setup ───────────────────────────────────────────────────────────
 
@@ -75,9 +101,14 @@ class BibleEditorView(QWidget):
         self._template_btn.clicked.connect(self._on_apply_template)
         toolbar.addWidget(self._template_btn)
         toolbar.addStretch()
+        self._unsaved_label = QLabel("未保存")
+        self._unsaved_label.setStyleSheet("color: #d48806;")
+        self._unsaved_label.setVisible(False)
+        toolbar.addWidget(self._unsaved_label)
         self._save_btn = QPushButton("保存")
         self._save_btn.setToolTip("保存所有修改到磁盘")
         self._save_btn.clicked.connect(self._on_save)
+        self._save_btn.setEnabled(False)
         toolbar.addWidget(self._save_btn)
         layout.addLayout(toolbar)
 
@@ -90,6 +121,63 @@ class BibleEditorView(QWidget):
         self._tabs.addTab(self._style_tab, "写作风格")
         self._tabs.addTab(self._character_tab, "角色")
         layout.addWidget(self._tabs)
+
+    def _connect_dirty_tracking(self) -> None:
+        for editor in (self._geo_edit, self._history_edit):
+            editor.textChanged.connect(self._recompute_world_dirty)
+        for editor in (self._tech_edit, self._social_edit):
+            editor.textChanged.connect(self._recompute_world_dirty)
+        for editor in (
+            self._rules_list,
+            self._taboos_list,
+            self._realms_list,
+            self._limitations_list,
+            self._costs_list,
+            self._resources_list,
+            self._forbidden_list,
+            self._factions_table,
+            self._term_table,
+            self._abilities_table,
+        ):
+            editor.changed.connect(self._recompute_world_dirty)
+
+        self._pacing_slider.valueChanged.connect(self._recompute_style_dirty)
+        for row in (
+            self._tone_combo,
+            self._dialogue_combo,
+            self._desc_combo,
+            self._sent_combo,
+            self._pov_combo,
+        ):
+            for index in range(row.count()):
+                combo = row.itemAt(index).widget()
+                if isinstance(combo, QComboBox):
+                    combo.currentIndexChanged.connect(self._recompute_style_dirty)
+        for editor in (self._taboo_patterns_list, self._preferred_patterns_list):
+            editor.changed.connect(self._recompute_style_dirty)
+        for editor in (self._ref_passages_edit, self._notes_edit):
+            editor.textChanged.connect(self._recompute_style_dirty)
+        self._character_tab.dirty_changed.connect(self._update_aggregate_dirty_state)
+
+    def _recompute_world_dirty(self) -> None:
+        if self._populating:
+            return
+        self._world_dirty = self._gather_world() != self._baseline_world
+        self._update_aggregate_dirty_state()
+
+    def _recompute_style_dirty(self) -> None:
+        if self._populating:
+            return
+        self._style_dirty = self._gather_style() != self._baseline_style
+        self._update_aggregate_dirty_state()
+
+    def _update_aggregate_dirty_state(self, *_args) -> None:
+        dirty = self.is_dirty
+        self._unsaved_label.setVisible(dirty)
+        self._save_btn.setEnabled(dirty)
+        if dirty != self._last_dirty:
+            self._last_dirty = dirty
+            self.dirty_changed.emit(dirty)
 
     # ── World Tab ──────────────────────────────────────────────────────────
 
@@ -190,13 +278,13 @@ class BibleEditorView(QWidget):
         # Trait pickers
         pacing_label = QLabel("<b>节奏</b>")
         self._pacing_slider = QSlider(Qt.Orientation.Horizontal)
-        self._pacing_slider.setRange(1, 5)
+        self._pacing_slider.setRange(0, 5)
         self._pacing_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         self._pacing_slider.setTickInterval(1)
-        pacing_display = QLabel("适中")
+        pacing_display = QLabel("未设置")
         self._pacing_slider.valueChanged.connect(
             lambda v: pacing_display.setText(
-                {1: "很慢", 2: "偏慢", 3: "适中", 4: "偏快", 5: "很快"}.get(v, "")
+                {0: "未设置", 1: "很慢", 2: "偏慢", 3: "适中", 4: "偏快", 5: "很快"}.get(v, "")
             )
         )
         pacing_row = QHBoxLayout()
@@ -273,18 +361,17 @@ class BibleEditorView(QWidget):
         self._term_table.set_rows(
             [[k, v] for k, v in world.terminology.items()]
         )
-        if world.power_system:
-            ps = world.power_system
-            self._realms_list.set_items(ps.realms)
-            self._abilities_table.set_rows([[k, v] for k, v in ps.abilities.items()])
-            self._limitations_list.set_items(ps.limitations)
-            self._costs_list.set_items(ps.costs)
-            self._resources_list.set_items(ps.rare_resources)
-            self._forbidden_list.set_items(ps.forbidden_methods)
+        ps = world.power_system or PowerSystem()
+        self._realms_list.set_items(ps.realms)
+        self._abilities_table.set_rows([[k, v] for k, v in ps.abilities.items()])
+        self._limitations_list.set_items(ps.limitations)
+        self._costs_list.set_items(ps.costs)
+        self._resources_list.set_items(ps.rare_resources)
+        self._forbidden_list.set_items(ps.forbidden_methods)
 
     def _populate_style_tab(self, style: StyleGuide) -> None:
-        pacing_map = {"": 3, "很慢": 1, "偏慢": 2, "适中": 3, "偏快": 4, "很快": 5}
-        self._pacing_slider.setValue(pacing_map.get(style.pacing, 3))
+        pacing_map = {"": 0, "很慢": 1, "偏慢": 2, "适中": 3, "偏快": 4, "很快": 5}
+        self._pacing_slider.setValue(pacing_map.get(style.pacing, 0))
         _set_combo(self._tone_combo, style.tone)
         _set_combo(self._dialogue_combo, style.dialogue_density)
         _set_combo(self._desc_combo, style.description_style)
@@ -298,8 +385,6 @@ class BibleEditorView(QWidget):
     # ── Gather ─────────────────────────────────────────────────────────────
 
     def _gather_world(self) -> WorldSetting:
-        from app.storage.models import PowerSystem
-
         factions = []
         for row in range(self._factions_table.rowCount()):
             name = _cell(self._factions_table._table, row, 0)
@@ -322,16 +407,17 @@ class BibleEditorView(QWidget):
             if realm:
                 abilities[realm] = desc
 
+        power_system = PowerSystem(
+            realms=self._realms_list.get_items(),
+            abilities=abilities,
+            limitations=self._limitations_list.get_items(),
+            costs=self._costs_list.get_items(),
+            rare_resources=self._resources_list.get_items(),
+            forbidden_methods=self._forbidden_list.get_items(),
+        )
         return WorldSetting(
             geography=self._geo_edit.toPlainText().strip(),
-            power_system=PowerSystem(
-                realms=self._realms_list.get_items(),
-                abilities=abilities,
-                limitations=self._limitations_list.get_items(),
-                costs=self._costs_list.get_items(),
-                rare_resources=self._resources_list.get_items(),
-                forbidden_methods=self._forbidden_list.get_items(),
-            ),
+            power_system=power_system if any(power_system.model_dump().values()) else None,
             factions=factions,
             history=self._history_edit.toPlainText().strip(),
             rules=self._rules_list.get_items(),
@@ -342,7 +428,7 @@ class BibleEditorView(QWidget):
         )
 
     def _gather_style(self) -> StyleGuide:
-        pacing_map = {1: "很慢", 2: "偏慢", 3: "适中", 4: "偏快", 5: "很快"}
+        pacing_map = {0: "", 1: "很慢", 2: "偏慢", 3: "适中", 4: "偏快", 5: "很快"}
         ref_text = self._ref_passages_edit.toPlainText().strip()
         ref_passages = [p.strip() for p in ref_text.split("\n\n") if p.strip()] if ref_text else []
 
@@ -361,21 +447,76 @@ class BibleEditorView(QWidget):
 
     # ── Actions ────────────────────────────────────────────────────────────
 
-    def _on_save(self) -> None:
+    def save_all(self) -> bool:
         if self._project_dir is None:
-            return
-        try:
-            save_world_setting(self._project_dir, self._gather_world())
-            save_style_guide(self._project_dir, self._gather_style())
-            self._character_tab._on_save()
-            self.saved.emit()
-        except Exception as e:
-            QMessageBox.warning(self, "保存失败", str(e))
+            return True
+        if self._world_dirty:
+            world = self._gather_world()
+            try:
+                save_world_setting(self._project_dir, world)
+            except Exception as error:
+                QMessageBox.warning(self, "世界设定保存失败", str(error))
+                return False
+            self._baseline_world = world.model_copy(deep=True)
+            self._world_dirty = False
+            self._update_aggregate_dirty_state()
+        if self._style_dirty:
+            style = self._gather_style()
+            try:
+                save_style_guide(self._project_dir, style)
+            except Exception as error:
+                QMessageBox.warning(self, "写作风格保存失败", str(error))
+                return False
+            self._baseline_style = style.model_copy(deep=True)
+            self._style_dirty = False
+            self._update_aggregate_dirty_state()
+        if self._character_tab.is_dirty and not self._character_tab.save_current_character():
+            return False
+        self._update_aggregate_dirty_state()
+        self.saved.emit()
+        return True
+
+    def _on_save(self) -> None:
+        self.save_all()
 
     def _on_apply_template(self) -> None:
-        world, style = get_xianxia_template()
-        self._populate_world_tab(world)
-        self._populate_style_tab(style)
+        from app.ui.template_apply_dialog import TemplateApplyDialog
+
+        dialog = TemplateApplyDialog(self)
+        if not dialog.exec() or not (dialog.apply_world or dialog.apply_style):
+            return
+        if dialog.merge_mode == TemplateMergeMode.REPLACE:
+            reply = QMessageBox.question(
+                self,
+                "确认替换",
+                "替换会覆盖所选范围中的现有内容，但只有在点击“保存”后才会写入磁盘。",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        template_world, template_style = get_xianxia_template()
+        self._populating = True
+        try:
+            if dialog.apply_world:
+                self._populate_world_tab(
+                    merge_world_setting(
+                        self._gather_world(), template_world, dialog.merge_mode
+                    )
+                )
+            if dialog.apply_style:
+                self._populate_style_tab(
+                    merge_style_guide(
+                        self._gather_style(), template_style, dialog.merge_mode
+                    )
+                )
+        finally:
+            self._populating = False
+        if dialog.apply_world:
+            self._recompute_world_dirty()
+        if dialog.apply_style:
+            self._recompute_style_dirty()
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────

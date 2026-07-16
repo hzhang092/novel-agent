@@ -165,6 +165,7 @@ class StateRepository:
         character_id: str,
         changes: list[dict],
         scene_id: str = "",
+        source: str = "user",
     ) -> CharacterStateEvent | None:
         """Commit a user-initiated state edit. Accepts dicts with type/field/value/old."""
         ensure_initial_state_event(char_dir, character_id)
@@ -188,7 +189,7 @@ class StateRepository:
             transaction_id=str(uuid.uuid4()),
             scene_id=scene_id,
             character_id=snapshot.character_id,
-            source="user",
+            source=source,
             request_id=str(uuid.uuid4()),
             created_at=now,
             changes=stored_changes,
@@ -256,6 +257,7 @@ def commit_character_state_edit(
     new_state: CharacterState,
     scene_id: str = "",
     bus: EventBus | None = None,
+    source: str = "user",
 ) -> CharacterStateEvent | None:
     """Persist a manual Character State edit as a user State Event."""
     changes = _diff_character_state(old_state, new_state)
@@ -264,6 +266,7 @@ def commit_character_state_edit(
         new_state.character_id or old_state.character_id,
         changes,
         scene_id=scene_id,
+        source=source,
     )
 
 

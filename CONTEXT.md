@@ -8,6 +8,42 @@ A local-first desktop application for writing Chinese web novels through a multi
 The directory that contains one novel project's `project.yaml` and standard subfolders for characters, outline, scenes, canon, and exports.
 _Avoid_: Project file folder, workspace folder.
 
+**Story Bible (故事设定集)**:
+The project's author-controlled story knowledge, organized into Overview, World, Characters, and Writing Style. It grows as the story develops; project creation does not require choosing a complete schema.
+_Avoid_: Novel Bible, lore database, setup wizard.
+
+**Progressive Disclosure (渐进式展示)**:
+The Story Bible interaction pattern that shows a small useful default and lets authors reveal optional Detail Fields, sections, or Story Elements as needed. It changes presentation and starting effort, not validation or stored story data.
+_Avoid_: Mandatory wizard, incomplete-data warning, schema selection.
+
+**Detail Field (详情字段)**:
+A predefined attribute that describes story data, such as a character's age, appearance, or hidden motive. A field may be shown or hidden without changing its stored value or whether it is available to context assembly.
+_Avoid_: Story Element, custom object, section.
+
+**Story Element (故事元素)**:
+A distinct named thing or concept in the Story Bible, such as a character, faction, location, culture, power system, historical event, item, or creature. Unlike a Detail Field, an element can exist independently and can have its own details.
+_Avoid_: Detail Field, world field, section.
+
+**Character Importance (角色重要性)**:
+The major, supporting, or background classification that controls the character editor's default Detail Fields and how much character data context assembly includes. It guides author effort but does not impose required fields.
+_Avoid_: Character type, completeness level, internal tier label in user-facing text.
+
+**Editor Layout (编辑器布局)**:
+Project-local UI preferences such as visible Detail Fields and collapsed sections. Stored separately from story data so hiding a populated field never deletes it or excludes it from generation context.
+_Avoid_: Character Definition, story schema, prompt selection.
+
+**Unsaved Character Edit (未保存角色编辑)**:
+A change in the character editor that has not been persisted. It must be saved, discarded with confirmation, or kept open before switching characters or closing the editor.
+_Avoid_: Dirty character, Stale Scene.
+
+**Manual State Override (手动状态覆盖)**:
+An explicit author edit to the otherwise read-only Character State view. Recording the override creates a user-sourced State Event so history, replay, invalidation, and snapshots remain consistent.
+_Avoid_: Direct state edit, snapshot edit, definition change.
+
+**Story Template (故事模板)**:
+A previewable pack of Story Elements and Writing Style values. Applying it uses an explicit merge choice, such as keeping existing values, filling empty values, or replacing selected sections; it does not silently replace the Story Bible.
+_Avoid_: Project preset, full-project replacement, mandatory schema.
+
 **Character Definition (角色基本设定)**:
 Immutable or slowly-changing character traits set by the author: name, personality, background, appearance, skills, weaknesses, speech style.
 _Avoid_: Character card, character core, static traits.
@@ -75,6 +111,13 @@ _Avoid_: Deletion, removal, tombstone.
 
 ## Relationships
 
+- **Story Bible → Progressive Disclosure → Story Elements / Detail Fields**: World knowledge grows through distinct Story Elements; Character Definitions grow through optional Detail Fields. Writing Style keeps compact core controls with expandable advanced sections.
+- **Character Importance → Editor Defaults / Context Assembly**: Importance changes which Detail Fields appear initially and how character data is compressed for generation. Authors may expose more fields without changing importance.
+- **Editor Layout ↔ Story Data**: Editor Layout controls presentation only. Hiding a Detail Field preserves its value, and prompt inclusion follows story-data and context rules rather than UI visibility.
+- **Unsaved Character Edit → Character Switching**: Switching characters must first save the edit, explicitly discard it, or cancel the switch.
+- **Character Definition ↔ Character State**: Definition is author-controlled profile data. State is an evolving continuity snapshot shown read-only by default, with History as its event record.
+- **Manual State Override → State Event → Character State**: A manual override is recorded as a user-sourced event, then replayed into Character State and its snapshots.
+- **Story Template → Preview → Merge**: Applying a template previews its changes and uses the chosen merge behavior instead of silently replacing existing story data.
 - **State Updater → State Change Proposal → Fact Approval Panel**: The State Updater produces proposals; the author approves them in the panel; approved proposals are committed as State Events.
 - **State Event → State Snapshot**: Snapshots are derived by replaying valid (non-invalidated) events from the event log.
 - **Scene Checkpoint → Context Assembly**: When generating Scene N, the context assembler reads the checkpoint from Scene N-1 to determine what characters knew at that point.

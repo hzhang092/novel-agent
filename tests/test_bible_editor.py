@@ -12,6 +12,201 @@ from app.storage.project_files import (
 )
 
 
+def test_bible_dirty_state_tracks_semantic_world_and_style_changes(tmp_path, qtbot):
+    from app.ui.bible_editor import BibleEditorView
+
+    proj_dir = create_project(tmp_path, Project(title="测试项目", genre="玄幻"))
+    editor = BibleEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+
+    assert editor.is_dirty is False
+
+    editor._geo_edit.setPlainText("新地理")
+    assert editor.is_dirty is True
+    editor._geo_edit.clear()
+    assert editor.is_dirty is False
+
+    editor._notes_edit.setPlainText("新风格")
+    assert editor.is_dirty is True
+
+
+def test_bible_save_all_persists_dirty_scopes_and_clears_state(tmp_path, qtbot):
+    from app.storage.models import Character, CharacterCore, CharacterState
+    from app.storage.project_files import load_character, save_character
+    from app.ui.bible_editor import BibleEditorView
+
+    proj_dir = create_project(tmp_path, Project(title="测试项目", genre="玄幻"))
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(id="char-1", name="林轩"),
+            state=CharacterState(character_id="char-1"),
+        ),
+    )
+    editor = BibleEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+    editor._geo_edit.setPlainText("新地理")
+    editor._notes_edit.setPlainText("新风格")
+    editor._character_tab._core_name.setText("林轩改")
+
+    assert editor.save_all() is True
+    assert editor.is_dirty is False
+    loaded = load_project(proj_dir)
+    assert loaded.world_setting.geography == "新地理"
+    assert loaded.style_guide.freeform_notes == "新风格"
+    assert load_character(proj_dir, "char-1").core.name == "林轩改"
+
+
+def test_bible_save_all_writes_only_dirty_sections(tmp_path, qtbot, monkeypatch):
+    from app.ui.bible_editor import BibleEditorView
+
+    proj_dir = create_project(tmp_path, Project(title="测试项目", genre="玄幻"))
+    editor = BibleEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+    editor._geo_edit.setPlainText("新地理")
+    calls = []
+    monkeypatch.setattr(
+        "app.ui.bible_editor.save_world_setting",
+        lambda *_args, **_kwargs: calls.append("world"),
+    )
+    monkeypatch.setattr(
+        "app.ui.bible_editor.save_style_guide",
+        lambda *_args, **_kwargs: calls.append("style"),
+    )
+
+    assert editor.save_all() is True
+    assert calls == ["world"]
+
+
+def test_template_fill_empty_uses_current_form_without_saving(tmp_path, qtbot):
+    from PyQt6.QtCore import QTimer
+    from PyQt6.QtWidgets import QApplication
+    from app.ui.bible_editor import BibleEditorView
+    from app.ui.template_apply_dialog import TemplateApplyDialog
+
+    proj_dir = create_project(tmp_path, Project(title="测试项目", genre="玄幻"))
+    editor = BibleEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+    editor._geo_edit.setPlainText("我的地理")
+
+    def accept_dialog():
+        dialog = QApplication.activeModalWidget()
+        assert isinstance(dialog, TemplateApplyDialog)
+        dialog.accept()
+
+    QTimer.singleShot(0, accept_dialog)
+    editor._template_btn.click()
+
+    assert editor._gather_world().geography == "我的地理"
+    assert editor._gather_style().pacing == "很快"
+    assert editor._gather_style().dialogue_density == "适中"
+    assert editor.is_dirty is True
+    assert load_project(proj_dir).world_setting.geography == ""
+
+
+def test_cancelled_template_application_changes_nothing(tmp_path, qtbot):
+    from PyQt6.QtCore import QTimer
+    from PyQt6.QtWidgets import QApplication
+    from app.ui.bible_editor import BibleEditorView
+    from app.ui.template_apply_dialog import TemplateApplyDialog
+
+    proj_dir = create_project(tmp_path, Project(title="测试项目", genre="玄幻"))
+    editor = BibleEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+    editor._geo_edit.setPlainText("我的地理")
+    before_world = editor._gather_world()
+    before_style = editor._gather_style()
+
+    def reject_dialog():
+        dialog = QApplication.activeModalWidget()
+        assert isinstance(dialog, TemplateApplyDialog)
+        dialog.reject()
+
+    QTimer.singleShot(0, reject_dialog)
+    editor._template_btn.click()
+
+    assert editor._gather_world() == before_world
+    assert editor._gather_style() == before_style
+
+
+def test_replace_template_requires_explicit_confirmation(tmp_path, qtbot, monkeypatch):
+    from PyQt6.QtCore import QTimer
+    from PyQt6.QtWidgets import QApplication, QMessageBox
+    from app.ui.bible_editor import BibleEditorView
+    from app.ui.template_apply_dialog import TemplateApplyDialog
+
+    proj_dir = create_project(tmp_path, Project(title="测试项目", genre="玄幻"))
+    editor = BibleEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+    editor._geo_edit.setPlainText("我的地理")
+    before = editor._gather_world()
+
+    def choose_replace():
+        dialog = QApplication.activeModalWidget()
+        assert isinstance(dialog, TemplateApplyDialog)
+        dialog._replace.setChecked(True)
+        dialog.accept()
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.No,
+    )
+    QTimer.singleShot(0, choose_replace)
+    editor._template_btn.click()
+
+    assert editor._gather_world() == before
+
+
+def test_character_dirty_state_propagates_to_bible(tmp_path, qtbot):
+    from app.storage.models import Character, CharacterCore, CharacterState
+    from app.storage.project_files import save_character
+    from app.ui.bible_editor import BibleEditorView
+
+    proj_dir = create_project(tmp_path, Project(title="测试项目", genre="玄幻"))
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(id="char-1", name="林轩"),
+            state=CharacterState(character_id="char-1"),
+        ),
+    )
+    editor = BibleEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+
+    editor._character_tab._core_name.setText("林轩改")
+
+    assert editor._world_dirty is False
+    assert editor._style_dirty is False
+    assert editor.is_dirty is True
+
+
+def test_loading_empty_power_system_clears_previous_project_values(tmp_path, qtbot):
+    from app.storage.models import PowerSystem, WorldSetting
+    from app.ui.bible_editor import BibleEditorView
+
+    first_dir = create_project(tmp_path / "first", Project(title="一", genre="玄幻"))
+    save_world_setting(
+        first_dir,
+        WorldSetting(power_system=PowerSystem(realms=["炼气"])),
+    )
+    second_dir = create_project(tmp_path / "second", Project(title="二", genre="都市"))
+    editor = BibleEditorView()
+    qtbot.addWidget(editor)
+
+    editor.load_project_dir(first_dir)
+    editor.load_project_dir(second_dir)
+
+    assert editor._gather_world().power_system is None
+
+
 def test_world_setting_save_load_round_trip(tmp_path):
     """Save a full WorldSetting, reload, verify all fields preserved."""
     project = Project(title="测试项目", genre="玄幻")

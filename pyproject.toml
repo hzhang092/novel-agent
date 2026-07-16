@@ -15,4 +15,5 @@ dependencies = [
 dev = [
     "pytest>=8.2",
     "pytest-asyncio>=0.23",
+    "pytest-qt>=4.4",
 ]

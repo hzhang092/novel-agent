@@ -310,8 +310,8 @@ def test_character_selectors_store_ids_and_disambiguate_duplicate_names(editor):
     ids = [widget._scene_pov.itemData(i) for i in range(widget._scene_pov.count())]
     assert labels == [
         "",
-        "Alex · major · char-maj",
-        "Alex · supporting · char-sup",
+        "Alex · 主要角色 · char-maj",
+        "Alex · 配角 · char-sup",
     ]
     assert ids == ["", "char-major-alex", "char-support-alex"]
 

@@ -119,8 +119,8 @@ def get_xianxia_template() -> tuple[WorldSetting, StyleGuide]:
     )
 
     style = StyleGuide(
-        pacing="快节奏",
-        dialogue_density="对白适中",
+        pacing="很快",
+        dialogue_density="适中",
         description_style="简练",
         tone="热血",
         sentence_length="短句多",

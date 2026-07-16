@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -33,9 +33,11 @@ from app.storage.project_files import (
     save_character,
     save_character_definition,
 )
+from app.storage.character_events import get_latest_event_id
 from app.storage.state_repository import commit_character_state_edit
 
 logger = logging.getLogger(__name__)
+from app.ui.display_labels import character_tier_label
 from app.ui.widgets import KeyValueTable, StringListEditor, read_table_cell
 
 TIER_COLORS = {
@@ -53,6 +55,7 @@ class CharacterEditorView(QWidget):
     """
 
     saved = pyqtSignal()
+    dirty_changed = pyqtSignal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -61,7 +64,13 @@ class CharacterEditorView(QWidget):
         self._current_id: str | None = None
         self._current_scene_id: str = ""
         self._bus = None
+        self._baseline_core: CharacterCore | None = None
+        self._core_dirty = False
+        self._populating = False
+        self._persisted_character_ids: set[str] = set()
+        self._selection_change_in_progress = False
         self._setup_ui()
+        self._connect_definition_changes()
 
     # ── Public API ─────────────────────────────────────────────────────────
 
@@ -69,12 +78,17 @@ class CharacterEditorView(QWidget):
         """Load all characters from disk and populate the list."""
         self._project_dir = project_dir
         self._refresh_character_list()
+        self._persisted_character_ids = set(self._characters)
         if self._characters:
             first_id = next(iter(self._characters))
             self._list.setCurrentRow(0)
             self._select_character(first_id)
         else:
             self._clear_detail()
+
+    @property
+    def is_dirty(self) -> bool:
+        return self._core_dirty
 
     def set_event_bus(self, bus) -> None:
         """Subscribe to domain events for live state refresh."""
@@ -116,9 +130,15 @@ class CharacterEditorView(QWidget):
 
         toolbar.addStretch()
 
+        self._unsaved_label = QLabel("未保存")
+        self._unsaved_label.setStyleSheet("color: #d48806;")
+        self._unsaved_label.setVisible(False)
+        toolbar.addWidget(self._unsaved_label)
+
         self._save_btn = QPushButton("保存")
         self._save_btn.setToolTip("保存当前角色修改到磁盘")
         self._save_btn.clicked.connect(self._on_save)
+        self._save_btn.setEnabled(False)
         toolbar.addWidget(self._save_btn)
         layout.addLayout(toolbar)
 
@@ -152,6 +172,30 @@ class CharacterEditorView(QWidget):
         splitter.setStretchFactor(1, 1)
         layout.addWidget(splitter)
 
+    def _connect_definition_changes(self) -> None:
+        for editor in (
+            self._core_name,
+            self._core_identity,
+            self._core_age,
+            self._core_goal,
+            self._core_motive,
+            self._core_speech,
+        ):
+            editor.textChanged.connect(self._recompute_core_dirty)
+        for editor in (
+            self._core_appearance,
+            self._core_personality,
+            self._core_background,
+        ):
+            editor.textChanged.connect(self._recompute_core_dirty)
+        self._core_tier.currentIndexChanged.connect(self._recompute_core_dirty)
+        for editor in (
+            self._core_aliases,
+            self._core_skills,
+            self._core_weaknesses,
+        ):
+            editor.changed.connect(self._recompute_core_dirty)
+
     # ── Core Tab ───────────────────────────────────────────────────────────
 
     def _build_core_tab(self) -> QScrollArea:
@@ -168,7 +212,8 @@ class CharacterEditorView(QWidget):
         row1.addWidget(self._core_name)
         row1.addWidget(QLabel("定位:"))
         self._core_tier = QComboBox()
-        self._core_tier.addItems(["major", "supporting", "background"])
+        for tier in CharacterTier:
+            self._core_tier.addItem(character_tier_label(tier), tier)
         row1.addWidget(self._core_tier)
         form.addLayout(row1)
 
@@ -250,6 +295,15 @@ class CharacterEditorView(QWidget):
         container = QWidget()
         form = QVBoxLayout(container)
 
+        form.addWidget(QLabel("当前状态由已确认的场景事件生成。"))
+        explanation = QLabel("普通“保存”只保存角色基本设定，不会修改当前状态。")
+        explanation.setStyleSheet("color: #777;")
+        form.addWidget(explanation)
+        self._edit_state_btn = QPushButton("手动修改状态")
+        self._edit_state_btn.setEnabled(False)
+        self._edit_state_btn.clicked.connect(self._on_edit_state)
+        form.addWidget(self._edit_state_btn)
+
         # Current goal
         form.addWidget(QLabel("<b>当前目标</b>"))
         self._state_goal = QLineEdit()
@@ -302,6 +356,18 @@ class CharacterEditorView(QWidget):
         self._state_last_scene.setReadOnly(True)
         form.addWidget(self._state_last_scene)
 
+        for field in (
+            self._state_goal,
+            self._state_emotion,
+            self._state_location,
+            self._state_power,
+            self._state_status,
+        ):
+            field.setReadOnly(True)
+        self._state_relationships.set_read_only(True)
+        self._state_knowledge.set_read_only(True)
+        self._state_secrets.set_read_only(True)
+
         form.addStretch()
         scroll.setWidget(container)
         return scroll
@@ -326,18 +392,75 @@ class CharacterEditorView(QWidget):
 
     def _add_to_list(self, character: Character) -> None:
         """Add a character entry to the list widget with tier badge."""
-        label = f"{character.core.name}"
+        label = f"{character.core.name} · {character_tier_label(character.core.tier)}"
         item = QListWidgetItem(label)
         item.setData(Qt.ItemDataRole.UserRole, character.core.id)
         color = TIER_COLORS.get(character.core.tier, QColor("#95a5a6"))
         item.setForeground(color)
         self._list.addItem(item)
 
-    def _on_list_selection_changed(self, current: QListWidgetItem | None, _previous) -> None:
-        if current is None:
+    def _on_list_selection_changed(
+        self,
+        current: QListWidgetItem | None,
+        previous: QListWidgetItem | None,
+    ) -> None:
+        if current is None or self._selection_change_in_progress:
             return
+        if self._core_dirty and previous is not None:
+            name = self._core_name.text().strip() or "未命名角色"
+            draft_note = "\n\n放弃修改会移除这个尚未保存的新角色。" if self._current_id not in self._persisted_character_ids else ""
+            reply = QMessageBox.question(
+                self,
+                "未保存的修改",
+                f"角色「{name}」有未保存的修改。{draft_note}",
+                QMessageBox.StandardButton.Save
+                | QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if reply == QMessageBox.StandardButton.Save:
+                if not self.save_current_character():
+                    self._restore_list_selection(previous)
+                    return
+            elif reply == QMessageBox.StandardButton.Discard:
+                self._discard_current_changes()
+            else:
+                self._restore_list_selection(previous)
+                return
         char_id = current.data(Qt.ItemDataRole.UserRole)
         self._select_character(char_id)
+
+    def _restore_list_selection(self, item: QListWidgetItem) -> None:
+        self._selection_change_in_progress = True
+        try:
+            blocker = QSignalBlocker(self._list)
+            self._list.setCurrentItem(item)
+            del blocker
+        finally:
+            self._selection_change_in_progress = False
+
+    def _discard_current_changes(self) -> None:
+        if self._project_dir is None or self._current_id is None:
+            return
+        char_id = self._current_id
+        if char_id not in self._persisted_character_ids:
+            self._characters.pop(char_id, None)
+            for row in range(self._list.count()):
+                item = self._list.item(row)
+                if item is not None and item.data(Qt.ItemDataRole.UserRole) == char_id:
+                    self._list.takeItem(row)
+                    break
+            self._baseline_core = None
+        else:
+            character = load_character(self._project_dir, char_id)
+            self._characters[char_id] = character
+            self._populating = True
+            try:
+                self._populate_core_tab(character.core)
+            finally:
+                self._populating = False
+            self._baseline_core = character.core.model_copy(deep=True)
+        self._set_core_dirty(False)
 
     def _select_character(self, char_id: str) -> None:
         """Populate detail tabs with the selected character's data."""
@@ -346,8 +469,19 @@ class CharacterEditorView(QWidget):
             self._clear_detail()
             return
         self._current_id = char_id
-        self._populate_core_tab(char.core)
-        self._populate_state_tab(char.state)
+        self._populating = True
+        try:
+            self._populate_core_tab(char.core)
+            self._populate_state_tab(char.state)
+        finally:
+            self._populating = False
+        self._baseline_core = char.core.model_copy(deep=True)
+        self._set_core_dirty(char_id not in self._persisted_character_ids)
+        persisted = char_id in self._persisted_character_ids
+        self._edit_state_btn.setEnabled(persisted)
+        self._edit_state_btn.setToolTip(
+            "" if persisted else "请先保存角色基本设定，再修改角色状态。"
+        )
         self._detail_tabs.setVisible(True)
         # Populate history tab
         if self._project_dir is not None:
@@ -356,6 +490,7 @@ class CharacterEditorView(QWidget):
 
     def _clear_detail(self) -> None:
         """Clear all detail fields."""
+        self._populating = True
         self._current_id = None
         self._detail_tabs.setVisible(False)
         self._core_name.clear()
@@ -381,12 +516,16 @@ class CharacterEditorView(QWidget):
         self._state_secrets.set_items([])
         self._state_status.clear()
         self._state_last_scene.clear()
+        self._baseline_core = None
+        self._populating = False
+        self._set_core_dirty(False)
+        self._edit_state_btn.setEnabled(False)
 
     # ── Populate ───────────────────────────────────────────────────────────
 
     def _populate_core_tab(self, core: CharacterCore) -> None:
         self._core_name.setText(core.name)
-        idx = self._core_tier.findText(core.tier.value)
+        idx = self._core_tier.findData(core.tier)
         if idx >= 0:
             self._core_tier.setCurrentIndex(idx)
         self._core_aliases.set_items(core.aliases)
@@ -427,10 +566,8 @@ class CharacterEditorView(QWidget):
     # ── Gather ─────────────────────────────────────────────────────────────
 
     def _gather_core(self, char_id: str) -> CharacterCore:
-        tier_text = self._core_tier.currentText()
-        try:
-            tier = CharacterTier(tier_text)
-        except ValueError:
+        tier = self._core_tier.currentData()
+        if not isinstance(tier, CharacterTier):
             tier = CharacterTier.SUPPORTING
 
         return CharacterCore(
@@ -449,6 +586,36 @@ class CharacterEditorView(QWidget):
             core_skills=self._core_skills.get_items(),
             core_weaknesses=self._core_weaknesses.get_items(),
         )
+
+    def _recompute_core_dirty(self) -> None:
+        if self._populating or self._current_id is None:
+            return
+        current = self._gather_core(self._current_id)
+        self._set_core_dirty(
+            self._current_id not in self._persisted_character_ids
+            or current != self._baseline_core
+        )
+
+    def _set_core_dirty(self, dirty: bool) -> None:
+        if self._core_dirty == dirty:
+            return
+        self._core_dirty = dirty
+        self._unsaved_label.setVisible(dirty)
+        self._save_btn.setEnabled(dirty)
+        self._update_current_list_item()
+        self.dirty_changed.emit(dirty)
+
+    def _update_current_list_item(self) -> None:
+        if self._current_id is None:
+            return
+        core = self._gather_core(self._current_id)
+        suffix = " *" if self._core_dirty else ""
+        for i in range(self._list.count()):
+            item = self._list.item(i)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == self._current_id:
+                item.setText(f"{core.name} · {character_tier_label(core.tier)}{suffix}")
+                item.setForeground(TIER_COLORS.get(core.tier, QColor("#95a5a6")))
+                return
 
     def _gather_state(self, char_id: str) -> CharacterState:
         relationships: dict[str, str] = {}
@@ -493,7 +660,10 @@ class CharacterEditorView(QWidget):
             if item is not None and item.data(Qt.ItemDataRole.UserRole) == char_id:
                 self._list.setCurrentRow(i)
                 break
-        self._select_character(char_id)
+        current = self._list.currentItem()
+        if current is None or current.data(Qt.ItemDataRole.UserRole) != char_id:
+            self._characters.pop(char_id, None)
+            self._list.takeItem(self._list.count() - 1)
 
     def _on_delete_character(self) -> None:
         """Delete the selected character with confirmation."""
@@ -501,11 +671,16 @@ class CharacterEditorView(QWidget):
             return
 
         char = self._characters.get(self._current_id)
-        name = char.core.name if char else "未知"
+        name = self._core_name.text().strip() or (char.core.name if char else "未知")
+        message = f"确定删除角色「{name}」吗？"
+        if self._core_dirty:
+            message += "\n\n该角色还有未保存的修改。删除后，已保存内容和未保存修改都会丢失。"
+        else:
+            message += "删除后无法恢复。"
         reply = QMessageBox.question(
             self,
             "确认删除",
-            f"确定要删除角色「{name}」吗？此操作不可撤销。",
+            message,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
@@ -523,49 +698,110 @@ class CharacterEditorView(QWidget):
         else:
             self._clear_detail()
 
-    def _on_save(self) -> None:
-        """Save the current character to disk."""
-        if self._project_dir is None or self._current_id is None:
+    def _on_edit_state(self) -> None:
+        if (
+            self._project_dir is None
+            or self._current_id is None
+            or self._current_id not in self._persisted_character_ids
+        ):
             return
+        from app.ui.character_state_edit_dialog import CharacterStateEditDialog
+
+        char_dir = self._project_dir / "characters" / self._current_id
+        persisted = load_character(self._project_dir, self._current_id)
+        opened_at_event_id = get_latest_event_id(char_dir)
+        dialog = CharacterStateEditDialog(persisted.state, self)
+        if not dialog.exec():
+            return
+        proposed = dialog.gathered_state()
+        if proposed == persisted.state:
+            return
+
+        changed_labels = [
+            label
+            for attribute, label in (
+                ("current_goal", "当前目标"),
+                ("current_emotion", "当前情绪"),
+                ("current_location", "当前位置"),
+                ("current_power_level", "当前修为"),
+                ("current_status", "当前状态"),
+                ("current_relationships", "当前关系"),
+                ("current_knowledge", "已知信息"),
+                ("current_secrets", "隐藏秘密"),
+            )
+            if getattr(persisted.state, attribute) != getattr(proposed, attribute)
+        ]
+        reply = QMessageBox.question(
+            self,
+            "确认手动修改状态",
+            "将记录以下状态修改：\n" + "、".join(changed_labels),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        if get_latest_event_id(char_dir) != opened_at_event_id:
+            QMessageBox.warning(
+                self,
+                "状态已变化",
+                "角色状态在编辑期间已发生变化。为避免覆盖新状态，请重新打开编辑窗口。",
+            )
+            return
+
+        event = commit_character_state_edit(
+            char_dir,
+            persisted.state,
+            proposed,
+            scene_id=self._current_scene_id,
+            bus=self._bus,
+            source="manual_event",
+        )
+        if event is not None:
+            self._reload_state_tab()
+            self._history_tab.set_character(char_dir, self._current_scene_id)
+
+    def save_current_character(self) -> bool:
+        """Persist the current Character Definition, if changed."""
+        if self._project_dir is None or self._current_id is None:
+            return True
+        if not self._core_dirty:
+            return True
 
         name = self._core_name.text().strip()
         if not name:
             QMessageBox.warning(self, "保存失败", "角色姓名不能为空")
-            return
+            return False
 
         try:
             core = self._gather_core(self._current_id)
-            state = self._gather_state(self._current_id)
-            character = Character(core=core, state=state)
-
             char_dir = self._project_dir / "characters" / self._current_id
             if (char_dir / "definition.yaml").exists():
-                old_state = load_character(self._project_dir, self._current_id).state
-                commit_character_state_edit(
-                    char_dir,
-                    old_state,
-                    state,
-                    scene_id=self._current_scene_id,
-                    bus=self._bus,
-                )
                 save_character_definition(self._project_dir, core)
             else:
-                save_character(self._project_dir, character)
+                save_character(
+                    self._project_dir,
+                    Character(core=core, state=CharacterState(character_id=self._current_id)),
+                )
 
             saved_character = load_character(self._project_dir, self._current_id)
             self._characters[self._current_id] = saved_character
-            self._populate_state_tab(saved_character.state)
-
-            # Update list item label
-            for i in range(self._list.count()):
-                item = self._list.item(i)
-                if item is not None and item.data(Qt.ItemDataRole.UserRole) == self._current_id:
-                    item.setText(saved_character.core.name)
-                    color = TIER_COLORS.get(saved_character.core.tier, QColor("#95a5a6"))
-                    item.setForeground(color)
-                    break
-
+            self._persisted_character_ids.add(self._current_id)
+            self._baseline_core = saved_character.core.model_copy(deep=True)
+            self._populating = True
+            try:
+                self._populate_core_tab(saved_character.core)
+                self._populate_state_tab(saved_character.state)
+            finally:
+                self._populating = False
+            self._set_core_dirty(False)
+            self._edit_state_btn.setEnabled(True)
+            self._edit_state_btn.setToolTip("")
             self.saved.emit()
+            return True
         except Exception as e:
             QMessageBox.warning(self, "保存失败", str(e))
+            return False
+
+    def _on_save(self) -> None:
+        self.save_current_character()
 
