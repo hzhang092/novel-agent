@@ -13,6 +13,11 @@ from app.storage.bible_models import (
     PowerSystemElement,
     TerminologyElement,
 )
+from app.storage.models import (
+    CharacterCore,
+    CharacterElementRelation,
+    CharacterElementRelationKind,
+)
 from app.ui.bible_element_editor import BibleElementEditor
 
 
@@ -132,6 +137,20 @@ def test_relation_kind_filters_target_types_and_previews_both_directions(qtbot):
     assert "Jade Peak will display: Contains Jade Sect" in editor._relation_preview.text()
 
 
+def test_relation_kind_picker_excludes_kinds_invalid_for_source_type(qtbot):
+    element = LocationElement(id="l1", name="Jade Peak")
+    editor = BibleElementEditor()
+    qtbot.addWidget(editor)
+    editor.load_element(element, elements=[element])
+
+    editor._add_empty_relation()
+    kind = editor._relations.cellWidget(0, 0)
+
+    assert kind.findData(BibleRelationKind.RELATED_TO) >= 0
+    assert kind.findData(BibleRelationKind.ALLIED_WITH) == -1
+    assert kind.findData(BibleRelationKind.CAUSED) == -1
+
+
 def test_relationship_target_search_matches_name_alias_and_tag(qtbot):
     element = FactionElement(
         id="f1",
@@ -180,3 +199,26 @@ def test_editor_shows_inbound_relations_with_inverse_label(qtbot):
     assert item.text(0) == "青云宗 — Controlled by"
     editor._inbound.itemActivated.emit(item, 0)
     assert requested == ["f1"]
+
+
+def test_editor_shows_connected_characters_and_requests_open(qtbot):
+    current = FactionElement(id="f1", name="Jade Sect")
+    character = CharacterCore(id="c1", name="Lin")
+    relation = CharacterElementRelation(
+        kind=CharacterElementRelationKind.MEMBER_OF,
+        target_element_id=current.id,
+    )
+    editor = BibleElementEditor()
+    qtbot.addWidget(editor)
+    requested = []
+    editor.character_requested.connect(requested.append)
+
+    editor.load_element(
+        current,
+        inbound_character_relations=[(character, relation)],
+    )
+    item = editor._connected_characters.topLevelItem(0)
+
+    assert item.text(0) == "Lin — Has member"
+    editor._connected_characters.itemActivated.emit(item, 0)
+    assert requested == ["c1"]

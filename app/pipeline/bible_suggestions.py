@@ -263,15 +263,9 @@ def apply_bible_suggestions(
             update={"element_relations": [*core.element_relations, relation]}
         )
 
-    from app.storage.bible_repository import rollback_files
+    from app.storage.story_bible_transaction import StoryBibleTransaction
 
-    touched = [path for path in service.project_dir.rglob("*") if path.is_file()]
-    touched.extend(
-        service.repository.elements_dir / f"{element_id}.yaml"
-        for element_id in created_ids.values()
+    StoryBibleTransaction(service, character_service).apply(
+        bible.overview, elements, character_updates.values()
     )
-    with rollback_files(touched):
-        service.apply_snapshot(bible.overview, elements)
-        for core in character_updates.values():
-            character_service.save(core)
     return AppliedBibleSuggestions(created_ids, tuple(character_updates))

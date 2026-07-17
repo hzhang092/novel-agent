@@ -136,6 +136,7 @@ class MainWindow(QMainWindow):
             bible.elements_changed.connect(
                 lambda: outline._refresh_world_elements()
             )
+            bible.scene_requested.connect(self._open_scene_from_bible)
 
         workspace = self.views["workspace"]
         if isinstance(workspace, SceneWorkspaceView):
@@ -156,6 +157,14 @@ class MainWindow(QMainWindow):
 
         # Disable non-dashboard sidebar items until a project is loaded
         self._set_nav_items_enabled(False)
+
+    def _open_scene_from_bible(self, scene_id: str) -> None:
+        self.sidebar.setCurrentRow(3)
+        if self.sidebar.currentRow() != 3:
+            return
+        outline = self.views.get("outline")
+        if isinstance(outline, OutlineEditorView):
+            outline._select_by_id(scene_id)
 
     def _on_nav_changed(self, index: int) -> None:
         # Auto-save Bible editor when navigating away from it
@@ -460,7 +469,7 @@ class MainWindow(QMainWindow):
 
         bible = self.views.get("bible")
         if isinstance(bible, BibleEditorView):
-            bible._character_tab.set_current_scene_id(scene_id)
+            bible.set_current_scene_id(scene_id)
             from app.storage.project_files import load_all_volumes
 
             referenced_ids = next(

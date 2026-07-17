@@ -9,6 +9,10 @@ from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QComboBox,
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -26,8 +30,10 @@ from PyQt6.QtWidgets import (
 )
 
 from app.storage.character_events import get_latest_event_id
+from app.storage.bible_repository import BibleElementRepository
+from app.domain.story_usage import ElementUsageSummary, StoryUsageService
 from app.storage.editor_layout import CharacterEditorLayout, EditorLayoutStore
-from app.storage.models import Character, CharacterCore, CharacterState, CharacterTier
+from app.storage.models import Character, CharacterCore, CharacterCustomFieldType, CharacterState, CharacterTier
 from app.storage.project_files import (
     delete_character,
     list_character_ids,
@@ -43,6 +49,7 @@ from app.ui.character_detail_catalog import (
     populated_character_fields,
 )
 from app.ui.display_labels import character_tier_label
+from app.ui.story_usage_panel import StoryUsagePanel
 from app.ui.widgets import (
     AddMenuItem,
     CollapsibleSection,
@@ -52,6 +59,8 @@ from app.ui.widgets import (
     StringListEditor,
     read_table_cell,
 )
+from app.ui.widgets.character_element_relation_editor import CharacterElementRelationEditor
+from app.ui.widgets.custom_character_field_editor import CustomCharacterFieldEditor
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +81,7 @@ class CharacterEditorView(QWidget):
     saved = pyqtSignal()
     dirty_changed = pyqtSignal(bool)
     characters_changed = pyqtSignal()
+    scene_requested = pyqtSignal(str)
 
     def __init__(
         self,
@@ -124,6 +134,15 @@ class CharacterEditorView(QWidget):
 
     def set_layout_store(self, layout_store: EditorLayoutStore) -> None:
         self._layout_store = layout_store
+
+    def select_character(self, character_id: str) -> bool:
+        """Select a loaded character for cross-editor navigation."""
+        for row in range(self._list.count()):
+            item = self._list.item(row)
+            if item and item.data(Qt.ItemDataRole.UserRole) == character_id:
+                self._list.setCurrentRow(row)
+                return True
+        return False
 
     @property
     def is_dirty(self) -> bool:
@@ -235,6 +254,9 @@ class CharacterEditorView(QWidget):
             self._core_weaknesses,
         ):
             editor.changed.connect(self._recompute_core_dirty)
+        self._custom_fields.changed.connect(self._recompute_core_dirty)
+        self._custom_fields.visibility_changed.connect(self._on_custom_field_visibility)
+        self._element_relations.changed.connect(self._recompute_core_dirty)
 
     # ── Core Tab ───────────────────────────────────────────────────────────
 
@@ -269,6 +291,21 @@ class CharacterEditorView(QWidget):
         self._recommended_btn.clicked.connect(self._show_recommended_fields)
         essentials_layout.addWidget(self._recommended_btn)
         form.addWidget(essentials)
+
+        self._custom_section = CollapsibleSection("自定义详情", section_id="custom_fields")
+        custom_content = QWidget()
+        custom_layout = QVBoxLayout(custom_content)
+        self._custom_fields = CustomCharacterFieldEditor()
+        custom_layout.addWidget(self._custom_fields)
+        self._custom_section.set_content_widget(custom_content)
+        self._custom_section.expanded_changed.connect(self._on_custom_section_expanded)
+        form.addWidget(self._custom_section)
+
+        self._connection_section = QGroupBox("故事连接")
+        connection_layout = QVBoxLayout(self._connection_section)
+        self._element_relations = CharacterElementRelationEditor()
+        connection_layout.addWidget(self._element_relations)
+        form.addWidget(self._connection_section)
 
         # Create every existing editor once; presentation controls only visibility.
         self._core_aliases = StringListEditor()
@@ -361,6 +398,11 @@ class CharacterEditorView(QWidget):
                     definition.keywords,
                 )
                 for definition in CHARACTER_DETAIL_DEFINITIONS
+            ] + [
+                AddMenuItem(
+                    "__create_custom__", "+ Create custom detail", "Custom",
+                    "Author-defined detail field", ("custom", "detail"),
+                )
             ],
             visible_ids=visible,
             populated_ids=populated,
@@ -383,6 +425,20 @@ class CharacterEditorView(QWidget):
             for section_id in layout.collapsed_sections
             if section_id in supported_sections
         ]
+        known_custom_ids = {
+            field.id
+            for character in self._characters.values()
+            for field in character.core.custom_fields
+        }
+        unknown_custom_ids = set(layout.hidden_custom_field_ids) - known_custom_ids
+        if unknown_custom_ids:
+            logger.warning(
+                "Ignoring unknown hidden custom field IDs: %s",
+                sorted(unknown_custom_ids),
+            )
+        layout.hidden_custom_field_ids = [
+            field_id for field_id in layout.hidden_custom_field_ids if field_id in known_custom_ids
+        ]
 
     def _apply_character_layout(self, layout: CharacterEditorLayout) -> None:
         self._sanitize_character_layout(layout)
@@ -392,8 +448,24 @@ class CharacterEditorView(QWidget):
             detail.setVisible(field_id in visible)
         for section_id, section in self._detail_sections.items():
             section.set_expanded(section_id not in layout.collapsed_sections)
+        self._custom_section.set_expanded(not layout.custom_section_collapsed)
+        self._custom_fields.set_hidden_ids(layout.hidden_custom_field_ids)
         self._recompute_section_visibility()
         self._layout_notice.clear()
+
+    def _on_custom_section_expanded(self, expanded: bool) -> None:
+        if self._current_layout is None:
+            return
+        self._current_layout.custom_section_collapsed = not expanded
+        if self._layout_store is not None:
+            self._layout_store.schedule_save()
+
+    def _on_custom_field_visibility(self) -> None:
+        if self._current_layout is None:
+            return
+        self._current_layout.hidden_custom_field_ids = self._custom_fields.hidden_ids()
+        if self._layout_store is not None:
+            self._layout_store.schedule_save()
 
     def _set_detail_field_visible(
         self,
@@ -429,6 +501,14 @@ class CharacterEditorView(QWidget):
             )
 
     def _on_add_detail(self, field_id: str) -> None:
+        if field_id == "__create_custom__":
+            detail = self._show_custom_detail_dialog()
+            if detail is None:
+                return
+            label, value_type, include = detail
+            self._custom_fields.add_empty_field(label, value_type, include)
+            self._custom_section.set_expanded(True)
+            return
         self._set_detail_field_visible(field_id, True)
         definition = next(
             item for item in CHARACTER_DETAIL_DEFINITIONS if item.field_id == field_id
@@ -437,6 +517,41 @@ class CharacterEditorView(QWidget):
         section.set_expanded(True)
         self._on_section_expanded(definition.section_id, True)
         self._detail_fields[field_id].focus_editor()
+
+    def _show_custom_detail_dialog(
+        self,
+    ) -> tuple[str, CharacterCustomFieldType, bool] | None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Create custom detail")
+        form = QFormLayout(dialog)
+        label = QLineEdit()
+        field_type = QComboBox()
+        for value_type, text in (
+            (CharacterCustomFieldType.TEXT, "短文本"),
+            (CharacterCustomFieldType.LONG_TEXT, "长文本"),
+            (CharacterCustomFieldType.STRING_LIST, "列表"),
+        ):
+            field_type.addItem(text, value_type)
+        include = QCheckBox("用于生成")
+        include.setChecked(True)
+        form.addRow("名称", label)
+        form.addRow("类型", field_type)
+        form.addRow("", include)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Add")
+        buttons.rejected.connect(dialog.reject)
+        buttons.accepted.connect(dialog.accept)
+        form.addRow(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        value_type = field_type.currentData()
+        return (
+            label.text(),
+            value_type if isinstance(value_type, CharacterCustomFieldType) else CharacterCustomFieldType.TEXT,
+            include.isChecked(),
+        )
 
     def _on_hide_detail(self, field_id: str) -> None:
         if self._current_id is None:
@@ -598,6 +713,13 @@ class CharacterEditorView(QWidget):
         self._state_last_scene.setReadOnly(True)
         form.addWidget(self._state_last_scene)
 
+        self._saved_state_summary = QLabel()
+        self._saved_state_summary.setStyleSheet("color: #777;")
+        form.addWidget(self._saved_state_summary)
+        self._presence_panel = StoryUsagePanel(title="Scene presence")
+        self._presence_panel.scene_requested.connect(self.scene_requested)
+        form.addWidget(self._presence_panel)
+
         for field in (
             self._state_goal,
             self._state_emotion,
@@ -735,6 +857,7 @@ class CharacterEditorView(QWidget):
             "" if persisted else "请先保存角色基本设定，再修改角色状态。"
         )
         self._detail_tabs.setVisible(True)
+        self._refresh_presence()
         # Populate history tab
         if self._project_dir is not None:
             char_dir = self._project_dir / "characters" / char_id
@@ -758,6 +881,8 @@ class CharacterEditorView(QWidget):
         self._core_speech.clear()
         self._core_skills.set_items([])
         self._core_weaknesses.set_items([])
+        self._custom_fields.set_fields([])
+        self._element_relations.set_relations([])
 
         self._state_goal.clear()
         self._state_emotion.clear()
@@ -770,6 +895,7 @@ class CharacterEditorView(QWidget):
         self._state_last_scene.clear()
         self._baseline_core = None
         self._current_layout = None
+        self._presence_panel.clear()
         self._populating = False
         self._set_core_dirty(False)
         self._edit_state_btn.setEnabled(False)
@@ -792,6 +918,13 @@ class CharacterEditorView(QWidget):
         self._core_speech.setText(core.speech_style)
         self._core_skills.set_items(core.core_skills)
         self._core_weaknesses.set_items(core.core_weaknesses)
+        self._custom_fields.set_fields(core.custom_fields)
+        self._element_relations.set_relations(core.element_relations)
+        if self._project_dir is not None:
+            try:
+                self._element_relations.set_elements(BibleElementRepository(self._project_dir).load_all())
+            except FileNotFoundError:
+                self._element_relations.set_elements([])
 
     def _populate_state_tab(self, state: CharacterState) -> None:
         self._state_goal.setText(state.current_goal)
@@ -804,6 +937,9 @@ class CharacterEditorView(QWidget):
         self._state_secrets.set_items(state.current_secrets)
         self._state_status.setText(state.current_status)
         self._state_last_scene.setText(state.last_updated_scene or "")
+        self._saved_state_summary.setText(
+            f"已保存状态：{state.current_status or '—'} · 当前位置：{state.current_location or '—'}"
+        )
 
     def _reload_state_tab(self) -> None:
         """Reload the current character's state from disk."""
@@ -813,10 +949,18 @@ class CharacterEditorView(QWidget):
             char = load_character(self._project_dir, self._current_id)
             self._characters[self._current_id] = char
             self._populate_state_tab(char.state)
+            self._refresh_presence()
         except Exception:
             logger.exception("Failed to reload state for %s", self._current_id)
 
     # ── Gather ─────────────────────────────────────────────────────────────
+
+    def _refresh_presence(self) -> None:
+        if self._project_dir is None or self._current_id is None:
+            self._presence_panel.clear()
+            return
+        usages = StoryUsageService(self._project_dir).character_presence(self._current_id)
+        self._presence_panel.set_usage(ElementUsageSummary(self._current_id, tuple(usages)))
 
     def _gather_core(self, char_id: str) -> CharacterCore:
         tier = self._core_tier.currentData()
@@ -839,8 +983,8 @@ class CharacterEditorView(QWidget):
             speech_style=self._core_speech.text().strip(),
             core_skills=self._core_skills.get_items(),
             core_weaknesses=self._core_weaknesses.get_items(),
-            custom_fields=stored.custom_fields,
-            element_relations=stored.element_relations,
+            custom_fields=self._custom_fields.fields(),
+            element_relations=self._element_relations.relations(),
             definition_revision=stored.definition_revision,
             definition_updated_at=stored.definition_updated_at,
         )
@@ -1078,6 +1222,7 @@ class CharacterEditorView(QWidget):
             try:
                 self._populate_core_tab(saved_character.core)
                 self._populate_state_tab(saved_character.state)
+                self._refresh_presence()
             finally:
                 self._populating = False
             self._set_core_dirty(False)

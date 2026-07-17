@@ -68,3 +68,24 @@ def test_element_list_selects_by_id_and_marks_unsaved(qtbot):
     item = widget._tree.currentItem()
     assert item.text(0).startswith("* ")
     assert "Location" in item.text(0)
+
+
+def test_element_list_filters_unused_elements_and_shows_usage_counts(qtbot):
+    widget = BibleElementList()
+    qtbot.addWidget(widget)
+    widget.set_elements([
+        FactionElement(id="used", name="Cloud Sect"),
+        FactionElement(id="unused", name="Moon Sect"),
+    ])
+
+    widget.set_usage_counts({"used": 3, "unused": 0})
+    widget.set_unused_only(True)
+
+    assert _group_labels(widget) == ["World Overview", "Factions (1)"]
+    item = widget._tree.topLevelItem(1).child(0)
+    assert item.data(0, 0x0100) == "unused"
+    assert "0 uses" in item.text(0)
+
+    widget.set_unused_only(False)
+    widget.select_element("used")
+    assert "3 uses" in widget._tree.currentItem().text(0)

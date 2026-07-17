@@ -1,7 +1,7 @@
 """Searchable, grouped list of typed Story Bible elements."""
 
 from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
-from PyQt6.QtWidgets import QComboBox, QLineEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QCheckBox, QComboBox, QLineEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
 from app.domain.bible_search import search_elements
 from app.storage.bible_models import BibleElement, BibleElementType
@@ -28,6 +28,7 @@ class BibleElementList(QWidget):
         self._selected_id: str | None = None
         self._collapsed_type_groups: set[str] = set()
         self._current_scene_element_ids: set[str] | None = None
+        self._usage_counts: dict[str, int] = {}
         self._rebuilding = False
 
         layout = QVBoxLayout(self)
@@ -55,6 +56,10 @@ class BibleElementList(QWidget):
         self._scope_filter.addItem("Referenced by current scene", "referenced")
         self._scope_filter.currentIndexChanged.connect(self._rebuild)
         layout.addWidget(self._scope_filter)
+
+        self._unused_filter = QCheckBox("Unused only")
+        self._unused_filter.toggled.connect(self._rebuild)
+        layout.addWidget(self._unused_filter)
 
         self._tree = QTreeWidget()
         self._tree.setHeaderHidden(True)
@@ -110,6 +115,16 @@ class BibleElementList(QWidget):
         self._unsaved_ids = set(element_ids)
         self._rebuild()
 
+    def set_usage_counts(self, counts: dict[str, int]) -> None:
+        self._usage_counts = dict(counts)
+        self._rebuild()
+
+    def set_unused_only(self, enabled: bool) -> None:
+        blocker = QSignalBlocker(self._unused_filter)
+        self._unused_filter.setChecked(enabled)
+        del blocker
+        self._rebuild()
+
     def select_element(self, element_id: str) -> None:
         item = self._find_item(element_id)
         if item is not None:
@@ -137,6 +152,8 @@ class BibleElementList(QWidget):
                 else None
             ),
         )
+        if self._unused_filter.isChecked():
+            filtered = [item for item in filtered if self._usage_counts.get(item.id, 0) == 0]
         blocker = QSignalBlocker(self._tree)
         self._rebuilding = True
         try:
@@ -153,7 +170,8 @@ class BibleElementList(QWidget):
                 for element in elements:
                     marker = "* " if element.id in self._unsaved_ids else ""
                     tags = f" · {', '.join(element.tags)}" if element.tags else ""
-                    item = QTreeWidgetItem(group, [f"{marker}{element.name} · {type_label}{tags}"])
+                    uses = f" · {self._usage_counts.get(element.id, 0)} uses"
+                    item = QTreeWidgetItem(group, [f"{marker}{element.name} · {type_label}{tags}{uses}"])
                     item.setData(0, Qt.ItemDataRole.UserRole, element.id)
                 group.setExpanded(element_type.value not in self._collapsed_type_groups)
             item = self._find_item(selected_id) if selected_id else None

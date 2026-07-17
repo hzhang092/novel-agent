@@ -22,6 +22,9 @@ from PyQt6.QtWidgets import (
 )
 
 from app.domain.bible_relation_catalog import RELATION_DEFINITIONS, relation_definition
+from app.domain.character_element_relation_catalog import (
+    relation_definition as character_relation_definition,
+)
 from app.storage.bible_models import (
     BibleElement,
     BibleElementBase,
@@ -37,6 +40,7 @@ from app.storage.bible_models import (
 )
 from app.ui.bible_element_list import ELEMENT_TYPE_DETAILS
 from app.ui.widgets import KeyValueTable, StringListEditor, read_table_cell
+from app.storage.models import CharacterCore, CharacterElementRelation
 
 
 def _semantic_data(element: BibleElementBase) -> dict:
@@ -47,6 +51,7 @@ class BibleElementEditor(QWidget):
     dirty_changed = pyqtSignal(bool)
     changed = pyqtSignal()
     element_requested = pyqtSignal(str)
+    character_requested = pyqtSignal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -68,6 +73,9 @@ class BibleElementEditor(QWidget):
         *,
         elements: list[BibleElement] | None = None,
         inbound_relations: list[tuple[BibleElement, BibleElementRelation]] | None = None,
+        inbound_character_relations: list[
+            tuple[CharacterCore, CharacterElementRelation]
+        ] | None = None,
     ) -> None:
         self._baseline = element.model_copy(deep=True)
         self._elements = list(elements or [element])
@@ -83,6 +91,7 @@ class BibleElementEditor(QWidget):
             self._populate_typed_fields(element)
             self._populate_relations(element.relationships)
             self._populate_inbound(inbound_relations or [])
+            self._populate_connected_characters(inbound_character_relations or [])
         finally:
             self._populating = False
         self._set_dirty(False)
@@ -153,6 +162,15 @@ class BibleElementEditor(QWidget):
         self._inbound.setMaximumHeight(100)
         self._inbound.itemActivated.connect(self._request_inbound_source)
         layout.addWidget(self._inbound)
+
+        layout.addWidget(QLabel("Connected characters"))
+        self._connected_characters = QTreeWidget()
+        self._connected_characters.setHeaderHidden(True)
+        self._connected_characters.setMaximumHeight(100)
+        self._connected_characters.itemActivated.connect(
+            self._request_connected_character
+        )
+        layout.addWidget(self._connected_characters)
 
     def _build_typed_pages(self) -> None:
         self._faction_description = QTextEdit()
@@ -348,6 +366,12 @@ class BibleElementEditor(QWidget):
         self._relations.insertRow(row)
         kind = QComboBox()
         for definition in RELATION_DEFINITIONS.values():
+            source_type = self._baseline.element_type if self._baseline else None
+            if (
+                definition.allowed_source_types is not None
+                and source_type not in definition.allowed_source_types
+            ):
+                continue
             kind.addItem(definition.label, definition.kind)
         if relation is not None:
             kind.setCurrentIndex(kind.findData(relation.kind))
@@ -491,6 +515,26 @@ class BibleElementEditor(QWidget):
 
     def _request_inbound_source(self, item: QTreeWidgetItem, _column: int) -> None:
         self.element_requested.emit(item.data(0, Qt.ItemDataRole.UserRole))
+
+    def _populate_connected_characters(
+        self,
+        relations: list[tuple[CharacterCore, CharacterElementRelation]],
+    ) -> None:
+        self._connected_characters.clear()
+        for character, relation in relations:
+            item = QTreeWidgetItem(
+                self._connected_characters,
+                [
+                    f"{character.name} — "
+                    f"{character_relation_definition(relation.kind).inverse_label}"
+                ],
+            )
+            item.setData(0, Qt.ItemDataRole.UserRole, character.id)
+
+    def _request_connected_character(
+        self, item: QTreeWidgetItem, _column: int
+    ) -> None:
+        self.character_requested.emit(item.data(0, Qt.ItemDataRole.UserRole))
 
     def _recompute_dirty(self, *_args) -> None:
         if self._populating or self._baseline is None:

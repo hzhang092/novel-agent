@@ -35,6 +35,8 @@ class SceneUsage:
     matched_alias: str = ""
     generated_element_revision: int | None = None
     current_element_revision: int | None = None
+    location_label: str = ""
+    location_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -142,6 +144,17 @@ class StoryUsageService:
         return ElementUsageSummary(element_id, tuple(usages))
 
     def character_presence(self, character_id: str) -> list[SceneUsage]:
+        locations = [
+            element
+            for element in WorldBibleService(self.project_dir).load().elements
+            if element.element_type == BibleElementType.LOCATION
+        ]
+        locations_by_id = {element.id: element for element in locations}
+        locations_by_name = {
+            normalize_text(name): element
+            for element in locations
+            for name in (element.name, *element.aliases)
+        }
         usages: list[SceneUsage] = []
         scene_order = 0
         for volume in load_all_volumes(self.project_dir):
@@ -154,12 +167,47 @@ class StoryUsageService:
                     }
                     if character_id not in participants:
                         continue
+                    location = next(
+                        (
+                            locations_by_id[element_id]
+                            for element_id in scene.world_element_ids
+                            if element_id in locations_by_id
+                        ),
+                        None,
+                    )
+                    reason = "Explicit location element" if location else ""
+                    if location is None and scene.location:
+                        location = locations_by_name.get(normalize_text(scene.location))
+                        if location is not None:
+                            reason = "Matched scene location text"
+                    if location is None:
+                        record = load_scene_generation_record(self.project_dir, scene.id)
+                        marker = load_scene_active_marker(
+                            self.project_dir, chapter.id, scene.id
+                        )
+                        generated_ids = (
+                            record.generated_with.get("bible_elements", {})
+                            if _record_is_active(record, marker)
+                            else {}
+                        )
+                        location = next(
+                            (
+                                locations_by_id[element_id]
+                                for element_id in generated_ids
+                                if element_id in locations_by_id
+                            ),
+                            None,
+                        )
+                        if location is not None:
+                            reason = "Generation-context location"
                     usages.append(SceneUsage(
                         scene.id,
                         chapter.id,
                         scene_order,
                         scene.title,
                         frozenset({StoryUsageKind.CHARACTER_PRESENCE}),
+                        location_label=location.name if location else scene.location,
+                        location_reason=reason,
                     ))
         return usages
 

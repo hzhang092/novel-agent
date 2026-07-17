@@ -810,3 +810,193 @@ def test_character_delete_removes_file(tmp_path):
 
     delete_character(proj_dir, core.id)
     assert core.id not in list_character_ids(proj_dir)
+
+
+def test_custom_field_user_flow_saves_and_reloads(tmp_path, qtbot):
+    from app.storage.models import CharacterCustomFieldType
+    from app.ui.character_editor import CharacterEditorView
+
+    project_dir = _project_with_character(tmp_path)
+    editor = CharacterEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(project_dir)
+    fields = editor._custom_fields
+    fields._label.setText("法宝")
+    fields._type.setCurrentIndex(fields._type.findData(CharacterCustomFieldType.STRING_LIST))
+    fields._value.setPlainText("青锋剑\n玄铁盾")
+    fields._include.setChecked(False)
+    fields._add.click()
+
+    assert editor._gather_core("char-1").custom_fields[0].value == ["青锋剑", "玄铁盾"]
+    assert editor.is_dirty
+    assert editor.save_current_character()
+
+    reopened = CharacterEditorView()
+    qtbot.addWidget(reopened)
+    reopened.load_project_dir(project_dir)
+    saved = reopened._gather_core("char-1").custom_fields[0]
+    assert (saved.label, saved.value, saved.include_in_generation) == ("法宝", ["青锋剑", "玄铁盾"], False)
+
+
+def test_story_connection_filters_targets_and_persists_stable_id(tmp_path, qtbot):
+    from app.storage.bible_models import FactionElement, LocationElement
+    from app.storage.bible_repository import BibleElementRepository
+    from app.storage.models import CharacterElementRelationKind
+    from app.ui.character_editor import CharacterEditorView
+
+    project_dir = _project_with_character(tmp_path)
+    repository = BibleElementRepository(project_dir)
+    repository.create(FactionElement(id="faction-1", name="青云门"))
+    repository.create(LocationElement(id="location-1", name="云州"))
+    editor = CharacterEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(project_dir)
+    links = editor._element_relations
+    links._kind.setCurrentIndex(links._kind.findData(CharacterElementRelationKind.MEMBER_OF))
+    assert [links._target.itemData(index) for index in range(links._target.count())] == ["faction-1"]
+    links._add.click()
+
+    assert editor.save_current_character()
+    assert load_character(project_dir, "char-1").core.element_relations[0].target_element_id == "faction-1"
+
+
+def test_custom_field_type_conversion_requires_confirmation_and_is_predictable(
+    tmp_path, qtbot, monkeypatch
+):
+    from PyQt6.QtWidgets import QMessageBox
+    from app.storage.models import CharacterCustomField, CharacterCustomFieldType
+    from app.ui.character_editor import CharacterEditorView
+
+    project_dir = _project_with_character(tmp_path)
+    editor = CharacterEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(project_dir)
+    editor._custom_fields.set_fields([
+        CharacterCustomField(label="备注", value_type=CharacterCustomFieldType.LONG_TEXT, value="甲\n乙")
+    ])
+    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes)
+    fields = editor._custom_fields
+    fields._list.setCurrentRow(0)
+    fields._type.setCurrentIndex(fields._type.findData(CharacterCustomFieldType.STRING_LIST))
+
+    assert editor._gather_core("char-1").custom_fields[0].value == ["甲", "乙"]
+    assert editor.is_dirty
+
+
+def test_hiding_custom_field_preserves_value_without_story_dirty_state(tmp_path, qtbot):
+    from app.storage.models import CharacterCustomField, CharacterCustomFieldType
+    from app.storage.project_files import save_character
+    from app.ui.character_editor import CharacterEditorView
+
+    project_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    field = CharacterCustomField(label="暗号", value_type=CharacterCustomFieldType.TEXT, value="春风")
+    save_character(project_dir, Character(core=CharacterCore(id="char-1", name="林轩", custom_fields=[field]), state=CharacterState(character_id="char-1")))
+    editor = CharacterEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(project_dir)
+    editor._custom_fields._list.setCurrentRow(0)
+    editor._custom_fields._hide.click()
+
+    assert editor._custom_fields.hidden_ids() == [field.id]
+    assert editor._gather_core("char-1").custom_fields[0].value == "春风"
+    assert editor.is_dirty is False
+
+
+def test_public_select_character_supports_cross_editor_navigation(tmp_path, qtbot):
+    from app.ui.character_editor import CharacterEditorView
+
+    project_dir = _project_with_character(tmp_path)
+    _add_saved_character(project_dir, character_id="char-2", name="苏清鸾")
+    editor = CharacterEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(project_dir)
+
+    assert editor.select_character("char-2") is True
+    assert editor._current_id == "char-2"
+    assert editor.select_character("missing") is False
+
+
+def test_character_presence_is_read_only_and_navigates_to_scene(tmp_path, qtbot):
+    from app.storage.models import ChapterOutline, SceneOutline, VolumeOutline
+    from app.storage.project_files import save_volume_outline
+    from app.ui.character_editor import CharacterEditorView
+
+    project_dir = _project_with_character(tmp_path)
+    save_volume_outline(project_dir, VolumeOutline(id="volume-1", chapters=[
+        ChapterOutline(id="chapter-1", scenes=[SceneOutline(
+            id="scene-1", title="初入宗门", pov_character_id="char-1"
+        )])
+    ]))
+    editor = CharacterEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(project_dir)
+
+    group = editor._presence_panel._tree.topLevelItem(0)
+    assert group.text(0) == "Character presence (1)"
+    assert "当前位置" in editor._saved_state_summary.text()
+    with qtbot.waitSignal(editor.scene_requested) as signal:
+        editor._presence_panel._request_scene(group.child(0), 0)
+    assert signal.args == ["scene-1"]
+    assert editor.is_dirty is False
+
+
+def test_story_connection_can_search_edit_note_and_remove(tmp_path, qtbot):
+    from app.storage.bible_models import FactionElement
+    from app.storage.models import CharacterElementRelationKind
+    from app.ui.widgets.character_element_relation_editor import CharacterElementRelationEditor
+
+    links = CharacterElementRelationEditor()
+    qtbot.addWidget(links)
+    links.set_elements([FactionElement(id="faction-1", name="青云门")])
+    links._kind.setCurrentIndex(links._kind.findData(CharacterElementRelationKind.MEMBER_OF))
+    assert links._target.isEditable()
+    links._note.setText("外门弟子")
+    links._add.click()
+    links._list.setCurrentRow(0)
+    links._note.setText("掌门")
+    links._update.click()
+    assert links.relations()[0].note == "掌门"
+    links._remove.click()
+    assert links.relations() == []
+
+
+def test_add_detail_menu_creates_custom_detail_in_dedicated_section(
+    tmp_path, qtbot, monkeypatch
+):
+    from app.storage.models import CharacterCustomFieldType
+    from app.ui.character_editor import CharacterEditorView
+
+    project_dir = _project_with_character(tmp_path)
+    editor = CharacterEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(project_dir)
+    editor._open_add_detail_menu()
+    custom_group = next(
+        editor._add_detail_menu._tree.topLevelItem(index)
+        for index in range(editor._add_detail_menu._tree.topLevelItemCount())
+        if editor._add_detail_menu._tree.topLevelItem(index).text(0) == "Custom"
+    )
+    assert custom_group.child(0).text(0) == "+ Create custom detail"
+    monkeypatch.setattr(
+        editor,
+        "_show_custom_detail_dialog",
+        lambda: ("法宝", CharacterCustomFieldType.TEXT, False),
+    )
+
+    editor._on_add_detail("__create_custom__")
+
+    assert editor._custom_section.is_expanded()
+    assert [(field.label, field.include_in_generation) for field in editor._custom_fields.fields()] == [("法宝", False)]
+
+
+def test_custom_field_clear_value_updates_field(tmp_path, qtbot):
+    from app.storage.models import CharacterCustomField, CharacterCustomFieldType
+    from app.ui.widgets.custom_character_field_editor import CustomCharacterFieldEditor
+
+    fields = CustomCharacterFieldEditor()
+    qtbot.addWidget(fields)
+    fields.set_fields([CharacterCustomField(label="法宝", value_type=CharacterCustomFieldType.TEXT, value="青锋剑")])
+    fields._list.setCurrentRow(0)
+    fields._clear.click()
+
+    assert fields.fields()[0].value == ""

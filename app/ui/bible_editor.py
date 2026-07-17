@@ -72,6 +72,7 @@ class BibleEditorView(QWidget):
     saved = pyqtSignal()
     dirty_changed = pyqtSignal(bool)
     elements_changed = pyqtSignal()
+    scene_requested = pyqtSignal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -121,6 +122,10 @@ class BibleEditorView(QWidget):
     @property
     def is_dirty(self) -> bool:
         return self._world_tab.is_dirty or self._style_dirty or self._character_tab.is_dirty
+
+    def set_current_scene_id(self, scene_id: str | None) -> None:
+        self._character_tab.set_current_scene_id(scene_id)
+        self._world_tab.set_current_scene_id(scene_id)
 
     # ── UI Setup ───────────────────────────────────────────────────────────
 
@@ -325,6 +330,8 @@ class BibleEditorView(QWidget):
         self._world_tab.dirty_changed.connect(self._on_world_dirty_changed)
         self._world_tab.content_changed.connect(self._refresh_overview)
         self._world_tab.elements_changed.connect(self.elements_changed)
+        self._world_tab.character_requested.connect(self._open_character)
+        self._world_tab.scene_requested.connect(self.scene_requested)
 
         self._pacing_slider.valueChanged.connect(self._recompute_style_dirty)
         for row in (
@@ -344,6 +351,12 @@ class BibleEditorView(QWidget):
             editor.textChanged.connect(self._recompute_style_dirty)
         self._character_tab.dirty_changed.connect(self._update_aggregate_dirty_state)
         self._character_tab.characters_changed.connect(self._refresh_overview)
+
+    def _open_character(self, character_id: str) -> None:
+        if not self._world_tab._resolve_dirty_before_switch():
+            return
+        self._tabs.setCurrentWidget(self._character_tab)
+        self._character_tab.select_character(character_id)
 
     def _on_world_dirty_changed(self, dirty: bool) -> None:
         self._world_dirty = dirty

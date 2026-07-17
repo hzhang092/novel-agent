@@ -144,6 +144,8 @@ def test_character_presence_is_derived_at_explicit_location(tmp_path):
     assert character_usage[0].usage_kinds == frozenset({
         StoryUsageKind.CHARACTER_PRESENCE
     })
+    assert character_usage[0].location_label == "Cloud Peak"
+    assert character_usage[0].location_reason == "Explicit location element"
     assert element_usage.usage_kinds == frozenset({
         StoryUsageKind.EXPLICIT_OUTLINE,
         StoryUsageKind.CHARACTER_PRESENCE,
@@ -171,6 +173,25 @@ def test_location_presence_uses_exact_normalized_scene_location_fallback(tmp_pat
     usages = StoryUsageService(project_dir).location_presence("location-1")
 
     assert [usage.scene_id for usage in usages] == ["scene-1"]
+
+
+def test_character_presence_reports_scene_location_match_reason(tmp_path):
+    project_dir = _project_with_scene(
+        tmp_path,
+        SceneOutline(
+            id="scene-1",
+            location="ＳＫＹ ＨＯＭＥ",
+            participating_character_ids=["character-1"],
+        ),
+    )
+    WorldBibleService(project_dir).save_element(
+        LocationElement(id="location-1", name="Cloud Peak", aliases=["Sky Home"])
+    )
+
+    usage = StoryUsageService(project_dir).character_presence("character-1")[0]
+
+    assert usage.location_label == "Cloud Peak"
+    assert usage.location_reason == "Matched scene location text"
 
 
 def test_element_usage_ignores_inactive_generation_records(tmp_path):
@@ -279,6 +300,28 @@ def test_location_presence_uses_active_generation_context(tmp_path):
 
     assert [usage.scene_id for usage in usages] == ["scene-1"]
     assert usages[0].generated_element_revision == 1
+
+
+def test_character_presence_reports_generation_context_location(tmp_path):
+    project_dir = _project_with_scene(
+        tmp_path,
+        SceneOutline(id="scene-1", participating_character_ids=["character-1"]),
+    )
+    WorldBibleService(project_dir).save_element(
+        LocationElement(id="location-1", name="Cloud Peak")
+    )
+    save_scene_generation_record(
+        project_dir,
+        SceneGenerationRecord(
+            scene_id="scene-1",
+            generated_with={"bible_elements": {"location-1": {"revision": 1}}},
+        ),
+    )
+
+    usage = StoryUsageService(project_dir).character_presence("character-1")[0]
+
+    assert usage.location_label == "Cloud Peak"
+    assert usage.location_reason == "Generation-context location"
 
 
 def test_prose_matching_uses_safe_latin_boundaries_and_chinese_substrings(tmp_path):

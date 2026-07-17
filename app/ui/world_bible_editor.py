@@ -2,20 +2,26 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 
 from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QHBoxLayout,
+    QApplication,
+    QDialog,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QMenu,
     QScrollArea,
     QSplitter,
     QStackedWidget,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -28,11 +34,13 @@ from app.storage.bible_models import (
     WorldOverview,
 )
 from app.storage.bible_repository import WorldBibleService
+from app.domain.story_usage import StoryUsageKind, StoryUsageService
+from app.storage.character_definition_service import CharacterDefinitionService
 from app.storage.editor_layout import EditorLayoutStore
-from app.storage.project_files import load_all_volumes
 from app.ui.bible_element_dialog import BibleElementDialog
 from app.ui.bible_element_editor import BibleElementEditor
 from app.ui.bible_element_list import BibleElementList
+from app.ui.story_usage_panel import StoryUsagePanel
 from app.ui.widgets import CollapsibleSection, StringListEditor
 from app.ui.world_section_catalog import WORLD_SECTION_DEFINITIONS
 
@@ -45,11 +53,15 @@ class WorldBibleEditorView(QWidget):
     element_saved = pyqtSignal(str)
     element_deleted = pyqtSignal(str)
     elements_changed = pyqtSignal()
+    character_requested = pyqtSignal(str)
+    scene_requested = pyqtSignal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._project_dir: Path | None = None
         self._service: WorldBibleService | None = None
+        self._character_service: CharacterDefinitionService | None = None
+        self._usage_service: StoryUsageService | None = None
         self._layout_store: EditorLayoutStore | None = None
         self._elements: list[BibleElement] = []
         self._persisted_ids: set[str] = set()
@@ -60,6 +72,8 @@ class WorldBibleEditorView(QWidget):
         self._last_dirty = False
         self._populating = False
         self._selection_change_in_progress = False
+        self._current_scene_id: str | None = None
+        self._suggest_task = None
         self._overview_sections: dict[str, CollapsibleSection] = {}
         self._setup_ui()
         self._connect_changes()
@@ -79,11 +93,15 @@ class WorldBibleEditorView(QWidget):
         ):
             self._layout_store = EditorLayoutStore(self._project_dir)
         self._service = WorldBibleService(self._project_dir)
+        self._character_service = CharacterDefinitionService(self._project_dir)
+        self._usage_service = StoryUsageService(self._project_dir)
         try:
             bible = self._service.load()
         except Exception as error:
             self._project_dir = None
             self._service = None
+            self._character_service = None
+            self._usage_service = None
             self._layout_store = None
             self._elements = []
             self._persisted_ids = set()
@@ -129,6 +147,7 @@ class WorldBibleEditorView(QWidget):
         self._snapshot_dirty = False
         self._apply_layout()
         self._element_list.set_elements(self._elements)
+        self._refresh_usage()
 
         selected = self._layout_store.layout.world.selected_item_id
         if selected != "overview" and selected not in self._persisted_ids:
@@ -206,8 +225,10 @@ class WorldBibleEditorView(QWidget):
             saved,
             elements=self._elements,
             inbound_relations=self._inbound_relations(saved.id),
+            inbound_character_relations=self._character_inbound_relations(saved.id),
         )
         self._refresh_element_list(saved.id)
+        self._refresh_usage(saved.id)
         self.element_saved.emit(saved.id)
         if was_new:
             self.elements_changed.emit()
@@ -238,6 +259,7 @@ class WorldBibleEditorView(QWidget):
         self._overview_dirty = False
         self._snapshot_dirty = False
         self._refresh_element_list("overview")
+        self._refresh_usage()
         for element_id in previous_ids - self._persisted_ids:
             self.element_deleted.emit(element_id)
         for element_id in self._persisted_ids:
@@ -278,6 +300,9 @@ class WorldBibleEditorView(QWidget):
     def set_current_scene_element_ids(self, element_ids: set[str] | None) -> None:
         self._element_list.set_current_scene_element_ids(element_ids)
 
+    def set_current_scene_id(self, scene_id: str | None) -> None:
+        self._current_scene_id = scene_id
+
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -294,6 +319,30 @@ class WorldBibleEditorView(QWidget):
         self._add_button = QPushButton("+ Add Element")
         self._add_button.clicked.connect(lambda: self.open_add_element_dialog())
         left_layout.addWidget(self._add_button)
+        self._suggest_button = QToolButton()
+        self._suggest_button.setText("Suggest from text")
+        self._suggest_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._suggest_menu = QMenu(self._suggest_button)
+        for label, source in (
+            ("World Overview", "overview"),
+            ("Current Story Element", "element"),
+            ("Current Scene Outline", "scene_outline"),
+            ("Current Scene Prose", "scene_prose"),
+            ("Paste text", "paste"),
+            ("Selected text", "selected"),
+        ):
+            self._suggest_menu.addAction(
+                label, lambda _checked=False, key=source: self._queue_suggestion_source(key)
+            )
+        self._suggest_button.setMenu(self._suggest_menu)
+        left_layout.addWidget(self._suggest_button)
+        self._suggest_status = QLabel()
+        self._suggest_status.setWordWrap(True)
+        left_layout.addWidget(self._suggest_status)
+        self._cancel_suggest_button = QPushButton("Cancel extraction")
+        self._cancel_suggest_button.setVisible(False)
+        self._cancel_suggest_button.clicked.connect(self._cancel_suggestions)
+        left_layout.addWidget(self._cancel_suggest_button)
         self._splitter.addWidget(left)
 
         self._detail_stack = QStackedWidget()
@@ -370,6 +419,9 @@ class WorldBibleEditorView(QWidget):
         self._element_editor = BibleElementEditor()
         scroll.setWidget(self._element_editor)
         layout.addWidget(scroll)
+        self._usage_panel = StoryUsagePanel()
+        self._usage_panel.scene_requested.connect(self.scene_requested)
+        layout.addWidget(self._usage_panel)
         return page
 
     def _connect_changes(self) -> None:
@@ -381,6 +433,7 @@ class WorldBibleEditorView(QWidget):
         self._element_editor.dirty_changed.connect(lambda _dirty: self._emit_dirty())
         self._element_editor.changed.connect(self._on_element_changed)
         self._element_editor.element_requested.connect(self._element_list.select_element)
+        self._element_editor.character_requested.connect(self.character_requested)
         self._overview_geography.textChanged.connect(self._recompute_overview_dirty)
         self._overview_technology.textChanged.connect(self._recompute_overview_dirty)
         self._overview_society.textChanged.connect(self._recompute_overview_dirty)
@@ -478,7 +531,9 @@ class WorldBibleEditorView(QWidget):
                     element,
                     elements=self._elements,
                     inbound_relations=self._inbound_relations(item_id),
+                    inbound_character_relations=self._character_inbound_relations(item_id),
                 )
+                self._refresh_usage(item_id)
         if self._layout_store is not None:
             self._layout_store.layout.world.selected_item_id = item_id
             self._layout_store.schedule_save()
@@ -533,22 +588,39 @@ class WorldBibleEditorView(QWidget):
         else:
             inbound = len(self._service.repository.get_inbound_relations(element_id))
             outgoing = len(element.relationships)
-            scenes = sum(
-                element_id in scene.world_element_ids
-                for volume in load_all_volumes(self._project_dir)
-                for chapter in volume.chapters
-                for scene in chapter.scenes
+            character_links = len(
+                self._character_service.characters_referencing_element(element_id)
+            ) if self._character_service is not None else 0
+            usage_scenes = (
+                self._usage_service.element_usage(element_id).scenes
+                if self._usage_service is not None
+                else ()
             )
+            usage_counts = {
+                kind: sum(kind in scene.usage_kinds for scene in usage_scenes)
+                for kind in (
+                    StoryUsageKind.EXPLICIT_OUTLINE,
+                    StoryUsageKind.GENERATION_CONTEXT,
+                    StoryUsageKind.PROSE_MENTION,
+                )
+            }
             primary = (
                 self._service.repository.load_manifest().primary_power_system_id
                 == element_id
             )
             message = (
                 f'Delete “{element.name}”?\n\nReferenced by:\n'
-                f'• {inbound} Story Elements\n• {scenes} Scenes\n'
+                f'• {inbound} Story Elements\n'
+                f'• Character connections: {character_links}\n'
+                f'• Scene outlines: {usage_counts[StoryUsageKind.EXPLICIT_OUTLINE]}\n'
+                f'• Generated scene revisions: '
+                f'{usage_counts[StoryUsageKind.GENERATION_CONTEXT]}\n'
+                f'• Detected prose mentions: '
+                f'{usage_counts[StoryUsageKind.PROSE_MENTION]}\n'
                 f'• Outgoing relationships: {outgoing}\n'
                 f'• Primary power system: {"yes" if primary else "no"}\n\n'
-                "Deleting it will remove these references."
+                "Deleting it will remove stored references. "
+                "Detected mentions remain in the prose."
             )
         if not self._confirm_delete(message):
             return
@@ -561,6 +633,7 @@ class WorldBibleEditorView(QWidget):
         self._elements = [item for item in self._elements if item.id != element_id]
         self._persisted_ids.discard(element_id)
         self._refresh_element_list("overview")
+        self._refresh_usage()
         self._element_list.select_element("overview")
         if self._current_id != "overview":
             self._select_item("overview")
@@ -696,3 +769,120 @@ class WorldBibleEditorView(QWidget):
             for relation in source.relationships
             if relation.target_element_id == element_id
         ]
+
+    def _character_inbound_relations(self, element_id: str):
+        if self._character_service is None:
+            return []
+        return self._character_service.characters_referencing_element(element_id)
+
+    def _queue_suggestion_source(self, source: str) -> None:
+        text = self._suggestion_source_text(source)
+        if not text or not self._resolve_dirty_before_switch():
+            return
+        self._suggest_task = asyncio.ensure_future(self._run_suggestions(text))
+
+    def _suggestion_source_text(self, source: str) -> str:
+        if source == "overview":
+            return self._gather_overview().model_dump_json()
+        if source == "element" and self._current_id not in (None, "overview"):
+            return self._element_editor.gather_element().model_dump_json()
+        if source == "paste":
+            text, accepted = QInputDialog.getMultiLineText(
+                self, "Suggest from text", "Source text"
+            )
+            return text.strip() if accepted else ""
+        if source == "selected":
+            widget = QApplication.focusWidget()
+            if hasattr(widget, "selectedText"):
+                return widget.selectedText().strip()
+            if hasattr(widget, "textCursor"):
+                return widget.textCursor().selectedText().strip()
+            return ""
+        if self._project_dir is None or self._current_scene_id is None:
+            return ""
+        from app.storage.project_files import load_all_volumes, load_scene_prose
+
+        for volume in load_all_volumes(self._project_dir):
+            for chapter in volume.chapters:
+                for scene in chapter.scenes:
+                    if scene.id != self._current_scene_id:
+                        continue
+                    if source == "scene_outline":
+                        return scene.model_dump_json()
+                    if source == "scene_prose":
+                        return load_scene_prose(
+                            self._project_dir, chapter.id, scene.id
+                        )
+        return ""
+
+    async def _run_suggestions(self, source_text: str, *, provider=None) -> None:
+        if self._service is None or self._project_dir is None:
+            return
+        from app.pipeline.agents.bible_assistant import BibleAssistantAgent
+        from app.pipeline.bible_suggestions import apply_bible_suggestions
+        from app.providers.config import get_provider_for_step, load_provider_config
+        from app.storage.project_files import list_character_ids
+        from app.ui.bible_suggestion_dialog import BibleSuggestionDialog
+
+        if provider is None:
+            provider = get_provider_for_step("bible_assistant", load_provider_config())
+        self._suggest_button.setEnabled(False)
+        self._cancel_suggest_button.setVisible(True)
+        self._suggest_status.setText("Extracting suggestions…")
+        try:
+            characters = [
+                self._character_service.load(character_id)
+                for character_id in list_character_ids(self._project_dir)
+            ] if self._character_service is not None else []
+            proposals = await BibleAssistantAgent().generate(
+                provider,
+                source_text,
+                existing_elements=self._elements,
+                characters=characters,
+            )
+            if not proposals:
+                self._suggest_status.setText("No suggestions found")
+                return
+            dialog = BibleSuggestionDialog(proposals, self._elements, self)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                self._suggest_status.setText("Suggestions cancelled")
+                return
+            selected = dialog.selected_proposals()
+            if selected:
+                apply_bible_suggestions(
+                    self._service,
+                    selected,
+                    character_service=self._character_service,
+                )
+                project_dir = self._project_dir
+                self.load_project_dir(project_dir)
+                self.elements_changed.emit()
+                self.content_changed.emit()
+            self._suggest_status.setText(f"Applied {len(selected)} suggestions")
+        except asyncio.CancelledError:
+            self._suggest_status.setText("Suggestions cancelled")
+        except Exception as error:
+            self._suggest_status.setText("Suggestion extraction failed")
+            QMessageBox.warning(self, "Story Bible suggestions failed", str(error))
+        finally:
+            try:
+                await provider.close()
+            finally:
+                self._suggest_button.setEnabled(True)
+                self._cancel_suggest_button.setVisible(False)
+                self._suggest_task = None
+
+    def _cancel_suggestions(self) -> None:
+        if self._suggest_task is not None:
+            self._suggest_task.cancel()
+
+    def _refresh_usage(self, element_id: str | None = None) -> None:
+        if self._usage_service is None:
+            self._element_list.set_usage_counts({})
+            self._usage_panel.clear()
+            return
+        self._element_list.set_usage_counts(self._usage_service.all_element_counts())
+        if element_id in self._persisted_ids:
+            self._usage_panel.set_usage(self._usage_service.element_usage(element_id))
+        elif element_id is not None:
+            self._usage_panel.clear()

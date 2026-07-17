@@ -1,3 +1,9 @@
+import asyncio
+
+import pytest
+
+from app.pipeline.bible_suggestions import BibleSuggestionResponse, CreateElementSuggestion
+from app.providers.base import MockProvider
 from app.storage.bible_models import (
     BibleElementRelation,
     BibleElementType,
@@ -7,8 +13,24 @@ from app.storage.bible_models import (
     WorldOverview,
 )
 from app.storage.bible_repository import BibleElementRepository
-from app.storage.models import Project, WorldSetting
-from app.storage.project_files import create_project, save_world_setting
+from app.storage.character_definition_service import CharacterDefinitionService
+from app.storage.models import (
+    ChapterOutline,
+    CharacterCore,
+    CharacterElementRelation,
+    Project,
+    SceneGenerationRecord,
+    SceneOutline,
+    VolumeOutline,
+    WorldSetting,
+)
+from app.storage.project_files import (
+    create_project,
+    save_scene_generation_record,
+    save_volume_outline,
+    save_world_setting,
+    set_active_scene_prose_version,
+)
 from app.ui.world_bible_editor import WorldBibleEditorView
 
 
@@ -182,3 +204,288 @@ def test_delete_confirmation_reports_outgoing_and_primary_status(
     assert "Outgoing relationships: 1" in messages[0]
     assert "Primary power system: yes" in messages[0]
     assert BibleElementRepository(project_dir).load(power.id).name == "Cultivation"
+
+
+def test_world_element_shows_and_opens_connected_character(tmp_path, qtbot):
+    project_dir = create_project(tmp_path, Project(title="Story", genre="Fantasy"))
+    BibleElementRepository(project_dir).create(
+        FactionElement(id="faction", name="Jade Sect")
+    )
+    CharacterDefinitionService(project_dir).save(
+        CharacterCore(
+            id="hero",
+            name="Lin",
+            element_relations=[
+                CharacterElementRelation(
+                    kind="member_of", target_element_id="faction"
+                )
+            ],
+        )
+    )
+    editor = WorldBibleEditorView()
+    qtbot.addWidget(editor)
+    requested = []
+    editor.character_requested.connect(requested.append)
+
+    editor.load_project_dir(project_dir)
+    editor._element_list.select_element("faction")
+    item = editor._element_editor._connected_characters.topLevelItem(0)
+    editor._element_editor._connected_characters.itemActivated.emit(item, 0)
+
+    assert requested == ["hero"]
+
+
+def test_world_element_shows_usage_and_requests_scene(tmp_path, qtbot):
+    project_dir = create_project(tmp_path, Project(title="Story", genre="Fantasy"))
+    save_volume_outline(
+        project_dir,
+        VolumeOutline(
+            id="volume",
+            chapters=[
+                ChapterOutline(
+                    id="chapter",
+                    scenes=[
+                        SceneOutline(
+                            id="scene",
+                            chapter_id="chapter",
+                            title="At the gate",
+                            world_element_ids=["faction"],
+                        )
+                    ],
+                )
+            ],
+        ),
+    )
+    BibleElementRepository(project_dir).create(
+        FactionElement(id="faction", name="Jade Sect")
+    )
+    editor = WorldBibleEditorView()
+    qtbot.addWidget(editor)
+    requested = []
+    editor.scene_requested.connect(requested.append)
+
+    editor.load_project_dir(project_dir)
+    editor._element_list.select_element("faction")
+    group = editor._usage_panel._tree.topLevelItem(0)
+    scene = group.child(0)
+    editor._usage_panel._tree.itemActivated.emit(scene, 0)
+
+    assert group.text(0) == "Explicit outline (1)"
+    assert "1 uses" in editor._element_list._find_item("faction").text(0)
+    assert requested == ["scene"]
+
+
+def test_delete_preview_counts_character_links_and_all_story_usage(
+    tmp_path, qtbot, monkeypatch
+):
+    project_dir = create_project(tmp_path, Project(title="Story", genre="Fantasy"))
+    save_volume_outline(
+        project_dir,
+        VolumeOutline(
+            id="volume",
+            chapters=[
+                ChapterOutline(
+                    id="chapter",
+                    scenes=[SceneOutline(
+                        id="scene",
+                        title="Rumor",
+                        world_element_ids=["faction"],
+                    )],
+                )
+            ],
+        ),
+    )
+    BibleElementRepository(project_dir).create(
+        FactionElement(id="faction", name="Jade Sect")
+    )
+    CharacterDefinitionService(project_dir).save(
+        CharacterCore(
+            id="hero",
+            name="Lin",
+            element_relations=[
+                CharacterElementRelation(
+                    kind="member_of", target_element_id="faction"
+                )
+            ],
+        )
+    )
+    prose_dir = project_dir / "scenes" / "chapter"
+    prose_dir.mkdir(parents=True)
+    (prose_dir / "scene.v1.md").write_text(
+        "The Jade Sect is whispered about.", encoding="utf-8"
+    )
+    set_active_scene_prose_version(project_dir, "chapter", "scene", "v1")
+    save_scene_generation_record(
+        project_dir,
+        SceneGenerationRecord(
+            scene_id="scene",
+            generated_with={"bible_elements": {"faction": {"revision": 1}}},
+        ),
+    )
+    editor = WorldBibleEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(project_dir)
+    editor._element_list.select_element("faction")
+    messages = []
+    monkeypatch.setattr(
+        editor, "_confirm_delete", lambda message: messages.append(message) or False
+    )
+
+    editor._on_delete_element()
+
+    assert "Character connections: 1" in messages[0]
+    assert "Scene outlines: 1" in messages[0]
+    assert "Generated scene revisions: 1" in messages[0]
+    assert "Detected prose mentions: 1" in messages[0]
+    assert "remain in the prose" in messages[0]
+
+
+def test_save_refreshes_usage_revision_mismatch(tmp_path, qtbot):
+    project_dir = create_project(tmp_path, Project(title="Story", genre="Fantasy"))
+    save_volume_outline(
+        project_dir,
+        VolumeOutline(id="volume", chapters=[ChapterOutline(
+            id="chapter",
+            scenes=[SceneOutline(id="scene", world_element_ids=["faction"])],
+        )]),
+    )
+    BibleElementRepository(project_dir).create(
+        FactionElement(id="faction", name="Jade Sect")
+    )
+    save_scene_generation_record(
+        project_dir,
+        SceneGenerationRecord(
+            scene_id="scene",
+            generated_with={"bible_elements": {"faction": {"revision": 1}}},
+        ),
+    )
+    editor = WorldBibleEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(project_dir)
+    editor._element_list.select_element("faction")
+
+    editor._element_editor._summary.setPlainText("Changed after generation")
+    assert editor.save_current_element()
+
+    generated = editor._usage_panel._tree.topLevelItem(1).child(0)
+    assert "revision changed (1 → 2)" in generated.text(0)
+
+
+def test_suggest_menu_offers_all_phase4_text_sources(qtbot):
+    editor = WorldBibleEditorView()
+    qtbot.addWidget(editor)
+
+    assert [action.text() for action in editor._suggest_menu.actions()] == [
+        "World Overview",
+        "Current Story Element",
+        "Current Scene Outline",
+        "Current Scene Prose",
+        "Paste text",
+        "Selected text",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_rejected_ai_review_writes_nothing_and_closes_provider(
+    tmp_path, qtbot, monkeypatch
+):
+    from PyQt6.QtWidgets import QDialog
+    from app.ui.bible_suggestion_dialog import BibleSuggestionDialog
+
+    class ClosingProvider(MockProvider):
+        closed = False
+
+        async def close(self):
+            self.closed = True
+
+    project_dir = create_project(tmp_path, Project(title="Story", genre="Fantasy"))
+    provider = ClosingProvider(
+        structured_response=BibleSuggestionResponse(
+            proposals=[
+                CreateElementSuggestion(
+                    proposal_id="new-sect",
+                    confidence=0.9,
+                    element_type="faction",
+                    name="Jade Sect",
+                )
+            ]
+        )
+    )
+    editor = WorldBibleEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(project_dir)
+    monkeypatch.setattr(BibleSuggestionDialog, "exec", lambda _self: QDialog.DialogCode.Rejected)
+
+    await editor._run_suggestions("The Jade Sect rules the valley.", provider=provider)
+
+    assert BibleElementRepository(project_dir).load_all() == []
+    assert provider.closed is True
+    assert editor._suggest_button.isEnabled()
+
+
+@pytest.mark.asyncio
+async def test_accepted_ai_review_applies_selected_suggestions(
+    tmp_path, qtbot, monkeypatch
+):
+    from PyQt6.QtWidgets import QDialog
+    from app.ui.bible_suggestion_dialog import BibleSuggestionDialog
+
+    project_dir = create_project(tmp_path, Project(title="Story", genre="Fantasy"))
+    provider = MockProvider(
+        structured_response=BibleSuggestionResponse(
+            proposals=[
+                CreateElementSuggestion(
+                    proposal_id="new-sect",
+                    confidence=0.9,
+                    element_type="faction",
+                    name="Jade Sect",
+                )
+            ]
+        )
+    )
+    editor = WorldBibleEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(project_dir)
+    monkeypatch.setattr(BibleSuggestionDialog, "exec", lambda _self: QDialog.DialogCode.Accepted)
+
+    await editor._run_suggestions("The Jade Sect rules the valley.", provider=provider)
+
+    assert [item.name for item in BibleElementRepository(project_dir).load_all()] == [
+        "Jade Sect"
+    ]
+    assert editor._suggest_status.text() == "Applied 1 suggestions"
+
+
+@pytest.mark.asyncio
+async def test_cancel_ai_extraction_closes_provider_and_restores_controls(
+    tmp_path, qtbot, monkeypatch
+):
+    from app.pipeline.agents.bible_assistant import BibleAssistantAgent
+
+    class ClosingProvider(MockProvider):
+        closed = False
+
+        async def close(self):
+            self.closed = True
+
+    async def wait_forever(*_args, **_kwargs):
+        await asyncio.Event().wait()
+
+    project_dir = create_project(tmp_path, Project(title="Story", genre="Fantasy"))
+    provider = ClosingProvider()
+    editor = WorldBibleEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(project_dir)
+    monkeypatch.setattr(BibleAssistantAgent, "generate", wait_forever)
+    editor._suggest_task = asyncio.create_task(
+        editor._run_suggestions("Jade Sect", provider=provider)
+    )
+    await asyncio.sleep(0)
+
+    editor._cancel_suggestions()
+    await editor._suggest_task
+
+    assert provider.closed is True
+    assert editor._suggest_button.isEnabled()
+    assert not editor._cancel_suggest_button.isVisible()
+    assert editor._suggest_status.text() == "Suggestions cancelled"
