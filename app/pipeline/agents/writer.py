@@ -214,6 +214,9 @@ def _build_writer_prompt(context: dict) -> str:
                     lines.append(f"  当前状态：{state['current_status']}")
             for sc in supporting:
                 lines.append(f"\n· {sc.get('name', '')}（配角）")
+                if sc.get("personality"):
+                    lines.append(f"  性格：{sc['personality']}")
+                lines.extend(character_prompt_lines(sc, {}))
                 if sc.get("relationship"):
                     lines.append(f"  关系：{sc['relationship']}")
             for bc in background:

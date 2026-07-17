@@ -22,6 +22,7 @@ from app.storage.bible_models import (
     WorldOverview,
     normalize_text,
     semantically_equal,
+    validate_storage_id,
 )
 
 
@@ -79,10 +80,15 @@ class BibleElementRepository:
         return [self.load(element_id) for element_id in manifest.element_order]
 
     def load(self, element_id: str) -> BibleElement:
-        path = self.elements_dir / f"{element_id}.yaml"
+        path = self.element_path(element_id)
         if not path.exists():
             raise FileNotFoundError(path)
-        return _ELEMENT_ADAPTER.validate_python(self._read_yaml(path))
+        element = _ELEMENT_ADAPTER.validate_python(self._read_yaml(path))
+        if element.id != element_id:
+            raise ValueError(
+                f"Bible Element ID {element.id!r} does not match manifest ID {element_id!r}"
+            )
+        return element
 
     def create(self, element: BibleElement) -> BibleElement:
         manifest = self.load_manifest()
@@ -117,10 +123,10 @@ class BibleElementRepository:
     def delete(self, element_id: str) -> None:
         manifest = self.load_manifest()
         if element_id not in manifest.element_order:
-            raise FileNotFoundError(self.elements_dir / f"{element_id}.yaml")
+            raise FileNotFoundError(self.element_path(element_id))
         remaining = [item for item in self.load_all() if item.id != element_id]
         self.validate_graph(remaining)
-        (self.elements_dir / f"{element_id}.yaml").unlink()
+        self.element_path(element_id).unlink()
         manifest.element_order.remove(element_id)
         if manifest.primary_power_system_id == element_id:
             manifest.primary_power_system_id = None
@@ -208,9 +214,17 @@ class BibleElementRepository:
     def _write_element(self, element: BibleElementBase) -> None:
         self.elements_dir.mkdir(parents=True, exist_ok=True)
         self._write_yaml_atomic(
-            self.elements_dir / f"{element.id}.yaml",
+            self.element_path(element.id),
             element.model_dump(mode="json"),
         )
+
+    def element_path(self, element_id: str) -> Path:
+        element_id = validate_storage_id(element_id)
+        root = self.elements_dir.resolve()
+        path = (root / f"{element_id}.yaml").resolve()
+        if path.parent != root:
+            raise ValueError("Bible Element path escapes the elements directory")
+        return path
 
     def _commit_manifest(self, manifest: BibleManifest) -> None:
         manifest.content_revision += 1
@@ -265,7 +279,7 @@ class WorldBibleService:
     def save_element(self, element: BibleElement) -> BibleElement:
         bible = self.load()
         with rollback_files(self._transaction_paths([
-            self.repository.elements_dir / f"{element.id}.yaml"
+            self.repository.element_path(element.id)
         ])):
             if element.id in self.repository.load_manifest().element_order:
                 saved = self.repository.save(element)
@@ -307,6 +321,23 @@ class WorldBibleService:
         self.repository._validate_terminology_names(saved)
         target_by_id = {element.id: element for element in saved}
         removed_ids = set(current) - set(target_by_id)
+        if removed_ids:
+            from app.storage.character_definition_service import CharacterDefinitionService
+
+            definitions = CharacterDefinitionService(self.project_dir)
+            character_links = [
+                (core.name, element_id)
+                for element_id in sorted(removed_ids)
+                for core, _relation in definitions.characters_referencing_element(element_id)
+            ]
+            if character_links:
+                details = ", ".join(
+                    f"{name} -> {element_id}" for name, element_id in character_links
+                )
+                raise ValueError(
+                    "Snapshot would remove Bible Elements referenced by character "
+                    f"definitions: {details}"
+                )
         changed = [
             element
             for element in saved
@@ -341,7 +372,7 @@ class WorldBibleService:
         ]
 
         touched = [
-            self.repository.elements_dir / f"{element_id}.yaml"
+            self.repository.element_path(element_id)
             for element_id in set(target_ids) | removed_ids
         ] + [
             self.project_dir / "outline" / f"{volume.id}.yaml"
@@ -351,7 +382,7 @@ class WorldBibleService:
             for element in changed:
                 self.repository._write_element(element)
             for element_id in removed_ids:
-                (self.repository.elements_dir / f"{element_id}.yaml").unlink(missing_ok=True)
+                self.repository.element_path(element_id).unlink(missing_ok=True)
             for volume in changed_volumes:
                 save_volume_outline(self.project_dir, volume)
             if manifest_changed:
@@ -414,7 +445,7 @@ class WorldBibleService:
             if previous != cleaned
         ] if unlink_references else []
         changed_paths = [
-            self.repository.elements_dir / f"{element.id}.yaml"
+            self.repository.element_path(element.id)
             for element in changed_elements
         ] + [
             self.project_dir / "outline" / f"{volume.id}.yaml"
@@ -422,7 +453,7 @@ class WorldBibleService:
         ] + [
             character_definitions.definition_path(core.id)
             for core, _ in character_inbound
-        ] + [self.repository.elements_dir / f"{element_id}.yaml"]
+        ] + [self.repository.element_path(element_id)]
 
         with rollback_files(self._transaction_paths(changed_paths)):
             for element in changed_elements:

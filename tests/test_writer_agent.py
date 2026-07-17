@@ -4,7 +4,14 @@ import asyncio
 import pytest
 
 from app.pipeline.agents.writer import WriterAgent, _build_messages
+from app.pipeline.agents._character_context import compact_character_core
 from app.providers.base import MockProvider
+from app.storage.bible_models import FactionElement
+from app.storage.models import (
+    CharacterCore,
+    CharacterCustomField,
+    CharacterElementRelation,
+)
 
 
 def _make_context() -> dict:
@@ -146,6 +153,41 @@ class TestWriterPrompt:
 
         assert "隐忍" in prompt
         assert "苏清鸾" in prompt
+
+    def test_supporting_prompt_includes_generation_fields_and_story_connections(self):
+        faction = FactionElement(id="faction", name="赤霞宗")
+        core = CharacterCore(
+            name="苏清鸾",
+            tier="supporting",
+            personality="外冷内热",
+            custom_fields=[
+                CharacterCustomField(
+                    label="秘密任务", value_type="text", value="保护林轩"
+                ),
+                CharacterCustomField(
+                    label="编辑备注",
+                    value_type="text",
+                    value="不要写入提示词",
+                    include_in_generation=False,
+                ),
+            ],
+            element_relations=[
+                CharacterElementRelation(
+                    kind="member_of", target_element_id=faction.id
+                )
+            ],
+        )
+        context = _make_context()
+        context["characters"]["supporting"] = [
+            compact_character_core(core, tier=core.tier, elements=[faction])
+        ]
+
+        prompt = WriterAgent().build_prompt(context)
+
+        assert "外冷内热" in prompt
+        assert "秘密任务：保护林轩" in prompt
+        assert "赤霞宗" in prompt
+        assert "不要写入提示词" not in prompt
 
     def test_build_prompt_includes_ending_hook_instruction(self):
         agent = WriterAgent()

@@ -73,75 +73,97 @@ def _record_is_active(record, marker: dict[str, str]) -> bool:
 class StoryUsageService:
     def __init__(self, project_dir: Path) -> None:
         self.project_dir = Path(project_dir)
+        self._element_index: dict[str, ElementUsageSummary] | None = None
 
     def element_usage(self, element_id: str) -> ElementUsageSummary:
-        element = WorldBibleService(self.project_dir).load()
-        current = next(item for item in element.elements if item.id == element_id)
-        usages: list[SceneUsage] = []
-        scene_order = 0
-        location_names = {
-            normalize_text(value) for value in (current.name, *current.aliases)
+        return self.build_usage_index()[element_id]
+
+    def invalidate(self) -> None:
+        self._element_index = None
+
+    def build_usage_index(self) -> dict[str, ElementUsageSummary]:
+        if self._element_index is not None:
+            return self._element_index
+
+        elements = WorldBibleService(self.project_dir).load().elements
+        usages_by_id: dict[str, list[SceneUsage]] = {
+            element.id: [] for element in elements
         }
+        names_by_id = {
+            element.id: {
+                normalize_text(value) for value in (element.name, *element.aliases)
+            }
+            for element in elements
+        }
+        scene_order = 0
         for volume in load_all_volumes(self.project_dir):
             for chapter in volume.chapters:
                 for scene in chapter.scenes:
                     scene_order += 1
-                    kinds: set[StoryUsageKind] = set()
-                    if element_id in scene.world_element_ids:
-                        kinds.add(StoryUsageKind.EXPLICIT_OUTLINE)
                     record = load_scene_generation_record(self.project_dir, scene.id)
                     marker = load_scene_active_marker(
                         self.project_dir, chapter.id, scene.id
                     )
-                    read_point = (
-                        record.generated_with.get("bible_elements", {}).get(element_id)
+                    read_points = (
+                        record.generated_with.get("bible_elements", {})
                         if _record_is_active(record, marker)
-                        else None
+                        else {}
                     )
-                    if read_point is not None:
-                        kinds.add(StoryUsageKind.GENERATION_CONTEXT)
                     participants = {
                         scene.pov_character_id,
                         *scene.participating_character_ids,
                     } - {""}
-                    location_matches = (
-                        normalize_text(scene.location) in location_names
-                        if scene.location
-                        else False
-                    )
-                    if (
-                        current.element_type == BibleElementType.LOCATION
-                        and participants
-                        and (
-                            element_id in scene.world_element_ids
-                            or read_point is not None
-                            or location_matches
+                    normalized_location = normalize_text(scene.location)
+                    prose = load_scene_prose(self.project_dir, chapter.id, scene.id)
+                    explicit_ids = set(scene.world_element_ids)
+
+                    for element in elements:
+                        kinds: set[StoryUsageKind] = set()
+                        if element.id in explicit_ids:
+                            kinds.add(StoryUsageKind.EXPLICIT_OUTLINE)
+                        read_point = read_points.get(element.id)
+                        if read_point is not None:
+                            kinds.add(StoryUsageKind.GENERATION_CONTEXT)
+                        location_matches = bool(
+                            scene.location
+                            and normalized_location in names_by_id[element.id]
                         )
-                    ):
-                        kinds.add(StoryUsageKind.CHARACTER_PRESENCE)
-                    matched_alias = _matched_name_or_alias(
-                        load_scene_prose(self.project_dir, chapter.id, scene.id),
-                        current.name,
-                        current.aliases,
-                    )
-                    if matched_alias:
-                        kinds.add(StoryUsageKind.PROSE_MENTION)
-                    if not kinds:
-                        continue
-                    usages.append(SceneUsage(
-                        scene.id,
-                        chapter.id,
-                        scene_order,
-                        scene.title,
-                        frozenset(kinds),
-                        tuple(read_point.get("selection_reasons", ())) if read_point else (),
-                        matched_alias,
-                        generated_element_revision=(
-                            read_point.get("revision") if read_point else None
-                        ),
-                        current_element_revision=current.revision,
-                    ))
-        return ElementUsageSummary(element_id, tuple(usages))
+                        if (
+                            element.element_type == BibleElementType.LOCATION
+                            and participants
+                            and (
+                                element.id in explicit_ids
+                                or read_point is not None
+                                or location_matches
+                            )
+                        ):
+                            kinds.add(StoryUsageKind.CHARACTER_PRESENCE)
+                        matched_alias = _matched_name_or_alias(
+                            prose, element.name, element.aliases
+                        )
+                        if matched_alias:
+                            kinds.add(StoryUsageKind.PROSE_MENTION)
+                        if not kinds:
+                            continue
+                        usages_by_id[element.id].append(SceneUsage(
+                            scene.id,
+                            chapter.id,
+                            scene_order,
+                            scene.title,
+                            frozenset(kinds),
+                            tuple(read_point.get("selection_reasons", ())) if read_point else (),
+                            matched_alias,
+                            generated_element_revision=(
+                                read_point.get("revision") if read_point else None
+                            ),
+                            current_element_revision=element.revision,
+                        ))
+
+        self._element_index = {
+            element_id: ElementUsageSummary(element_id, tuple(usages))
+            for element_id, usages in usages_by_id.items()
+        }
+        return self._element_index
 
     def character_presence(self, character_id: str) -> list[SceneUsage]:
         locations = [
@@ -266,6 +288,6 @@ class StoryUsageService:
 
     def all_element_counts(self) -> dict[str, int]:
         return {
-            element.id: len(self.element_usage(element.id).scenes)
-            for element in WorldBibleService(self.project_dir).load().elements
+            element_id: len(summary.scenes)
+            for element_id, summary in self.build_usage_index().items()
         }

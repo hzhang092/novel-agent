@@ -273,6 +273,43 @@ def test_all_element_counts_counts_scenes_not_usage_kinds(tmp_path):
     assert counts == {"used": 1, "unused": 0}
 
 
+def test_all_element_counts_reads_each_scene_once(tmp_path, monkeypatch):
+    project_dir = _project_with_scene(
+        tmp_path,
+        SceneOutline(id="scene-1", world_element_ids=["used"]),
+    )
+    bible = WorldBibleService(project_dir)
+    bible.save_element(FactionElement(id="used", name="Cloud Sect"))
+    bible.save_element(FactionElement(id="unused", name="Moon Sect"))
+    from app.domain import story_usage
+
+    calls = {name: 0 for name in (
+        "load_all_volumes",
+        "load_scene_generation_record",
+        "load_scene_active_marker",
+        "load_scene_prose",
+    )}
+    for name in calls:
+        original = getattr(story_usage, name)
+
+        def counted(*args, _name=name, _original=original, **kwargs):
+            calls[_name] += 1
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(story_usage, name, counted)
+
+    assert StoryUsageService(project_dir).all_element_counts() == {
+        "used": 1,
+        "unused": 0,
+    }
+    assert calls == {
+        "load_all_volumes": 1,
+        "load_scene_generation_record": 1,
+        "load_scene_active_marker": 1,
+        "load_scene_prose": 1,
+    }
+
+
 def test_location_presence_uses_active_generation_context(tmp_path):
     project_dir = _project_with_scene(
         tmp_path,

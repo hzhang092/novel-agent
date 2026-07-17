@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 import unicodedata
+import re
 from datetime import datetime
 from enum import Enum
 from typing import Annotated, Literal, Union
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
+
+
+_SAFE_STORAGE_ID = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def validate_storage_id(value: str) -> str:
+    value = value.strip()
+    if not _SAFE_STORAGE_ID.fullmatch(value):
+        raise ValueError("ID must contain only letters, numbers, underscores, and hyphens")
+    return value
 
 
 class BibleElementType(str, Enum):
@@ -37,7 +48,12 @@ class BibleElementRelation(BaseModel):
     target_element_id: str
     note: str = ""
 
-    @field_validator("target_element_id", "note")
+    @field_validator("target_element_id")
+    @classmethod
+    def validate_target_id(cls, value: str) -> str:
+        return validate_storage_id(value)
+
+    @field_validator("note")
     @classmethod
     def trim_text(cls, value: str) -> str:
         return value.strip()
@@ -76,6 +92,11 @@ class BibleElementBase(BaseModel):
     relationships: list[BibleElementRelation] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, value: str) -> str:
+        return validate_storage_id(value)
 
     @field_validator("name")
     @classmethod
@@ -153,6 +174,16 @@ class BibleManifest(BaseModel):
     migration_fingerprint: str = ""
     migrated_at: datetime | None = None
     updated_at: datetime = Field(default_factory=datetime.now)
+
+    @field_validator("element_order")
+    @classmethod
+    def validate_element_order(cls, values: list[str]) -> list[str]:
+        return [validate_storage_id(value) for value in values]
+
+    @field_validator("primary_power_system_id")
+    @classmethod
+    def validate_primary_power_system_id(cls, value: str | None) -> str | None:
+        return validate_storage_id(value) if value is not None else None
 
 
 class WorldOverview(BaseModel):

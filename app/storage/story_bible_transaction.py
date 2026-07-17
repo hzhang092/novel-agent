@@ -16,7 +16,7 @@ class StoryBibleTransaction:
     def apply(self, overview, elements, characters: Iterable[CharacterCore] = ()):
         characters = list(characters)
         element_paths = [
-            self.bible_service.repository.elements_dir / f"{element.id}.yaml"
+            self.bible_service.repository.element_path(element.id)
             for element in elements
         ]
         paths = self.bible_service._transaction_paths(element_paths)

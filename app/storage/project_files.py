@@ -313,18 +313,124 @@ def load_character(project_dir: Path, character_id: str) -> Character:
     raise FileNotFoundError(f"Character not found: {character_id}")
 
 
-def delete_character(project_dir: Path, character_id: str) -> None:
-    """Delete a character (per-directory or flat file). No-op if not found."""
-    import shutil
+def character_references(
+    project_dir: Path, character_id: str
+) -> dict[str, list[dict[str, str]]]:
+    """Return scene and relationship references that make deletion unsafe."""
+    references: dict[str, list[dict[str, str]]] = {
+        "pov_scenes": [],
+        "participant_scenes": [],
+        "relationship_characters": [],
+    }
+    for volume in load_all_volumes(project_dir):
+        for chapter in volume.chapters:
+            for scene in chapter.scenes:
+                item = {"id": scene.id, "name": scene.title or scene.id}
+                if scene.pov_character_id == character_id:
+                    references["pov_scenes"].append(item)
+                if character_id in scene.participating_character_ids:
+                    references["participant_scenes"].append(item)
+    for character in load_all_characters(project_dir):
+        if (
+            character.core.id != character_id
+            and character_id in character.state.current_relationships
+        ):
+            references["relationship_characters"].append({
+                "id": character.core.id,
+                "name": character.core.name or character.core.id,
+            })
+    return references
 
+
+def delete_character(
+    project_dir: Path,
+    character_id: str,
+    *,
+    unlink_references: bool = False,
+) -> None:
+    """Delete a character, blocking POV links and explicitly unlinking other references."""
     char_root = project_dir / "characters"
     char_dir = char_root / character_id
     flat_path = char_root / f"{character_id}.yaml"
+    if not char_dir.is_dir() and not flat_path.exists():
+        return
 
+    references = character_references(project_dir, character_id)
+    if references["pov_scenes"]:
+        names = ", ".join(item["name"] for item in references["pov_scenes"])
+        raise ValueError(
+            f"Character is used as POV in: {names}. Choose a replacement before deleting."
+        )
+    if (
+        references["participant_scenes"]
+        or references["relationship_characters"]
+    ) and not unlink_references:
+        raise ValueError(
+            "Character is referenced by scene participants or character relationships; "
+            "delete with unlink_references=True to remove those links."
+        )
+
+    changed_volumes: list[VolumeOutline] = []
+    for volume in load_all_volumes(project_dir):
+        updated = volume.model_copy(deep=True)
+        for chapter in updated.chapters:
+            for scene in chapter.scenes:
+                scene.participating_character_ids = [
+                    item
+                    for item in scene.participating_character_ids
+                    if item != character_id
+                ]
+        if updated != volume:
+            changed_volumes.append(updated)
+
+    changed_characters: list[tuple[Character, CharacterState]] = []
+    for character in load_all_characters(project_dir):
+        if (
+            character.core.id == character_id
+            or character_id not in character.state.current_relationships
+        ):
+            continue
+        updated_state = character.state.model_copy(deep=True)
+        updated_state.current_relationships.pop(character_id)
+        changed_characters.append((character, updated_state))
+
+    from app.storage.bible_repository import rollback_files
+    from app.storage.state_repository import commit_character_state_edit
+
+    touched = [
+        project_dir / "outline" / f"{volume.id}.yaml"
+        for volume in changed_volumes
+    ]
+    for character, _ in changed_characters:
+        other_dir = char_root / character.core.id
+        touched.extend([
+            other_dir / "definition.yaml",
+            other_dir / "events.jsonl",
+            other_dir / "state.yaml",
+        ])
     if char_dir.is_dir():
-        shutil.rmtree(char_dir)
-    if flat_path.exists():
-        flat_path.unlink()
+        touched.extend(path for path in char_dir.rglob("*") if path.is_file())
+    touched.append(flat_path)
+
+    with rollback_files(touched):
+        for volume in changed_volumes:
+            save_volume_outline(project_dir, volume)
+        for character, updated_state in changed_characters:
+            other_dir = char_root / character.core.id
+            if (other_dir / "definition.yaml").exists():
+                commit_character_state_edit(
+                    other_dir,
+                    character.state,
+                    updated_state,
+                )
+            else:
+                save_character(
+                    project_dir,
+                    Character(core=character.core, state=updated_state),
+                )
+        if char_dir.is_dir():
+            shutil.rmtree(char_dir)
+        flat_path.unlink(missing_ok=True)
 
 
 def list_character_ids(project_dir: Path) -> list[str]:

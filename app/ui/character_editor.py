@@ -35,6 +35,7 @@ from app.domain.story_usage import ElementUsageSummary, StoryUsageService
 from app.storage.editor_layout import CharacterEditorLayout, EditorLayoutStore
 from app.storage.models import Character, CharacterCore, CharacterCustomFieldType, CharacterState, CharacterTier
 from app.storage.project_files import (
+    character_references,
     delete_character,
     list_character_ids,
     load_character,
@@ -1097,7 +1098,34 @@ class CharacterEditorView(QWidget):
 
         char = self._characters.get(self._current_id)
         name = self._core_name.text().strip() or (char.core.name if char else "未知")
+        try:
+            references = character_references(self._project_dir, self._current_id)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, "无法检查角色引用", str(error))
+            return
+
+        if references["pov_scenes"]:
+            scenes = "、".join(item["name"] for item in references["pov_scenes"])
+            QMessageBox.warning(
+                self,
+                "无法删除角色",
+                f"该角色是 {len(references['pov_scenes'])} 个场景的 POV：{scenes}\n"
+                "请先在大纲中替换 POV 角色。",
+            )
+            return
+
         message = f"确定删除角色「{name}」吗？"
+        participant_scenes = references["participant_scenes"]
+        relationship_characters = references["relationship_characters"]
+        if participant_scenes:
+            scenes = "、".join(item["name"] for item in participant_scenes)
+            message += f"\n\n将从 {len(participant_scenes)} 个场景的参与角色中移除：{scenes}"
+        if relationship_characters:
+            characters = "、".join(item["name"] for item in relationship_characters)
+            message += (
+                f"\n\n将从 {len(relationship_characters)} 个角色的关系中移除："
+                f"{characters}"
+            )
         if self._core_dirty:
             message += "\n\n该角色还有未保存的修改。删除后，已保存内容和未保存修改都会丢失。"
         else:
@@ -1112,7 +1140,17 @@ class CharacterEditorView(QWidget):
             return
 
         deleted_id = self._current_id
-        delete_character(self._project_dir, deleted_id)
+        try:
+            delete_character(
+                self._project_dir,
+                deleted_id,
+                unlink_references=bool(
+                    participant_scenes or relationship_characters
+                ),
+            )
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, "删除角色失败", str(error))
+            return
         if self._layout_store is not None:
             self._layout_store.layout.characters.pop(deleted_id, None)
             self._layout_store.schedule_save()

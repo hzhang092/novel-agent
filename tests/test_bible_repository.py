@@ -46,6 +46,21 @@ def test_create_load_update_noop_and_delete(tmp_path):
     assert repo.load_manifest().content_revision == 4
 
 
+def test_rejects_unsafe_ids_and_internal_id_mismatch(tmp_path):
+    repo = repository(tmp_path)
+    outside = tmp_path / "outside.yaml"
+    outside.write_text("element_type: faction\nid: outside\nname: Outside\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="ID"):
+        repo.load("../../outside")
+
+    (repo.elements_dir / "safe.yaml").write_text(
+        "element_type: faction\nid: different\nname: Wrong\n", encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="does not match"):
+        repo.load("safe")
+
+
 def test_create_and_save_use_atomic_replace(tmp_path, monkeypatch):
     repo = repository(tmp_path)
     replacements: list[tuple[Path, Path]] = []

@@ -612,6 +612,51 @@ def test_successful_character_delete_removes_layout_entry(
     assert not (proj_dir / "characters" / "char-1").exists()
 
 
+def test_character_delete_confirmation_lists_impacted_scenes(
+    tmp_path, qtbot, monkeypatch
+):
+    from PyQt6.QtWidgets import QMessageBox
+    from app.storage.models import ChapterOutline, SceneOutline, VolumeOutline
+    from app.storage.project_files import save_volume_outline
+    from app.ui.character_editor import CharacterEditorView
+
+    proj_dir = _project_with_character(tmp_path)
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(
+            id="volume",
+            chapters=[
+                ChapterOutline(
+                    id="chapter",
+                    scenes=[
+                        SceneOutline(
+                            id="scene",
+                            title="Bridge Meeting",
+                            participating_character_ids=["char-1"],
+                        )
+                    ],
+                )
+            ],
+        ),
+    )
+    editor = CharacterEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+    prompts = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda _parent, _title, message, *_args: (
+            prompts.append(message) or QMessageBox.StandardButton.No
+        ),
+    )
+
+    editor._on_delete_character()
+
+    assert "1" in prompts[-1]
+    assert "Bridge Meeting" in prompts[-1]
+
+
 def test_current_state_view_is_read_only(tmp_path, qtbot):
     from PyQt6.QtWidgets import QPushButton
     from app.ui.character_editor import CharacterEditorView

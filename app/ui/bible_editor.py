@@ -127,6 +127,9 @@ class BibleEditorView(QWidget):
         self._character_tab.set_current_scene_id(scene_id)
         self._world_tab.set_current_scene_id(scene_id)
 
+    def refresh_usage(self) -> None:
+        self._world_tab.refresh_usage()
+
     # ── UI Setup ───────────────────────────────────────────────────────────
 
     def _setup_ui(self) -> None:

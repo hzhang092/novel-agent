@@ -1,3 +1,8 @@
+import pytest
+
+from PyQt6.QtGui import QCloseEvent
+from PyQt6.QtWidgets import QMessageBox
+
 from app.storage.bible_models import FactionElement
 from app.storage.bible_repository import BibleElementRepository
 from app.storage.character_definition_service import CharacterDefinitionService
@@ -6,6 +11,17 @@ from app.storage.project_files import create_project
 from app.ui.bible_editor import BibleEditorView
 from app.ui.main_window import MainWindow
 from app.ui.outline_editor import OutlineEditorView
+
+
+def _make_bible_dirty(bible, section):
+    if section == "world":
+        bible._world_tab._overview_geography.setPlainText("unsaved world")
+    elif section == "style":
+        bible._notes_edit.setPlainText("unsaved style")
+    else:
+        bible._character_tab._on_add_character()
+        bible._character_tab._core_name.setText("unsaved character")
+    assert bible.is_dirty is True
 
 
 def test_failed_bible_save_blocks_navigation(tmp_path, qtbot, monkeypatch):
@@ -20,12 +36,137 @@ def test_failed_bible_save_blocks_navigation(tmp_path, qtbot, monkeypatch):
     window.sidebar.setCurrentRow(1)
     bible._world_tab._overview_geography.setPlainText("未保存地理")
     monkeypatch.setattr(bible._world_tab, "save_all", lambda: False)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Save,
+    )
 
     window.sidebar.setCurrentRow(2)
 
     assert window.sidebar.currentRow() == 1
     assert window.stack.currentWidget() is bible
     assert bible.is_dirty is True
+
+
+@pytest.mark.parametrize("section", ["world", "style", "character"])
+def test_cancel_keeps_dirty_bible_open_during_navigation(
+    tmp_path, qtbot, monkeypatch, section
+):
+    project_dir = create_project(tmp_path, Project(title="测试项目", genre="玄幻"))
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._set_nav_items_enabled(True)
+    bible = window.views["bible"]
+    bible.load_project_dir(project_dir)
+    window.sidebar.setCurrentRow(1)
+    _make_bible_dirty(bible, section)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Cancel,
+    )
+
+    window.sidebar.setCurrentRow(2)
+
+    assert window.sidebar.currentRow() == 1
+    assert bible.is_dirty is True
+
+
+@pytest.mark.parametrize("section", ["world", "style", "character"])
+def test_cancel_keeps_current_project_when_opening_another(
+    tmp_path, qtbot, monkeypatch, section
+):
+    current_dir = create_project(
+        tmp_path / "current", Project(title="Current", genre="Fantasy")
+    )
+    other_dir = create_project(
+        tmp_path / "other", Project(title="Other", genre="Fantasy")
+    )
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._current_project = window._repo.open(current_dir)
+    window._current_project_dir = current_dir
+    bible = window.views["bible"]
+    bible.load_project_dir(current_dir)
+    _make_bible_dirty(bible, section)
+    monkeypatch.setattr(
+        "app.ui.main_window.QFileDialog.getExistingDirectory",
+        lambda *args: str(other_dir),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Cancel,
+    )
+
+    window._on_open_project()
+
+    assert window._current_project_dir == current_dir
+    assert bible.is_dirty is True
+
+
+@pytest.mark.parametrize("section", ["world", "style", "character"])
+def test_cancel_rejects_window_close_with_dirty_bible(
+    tmp_path, qtbot, monkeypatch, section
+):
+    project_dir = create_project(tmp_path, Project(title="Story", genre="Fantasy"))
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._current_project_dir = project_dir
+    bible = window.views["bible"]
+    bible.load_project_dir(project_dir)
+    _make_bible_dirty(bible, section)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Cancel,
+    )
+    event = QCloseEvent()
+
+    window.closeEvent(event)
+
+    assert event.isAccepted() is False
+
+
+def test_cancel_keeps_current_project_when_creating_another(
+    tmp_path, qtbot, monkeypatch
+):
+    current_dir = create_project(tmp_path, Project(title="Current", genre="Fantasy"))
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._current_project = window._repo.open(current_dir)
+    window._current_project_dir = current_dir
+    bible = window.views["bible"]
+    bible.load_project_dir(current_dir)
+    _make_bible_dirty(bible, "world")
+
+    class AcceptedDialog:
+        def __init__(self, *_args):
+            pass
+
+        def exec(self):
+            return True
+
+        def get_result(self):
+            return {
+                "title": "New",
+                "genre": "Fantasy",
+                "llm_provider": "",
+                "storage_dir": str(tmp_path / "new-parent"),
+            }
+
+    monkeypatch.setattr("app.ui.main_window.CreateProjectDialog", AcceptedDialog)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Cancel,
+    )
+
+    window._on_new_project()
+
+    assert window._current_project_dir == current_dir
+    assert not (tmp_path / "new-parent" / "New").exists()
 
 
 def test_scene_selection_updates_character_editor_scene_id(tmp_path, qtbot):

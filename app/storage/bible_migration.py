@@ -181,7 +181,7 @@ def ensure_bible_store(project_dir: Path) -> WorldBible:
     )
     projected = project_elements_to_legacy_world(overview, elements, manifest)
     staging = repository.bible_dir / f".migration-{uuid4()}"
-    destinations = [repository.elements_dir / f"{element.id}.yaml" for element in elements]
+    destinations = [repository.element_path(element.id) for element in elements]
     try:
         staging.mkdir(parents=True)
         for element in elements:

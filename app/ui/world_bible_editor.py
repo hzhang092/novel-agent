@@ -228,7 +228,7 @@ class WorldBibleEditorView(QWidget):
             inbound_character_relations=self._character_inbound_relations(saved.id),
         )
         self._refresh_element_list(saved.id)
-        self._refresh_usage(saved.id)
+        self._refresh_usage(saved.id, refresh=True)
         self.element_saved.emit(saved.id)
         if was_new:
             self.elements_changed.emit()
@@ -259,7 +259,7 @@ class WorldBibleEditorView(QWidget):
         self._overview_dirty = False
         self._snapshot_dirty = False
         self._refresh_element_list("overview")
-        self._refresh_usage()
+        self._refresh_usage(refresh=True)
         for element_id in previous_ids - self._persisted_ids:
             self.element_deleted.emit(element_id)
         for element_id in self._persisted_ids:
@@ -633,7 +633,7 @@ class WorldBibleEditorView(QWidget):
         self._elements = [item for item in self._elements if item.id != element_id]
         self._persisted_ids.discard(element_id)
         self._refresh_element_list("overview")
-        self._refresh_usage()
+        self._refresh_usage(refresh=True)
         self._element_list.select_element("overview")
         if self._current_id != "overview":
             self._select_item("overview")
@@ -876,11 +876,19 @@ class WorldBibleEditorView(QWidget):
         if self._suggest_task is not None:
             self._suggest_task.cancel()
 
-    def _refresh_usage(self, element_id: str | None = None) -> None:
+    def refresh_usage(self) -> None:
+        element_id = self._current_id if self._current_id != "overview" else None
+        self._refresh_usage(element_id, refresh=True)
+
+    def _refresh_usage(
+        self, element_id: str | None = None, *, refresh: bool = False
+    ) -> None:
         if self._usage_service is None:
             self._element_list.set_usage_counts({})
             self._usage_panel.clear()
             return
+        if refresh:
+            self._usage_service.invalidate()
         self._element_list.set_usage_counts(self._usage_service.all_element_counts())
         if element_id in self._persisted_ids:
             self._usage_panel.set_usage(self._usage_service.element_usage(element_id))

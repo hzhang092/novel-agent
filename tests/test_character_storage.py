@@ -205,6 +205,119 @@ def test_delete_nonexistent_character_no_error(tmp_path):
     delete_character(proj_dir, "nonexistent-id")
 
 
+def test_delete_character_blocks_pov_reference(tmp_path):
+    from app.storage.project_files import (
+        delete_character,
+        save_character,
+        save_volume_outline,
+    )
+    from app.storage.models import ChapterOutline, SceneOutline, VolumeOutline
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    core = CharacterCore(id="hero", name="林轩")
+    save_character(
+        proj_dir,
+        Character(core=core, state=CharacterState(character_id=core.id)),
+    )
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(
+            id="volume",
+            chapters=[
+                ChapterOutline(
+                    id="chapter",
+                    scenes=[
+                        SceneOutline(
+                            id="scene", title="决战", pov_character_id=core.id
+                        )
+                    ],
+                )
+            ],
+        ),
+    )
+
+    with pytest.raises(ValueError, match="POV"):
+        delete_character(proj_dir, core.id)
+
+    assert (proj_dir / "characters" / core.id).exists()
+
+
+def test_delete_character_transactionally_unlinks_participants_and_relationships(
+    tmp_path, monkeypatch
+):
+    from app.storage.project_files import (
+        delete_character,
+        load_all_volumes,
+        load_character,
+        save_character,
+        save_volume_outline,
+    )
+    from app.storage.models import ChapterOutline, SceneOutline, VolumeOutline
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    target = CharacterCore(id="target", name="目标")
+    observer = CharacterCore(id="observer", name="旁观者")
+    save_character(
+        proj_dir,
+        Character(core=target, state=CharacterState(character_id=target.id)),
+    )
+    save_character(
+        proj_dir,
+        Character(
+            core=observer,
+            state=CharacterState(
+                character_id=observer.id,
+                current_relationships={target.id: "盟友"},
+            ),
+        ),
+    )
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(
+            id="volume",
+            chapters=[
+                ChapterOutline(
+                    id="chapter",
+                    scenes=[
+                        SceneOutline(
+                            id="scene",
+                            title="同行",
+                            participating_character_ids=[target.id, observer.id],
+                        )
+                    ],
+                )
+            ],
+        ),
+    )
+
+    with pytest.raises(ValueError, match="referenced"):
+        delete_character(proj_dir, target.id)
+
+    import app.storage.project_files as project_files
+
+    real_rmtree = project_files.shutil.rmtree
+    monkeypatch.setattr(
+        project_files.shutil,
+        "rmtree",
+        lambda _path: (_ for _ in ()).throw(OSError("delete failed")),
+    )
+    with pytest.raises(OSError, match="delete failed"):
+        delete_character(proj_dir, target.id, unlink_references=True)
+    scene = load_all_volumes(proj_dir)[0].chapters[0].scenes[0]
+    assert target.id in scene.participating_character_ids
+    assert target.id in load_character(
+        proj_dir, observer.id
+    ).state.current_relationships
+
+    monkeypatch.setattr(project_files.shutil, "rmtree", real_rmtree)
+    delete_character(proj_dir, target.id, unlink_references=True)
+
+    scene = load_all_volumes(proj_dir)[0].chapters[0].scenes[0]
+    assert scene.participating_character_ids == [observer.id]
+    assert target.id not in load_character(proj_dir, observer.id).state.current_relationships
+    assert not (proj_dir / "characters" / target.id).exists()
+
+
 def test_list_character_ids(tmp_path):
     """List returns all character IDs in the characters directory."""
     from app.storage.project_files import (

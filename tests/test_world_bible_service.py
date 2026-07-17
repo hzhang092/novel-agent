@@ -12,7 +12,15 @@ from app.storage.bible_models import (
     WorldOverview,
 )
 from app.storage.bible_repository import WorldBibleService
-from app.storage.models import ChapterOutline, Project, SceneOutline, VolumeOutline
+from app.storage.character_definition_service import CharacterDefinitionService
+from app.storage.models import (
+    ChapterOutline,
+    CharacterCore,
+    CharacterElementRelation,
+    Project,
+    SceneOutline,
+    VolumeOutline,
+)
 from app.storage.project_files import (
     create_project,
     load_all_volumes,
@@ -129,6 +137,32 @@ def test_apply_snapshot_deletes_omitted_elements_and_unlinks_scene_references(tm
     assert [faction["name"] for faction in load_project(path).world_setting.factions] == [
         "新势力"
     ]
+
+
+def test_apply_snapshot_blocks_removing_character_linked_element(tmp_path):
+    path = project_dir(tmp_path)
+    service = WorldBibleService(path)
+    service.save_element(FactionElement(id="faction", name="旧势力"))
+    CharacterDefinitionService(path).save(
+        CharacterCore(
+            id="hero",
+            name="林轩",
+            element_relations=[
+                CharacterElementRelation(
+                    kind="member_of", target_element_id="faction"
+                )
+            ],
+        )
+    )
+
+    with pytest.raises(ValueError, match="character"):
+        service.apply_snapshot(WorldOverview(), [])
+
+    assert [element.id for element in service.load().elements] == ["faction"]
+    assert (
+        CharacterDefinitionService(path).load("hero").element_relations[0].target_element_id
+        == "faction"
+    )
 
 
 def test_apply_snapshot_failure_rolls_back_all_files_and_is_retryable(

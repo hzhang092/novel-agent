@@ -71,6 +71,12 @@ class MainWindow(QMainWindow):
         self._token_status_label.setStyleSheet("color: #888; font-size: 11px; padding: 0 8px;")
         self.statusBar().addPermanentWidget(self._token_status_label)
 
+    def closeEvent(self, event) -> None:
+        if self._maybe_close_current_project():
+            event.accept()
+        else:
+            event.ignore()
+
     def _setup_menu(self) -> None:
         menubar = self.menuBar()
 
@@ -167,19 +173,15 @@ class MainWindow(QMainWindow):
             outline._select_by_id(scene_id)
 
     def _on_nav_changed(self, index: int) -> None:
-        # Auto-save Bible editor when navigating away from it
-        if self._previous_tab_index == 1 and index != 1:
-            bible = self.views["bible"]
-            if (
-                isinstance(bible, BibleEditorView)
-                and bible._project_dir is not None
-                and bible.is_dirty
-                and not bible.save_all()
-            ):
-                blocker = QSignalBlocker(self.sidebar)
-                self.sidebar.setCurrentRow(self._previous_tab_index)
-                del blocker
-                return
+        if (
+            self._previous_tab_index == 1
+            and index != 1
+            and not self._maybe_close_current_project()
+        ):
+            blocker = QSignalBlocker(self.sidebar)
+            self.sidebar.setCurrentRow(self._previous_tab_index)
+            del blocker
+            return
 
         # Auto-save Outline editor when navigating away from it
         if self._previous_tab_index == 2:
@@ -192,6 +194,7 @@ class MainWindow(QMainWindow):
             bible = self.views["bible"]
             if isinstance(bible, BibleEditorView):
                 bible._character_tab.set_event_bus(self._domain_bus)
+                bible.refresh_usage()
 
         # Load workspace when navigating to it
         if index == 3:
@@ -247,6 +250,31 @@ class MainWindow(QMainWindow):
 
     # ── Actions ───────────────────────────────────────────────────────────
 
+    def _maybe_close_current_project(self) -> bool:
+        bible = self.views["bible"]
+        if (
+            not isinstance(bible, BibleEditorView)
+            or bible._project_dir is None
+            or not bible.is_dirty
+        ):
+            return True
+
+        reply = QMessageBox.question(
+            self,
+            "未保存的更改",
+            "设定集有未保存的更改。是否保存？",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if reply == QMessageBox.StandardButton.Save:
+            return bible.save_all()
+        if reply == QMessageBox.StandardButton.Discard:
+            bible.load_project_dir(bible._project_dir)
+            return True
+        return False
+
     def _on_new_project(self) -> None:
         dialog = CreateProjectDialog(self, Path.home() / "NovelForge")
         if not dialog.exec():
@@ -254,6 +282,8 @@ class MainWindow(QMainWindow):
 
         result = dialog.get_result()
         if result is None:
+            return
+        if not self._maybe_close_current_project():
             return
 
         project = ProjectModel(
@@ -321,6 +351,9 @@ class MainWindow(QMainWindow):
             return
         except ValueError as e:
             QMessageBox.warning(self, "项目文件无效", str(e))
+            return
+
+        if not self._maybe_close_current_project():
             return
 
         self._current_project = project
