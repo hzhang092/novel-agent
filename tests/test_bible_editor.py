@@ -106,6 +106,13 @@ def test_template_fill_empty_uses_current_form_without_saving(tmp_path, qtbot):
     assert editor._gather_style().dialogue_density == "适中"
     assert editor.is_dirty is True
     assert load_project(proj_dir).world_setting.geography == ""
+    assert set(editor._layout_store.layout.world.visible_sections) == (
+        set(editor._world_sections) - {"geography"}
+    )
+    assert editor._style_sections["prose"].is_expanded()
+    assert not editor._style_sections["advanced"].is_expanded()
+    assert not editor._advanced_new_label.isHidden()
+    assert editor._style_sections["advanced"]._summary.text() == "新"
 
 
 def test_cancelled_template_application_changes_nothing(tmp_path, qtbot):
@@ -205,6 +212,201 @@ def test_loading_empty_power_system_clears_previous_project_values(tmp_path, qtb
     editor.load_project_dir(second_dir)
 
     assert editor._gather_world().power_system is None
+
+
+def test_empty_world_uses_add_section_starting_state(tmp_path, qtbot):
+    from PyQt6.QtWidgets import QLabel, QPushButton
+    from app.ui.bible_editor import BibleEditorView
+
+    proj_dir = create_project(tmp_path, Project(title="测试项目", genre="玄幻"))
+    editor = BibleEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+
+    assert all(section.isHidden() for section in editor._world_sections.values())
+    assert not editor._world_empty_state.isHidden()
+    assert any(
+        "按故事需要构建世界" in label.text()
+        for label in editor._world_empty_state.findChildren(QLabel)
+    )
+    assert any(
+        button.text() == "浏览全部设定"
+        for button in editor._world_empty_state.findChildren(QPushButton)
+    )
+    assert editor.is_dirty is False
+
+
+def test_add_world_section_reveals_existing_controls_without_story_change(
+    tmp_path, qtbot
+):
+    from PyQt6.QtWidgets import QPushButton
+    from app.ui.bible_editor import BibleEditorView
+
+    proj_dir = create_project(tmp_path, Project(title="测试项目", genre="玄幻"))
+    editor = BibleEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+    add_geography = next(
+        button
+        for button in editor._world_empty_state.findChildren(QPushButton)
+        if button.text() == "添加地理"
+    )
+
+    add_geography.click()
+
+    assert not editor._world_sections["geography"].isHidden()
+    assert editor._layout_store.layout.world.visible_sections == ["geography"]
+    assert editor.is_dirty is False
+
+
+def test_populated_world_sections_migrate_visible_and_can_hide_without_data_loss(
+    tmp_path, qtbot
+):
+    from PyQt6.QtWidgets import QToolButton
+    from app.storage.models import WorldSetting
+    from app.ui.bible_editor import BibleEditorView
+
+    proj_dir = create_project(tmp_path, Project(title="测试项目", genre="玄幻"))
+    save_world_setting(
+        proj_dir,
+        WorldSetting(geography="群山", history="古战场", factions=[{"name": "剑宗"}]),
+    )
+    editor = BibleEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+
+    assert {
+        section_id
+        for section_id, section in editor._world_sections.items()
+        if not section.isHidden()
+    } == {"geography", "history", "factions"}
+
+    editor._world_sections["geography"].findChild(QToolButton).click()
+    qtbot.wait(200)
+
+    assert editor._world_sections["geography"].isHidden()
+    assert editor._gather_world().geography == "群山"
+    assert editor.is_dirty is False
+    assert load_project(proj_dir).world_setting.geography == "群山"
+
+    reopened = BibleEditorView()
+    qtbot.addWidget(reopened)
+    reopened.load_project_dir(proj_dir)
+    assert reopened._world_sections["geography"].isHidden()
+    assert reopened._gather_world().geography == "群山"
+
+
+def test_hidden_world_section_still_saves_edited_data(tmp_path, qtbot):
+    from app.storage.models import WorldSetting
+    from app.ui.bible_editor import BibleEditorView
+
+    proj_dir = create_project(tmp_path, Project(title="测试项目", genre="玄幻"))
+    save_world_setting(proj_dir, WorldSetting(geography="群山"))
+    editor = BibleEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+    editor._geo_edit.setPlainText("群山与海洋")
+
+    editor._on_hide_world_section("geography")
+    assert editor.save_all() is True
+
+    assert load_project(proj_dir).world_setting.geography == "群山与海洋"
+    assert "群山与海洋" in (proj_dir / "world.md").read_text(encoding="utf-8")
+
+
+def test_nested_power_section_collapse_persists(tmp_path, qtbot):
+    from app.ui.bible_editor import BibleEditorView
+
+    proj_dir = create_project(tmp_path, Project(title="测试项目", genre="玄幻"))
+    editor = BibleEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+    editor._on_add_world_section("power_system")
+
+    editor._power_sections["power_realms"]._header.click()
+    qtbot.wait(200)
+
+    reopened = BibleEditorView()
+    qtbot.addWidget(reopened)
+    reopened.load_project_dir(proj_dir)
+    assert not reopened._power_sections["power_realms"].is_expanded()
+
+
+def test_style_sections_preserve_values_and_collapse_state(tmp_path, qtbot):
+    from app.storage.models import StyleGuide
+    from app.ui.bible_editor import BibleEditorView
+
+    proj_dir = create_project(tmp_path, Project(title="测试项目", genre="玄幻"))
+    save_style_guide(
+        proj_dir,
+        StyleGuide(pacing="偏快", taboo_patterns=["避免重复"]),
+    )
+    editor = BibleEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+
+    assert set(editor._style_sections) == {"core", "prose", "advanced"}
+    assert editor._style_sections["core"].is_expanded()
+    assert not editor._style_sections["advanced"].is_expanded()
+
+    editor._style_sections["advanced"]._header.click()
+    qtbot.wait(200)
+    assert editor._gather_style().taboo_patterns == ["避免重复"]
+    assert editor.is_dirty is False
+
+    reopened = BibleEditorView()
+    qtbot.addWidget(reopened)
+    reopened.load_project_dir(proj_dir)
+    assert reopened._style_sections["advanced"].is_expanded()
+
+
+def test_corrupt_layout_regenerates_visibility_from_story_data(tmp_path, qtbot):
+    from app.storage.models import WorldSetting
+    from app.ui.bible_editor import BibleEditorView
+
+    proj_dir = create_project(tmp_path, Project(title="测试项目", genre="玄幻"))
+    save_world_setting(proj_dir, WorldSetting(geography="群山"))
+    layout_dir = proj_dir / ".novel-agent"
+    layout_dir.mkdir()
+    (layout_dir / "editor-layout.yaml").write_text("world: [", encoding="utf-8")
+
+    editor = BibleEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+
+    assert not editor._world_sections["geography"].isHidden()
+    assert not editor._style_sections["advanced"].is_expanded()
+
+    qtbot.wait(200)
+    reopened = BibleEditorView()
+    qtbot.addWidget(reopened)
+    reopened.load_project_dir(proj_dir)
+    assert not reopened._world_sections["geography"].isHidden()
+    assert not reopened._style_sections["advanced"].is_expanded()
+
+
+def test_unknown_world_and_style_layout_ids_are_logged_and_pruned(
+    tmp_path, qtbot, caplog
+):
+    from app.storage.editor_layout import EditorLayoutStore
+    from app.ui.bible_editor import BibleEditorView
+
+    proj_dir = create_project(tmp_path, Project(title="测试项目", genre="玄幻"))
+    store = EditorLayoutStore(proj_dir)
+    store.layout.world.visible_sections = ["geography", "future-world"]
+    store.layout.world.collapsed_sections = ["future-world"]
+    store.layout.style.collapsed_sections = ["advanced", "future-style"]
+    store.save()
+
+    editor = BibleEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+
+    assert editor._layout_store.layout.world.visible_sections == ["geography"]
+    assert editor._layout_store.layout.world.collapsed_sections == []
+    assert editor._layout_store.layout.style.collapsed_sections == ["advanced"]
+    assert "future-world" in caplog.text
+    assert "future-style" in caplog.text
 
 
 def test_world_setting_save_load_round_trip(tmp_path):

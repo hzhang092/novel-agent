@@ -109,6 +109,14 @@ def test_create_project_duplicate_raises(tmp_path):
         create_project(tmp_path, project)
 
 
+def test_create_project_ignores_local_editor_state(tmp_path):
+    proj_dir = create_project(tmp_path, Project(title="测试小说", genre="玄幻"))
+
+    assert (proj_dir / ".gitignore").read_text(encoding="utf-8") == (
+        "exports/\n.novel-agent/\n"
+    )
+
+
 def test_full_round_trip_with_world_and_style(tmp_path):
     """End-to-end: create a full project, load it back, verify all fields."""
     from app.storage.models import PowerSystem, StyleGuide, WorldSetting

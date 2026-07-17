@@ -38,6 +38,300 @@ def _add_saved_character(proj_dir, *, character_id, name):
     )
 
 
+def test_character_layout_starts_with_tier_defaults_and_populated_fields(
+    tmp_path, qtbot
+):
+    from app.storage.project_files import save_character
+    from app.ui.character_editor import CharacterEditorView
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(
+                id="char-1",
+                name="林轩",
+                tier=CharacterTier.MAJOR,
+                speech_style="沉稳少言",
+            ),
+            state=CharacterState(character_id="char-1"),
+        ),
+    )
+    editor = CharacterEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+
+    visible = {
+        field_id
+        for field_id, container in editor._detail_fields.items()
+        if not container.isHidden()
+    }
+    assert visible == {"personality", "long_term_goal", "speech_style"}
+    assert editor.is_dirty is False
+
+
+def test_unknown_character_layout_ids_are_logged_and_pruned(tmp_path, qtbot, caplog):
+    from app.storage.editor_layout import EditorLayoutStore
+    from app.ui.character_editor import CharacterEditorView
+
+    proj_dir = _project_with_character(tmp_path)
+    _add_saved_character(proj_dir, character_id="char-2", name="韩立")
+    store = EditorLayoutStore(proj_dir)
+    layout = store.character_layout("char-1")
+    layout.visible_fields = ["personality", "future-field"]
+    layout.collapsed_sections = ["characterization", "future-section"]
+    other_layout = store.character_layout("char-2")
+    other_layout.visible_fields = ["future-other-field"]
+    other_layout.collapsed_sections = ["future-other-section"]
+    store.save()
+
+    editor = CharacterEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+
+    layout = editor._layout_store.character_layout("char-1")
+    assert layout.visible_fields == ["personality"]
+    assert layout.collapsed_sections == ["characterization"]
+    assert editor._layout_store.character_layout("char-2").visible_fields == []
+    assert editor._layout_store.character_layout("char-2").collapsed_sections == []
+    assert "future-field" in caplog.text
+    assert "future-section" in caplog.text
+    assert "future-other-field" in caplog.text
+
+
+def test_hiding_populated_detail_preserves_value_and_story_dirty_state(
+    tmp_path, qtbot
+):
+    from PyQt6.QtWidgets import QToolButton
+    from app.storage.project_files import save_character
+    from app.ui.character_editor import CharacterEditorView
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(
+                id="char-1", name="林轩", speech_style="沉稳少言"
+            ),
+            state=CharacterState(character_id="char-1"),
+        ),
+    )
+    editor = CharacterEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+
+    hide_button = editor._detail_fields["speech_style"].findChild(QToolButton)
+    hide_button.click()
+    qtbot.wait(200)
+
+    assert editor._detail_fields["speech_style"].isHidden()
+    assert editor._gather_core("char-1").speech_style == "沉稳少言"
+    assert editor.is_dirty is False
+
+    reopened = CharacterEditorView()
+    qtbot.addWidget(reopened)
+    reopened.load_project_dir(proj_dir)
+    assert reopened._detail_fields["speech_style"].isHidden()
+    assert reopened._gather_core("char-1").speech_style == "沉稳少言"
+
+
+def test_hidden_edited_detail_survives_normal_save_and_reload(tmp_path, qtbot):
+    from app.storage.project_files import save_character
+    from app.ui.character_editor import CharacterEditorView
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(
+                id="char-1", name="林轩", speech_style="沉稳少言"
+            ),
+            state=CharacterState(character_id="char-1"),
+        ),
+    )
+    editor = CharacterEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+    editor._core_speech.setText("言简意赅")
+    editor._on_hide_detail("speech_style")
+
+    assert editor.save_current_character() is True
+    qtbot.wait(200)
+
+    reopened = CharacterEditorView()
+    qtbot.addWidget(reopened)
+    reopened.load_project_dir(proj_dir)
+    assert reopened._detail_fields["speech_style"].isHidden()
+    assert load_character(proj_dir, "char-1").core.speech_style == "言简意赅"
+
+
+def test_hidden_major_character_detail_remains_in_generation_context(
+    tmp_path, qtbot
+):
+    from app.pipeline.context_builder import RetrievalEngine
+    from app.storage.models import ChapterOutline, SceneOutline, VolumeOutline
+    from app.storage.project_files import save_character, save_volume_outline
+    from app.ui.character_editor import CharacterEditorView
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(
+                id="char-1",
+                name="林轩",
+                tier=CharacterTier.MAJOR,
+                speech_style="沉稳少言",
+            ),
+            state=CharacterState(character_id="char-1"),
+        ),
+    )
+    scene = SceneOutline(title="测试场景", participating_character_ids=["char-1"])
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(title="第一卷", chapters=[ChapterOutline(title="第一章", scenes=[scene])]),
+    )
+    editor = CharacterEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+    editor._on_hide_detail("speech_style")
+
+    context = RetrievalEngine().assemble(proj_dir, scene_id=scene.id)
+
+    assert context["characters"]["major"][0]["core"]["speech_style"] == "沉稳少言"
+
+
+def test_uncustomized_draft_recalculates_visible_fields_when_tier_changes(
+    tmp_path, qtbot
+):
+    from app.ui.character_editor import CharacterEditorView
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    editor = CharacterEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+    editor._on_add_character()
+
+    assert set(editor._current_layout.visible_fields) == {"personality"}
+    editor._core_tier.setCurrentIndex(
+        editor._core_tier.findData(CharacterTier.MAJOR)
+    )
+
+    assert set(editor._current_layout.visible_fields) == {
+        "personality",
+        "long_term_goal",
+    }
+
+
+def test_add_detail_reveals_and_focuses_existing_editor_without_story_change(
+    tmp_path, qtbot
+):
+    from PyQt6.QtCore import Qt
+    from app.ui.character_editor import CharacterEditorView
+
+    editor = CharacterEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(_project_with_character(tmp_path))
+    editor.show()
+
+    editor._add_detail_btn.click()
+    tree = editor._add_detail_menu._tree
+    age_item = next(
+        category.child(index)
+        for category_index in range(tree.topLevelItemCount())
+        for category in [tree.topLevelItem(category_index)]
+        for index in range(category.childCount())
+        if category.child(index).data(0, Qt.ItemDataRole.UserRole).item_id == "age"
+    )
+    tree.itemClicked.emit(age_item, 0)
+
+    assert not editor._detail_fields["age"].isHidden()
+    assert editor.focusWidget() is editor._core_age
+    assert editor.is_dirty is False
+
+
+def test_character_section_collapse_persists_without_story_dirty_state(
+    tmp_path, qtbot
+):
+    from app.ui.character_editor import CharacterEditorView
+
+    proj_dir = _project_with_character(tmp_path)
+    editor = CharacterEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+
+    editor._detail_sections["characterization"]._header.click()
+    qtbot.wait(200)
+    assert editor.is_dirty is False
+
+    reopened = CharacterEditorView()
+    qtbot.addWidget(reopened)
+    reopened.load_project_dir(proj_dir)
+    assert not reopened._detail_sections["characterization"].is_expanded()
+
+
+def test_existing_tier_change_preserves_fields_and_can_add_recommendations(
+    tmp_path, qtbot
+):
+    from app.ui.character_editor import CharacterEditorView
+
+    editor = CharacterEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(_project_with_character(tmp_path))
+    editor._on_add_detail("age")
+
+    editor._core_tier.setCurrentIndex(
+        editor._core_tier.findData(CharacterTier.MAJOR)
+    )
+    assert set(editor._current_layout.visible_fields) == {"personality", "age"}
+
+    editor._recommended_btn.click()
+    assert set(editor._current_layout.visible_fields) == {
+        "personality",
+        "age",
+        "long_term_goal",
+    }
+
+
+def test_reset_visible_fields_keeps_defaults_and_populated_details(
+    tmp_path, qtbot, monkeypatch
+):
+    from PyQt6.QtWidgets import QMessageBox
+    from app.storage.project_files import save_character
+    from app.ui.character_editor import CharacterEditorView
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_character(
+        proj_dir,
+        Character(
+            core=CharacterCore(
+                id="char-1",
+                name="林轩",
+                tier=CharacterTier.MAJOR,
+                speech_style="沉稳少言",
+            ),
+            state=CharacterState(character_id="char-1"),
+        ),
+    )
+    editor = CharacterEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+    editor._on_add_detail("age")
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    editor._reset_fields_btn.click()
+
+    assert set(editor._current_layout.visible_fields) == {
+        "personality",
+        "long_term_goal",
+        "speech_style",
+    }
+
+
 def test_character_definition_dirty_state_is_semantic(tmp_path, qtbot):
     from app.ui.character_editor import CharacterEditorView
 
@@ -243,6 +537,7 @@ def test_discard_new_character_removes_draft_without_files(tmp_path, qtbot, monk
 
     assert editor._list.count() == 1
     assert draft_id not in editor._characters
+    assert draft_id not in editor._layout_store.layout.characters
     assert not (proj_dir / "characters" / draft_id).exists()
 
 
@@ -292,6 +587,29 @@ def test_dirty_character_delete_confirmation_mentions_unsaved_changes(
     editor._on_delete_character()
 
     assert "未保存的修改" in prompts[-1][1]
+
+
+def test_successful_character_delete_removes_layout_entry(
+    tmp_path, qtbot, monkeypatch
+):
+    from PyQt6.QtWidgets import QMessageBox
+    from app.ui.character_editor import CharacterEditorView
+
+    proj_dir = _project_with_character(tmp_path)
+    editor = CharacterEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(proj_dir)
+    assert "char-1" in editor._layout_store.layout.characters
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    editor._on_delete_character()
+
+    assert "char-1" not in editor._layout_store.layout.characters
+    assert not (proj_dir / "characters" / "char-1").exists()
 
 
 def test_current_state_view_is_read_only(tmp_path, qtbot):

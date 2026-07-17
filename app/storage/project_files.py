@@ -133,7 +133,7 @@ def _write_style_yaml(proj_path: Path, style: StyleGuide) -> None:
 
 def _write_gitignore(proj_path: Path) -> None:
     with open(proj_path / ".gitignore", "w", encoding="utf-8") as f:
-        f.write("exports/\n")
+        f.write("exports/\n.novel-agent/\n")
 
 
 def load_project(project_dir: Path) -> Project:

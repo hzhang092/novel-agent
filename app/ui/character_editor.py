@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QComboBox,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -23,8 +25,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-import logging
-
+from app.storage.character_events import get_latest_event_id
+from app.storage.editor_layout import CharacterEditorLayout, EditorLayoutStore
 from app.storage.models import Character, CharacterCore, CharacterState, CharacterTier
 from app.storage.project_files import (
     delete_character,
@@ -33,12 +35,25 @@ from app.storage.project_files import (
     save_character,
     save_character_definition,
 )
-from app.storage.character_events import get_latest_event_id
 from app.storage.state_repository import commit_character_state_edit
+from app.ui.character_detail_catalog import (
+    CHARACTER_DETAIL_DEFINITIONS,
+    default_character_fields,
+    initial_character_fields,
+    populated_character_fields,
+)
+from app.ui.display_labels import character_tier_label
+from app.ui.widgets import (
+    AddMenuItem,
+    CollapsibleSection,
+    DetailFieldContainer,
+    KeyValueTable,
+    SearchableAddMenu,
+    StringListEditor,
+    read_table_cell,
+)
 
 logger = logging.getLogger(__name__)
-from app.ui.display_labels import character_tier_label
-from app.ui.widgets import KeyValueTable, StringListEditor, read_table_cell
 
 TIER_COLORS = {
     CharacterTier.MAJOR: QColor("#e74c3c"),
@@ -56,8 +71,14 @@ class CharacterEditorView(QWidget):
 
     saved = pyqtSignal()
     dirty_changed = pyqtSignal(bool)
+    characters_changed = pyqtSignal()
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        layout_store: EditorLayoutStore | None = None,
+    ) -> None:
         super().__init__(parent)
         self._project_dir: Path | None = None
         self._characters: dict[str, Character] = {}  # id -> Character
@@ -69,6 +90,10 @@ class CharacterEditorView(QWidget):
         self._populating = False
         self._persisted_character_ids: set[str] = set()
         self._selection_change_in_progress = False
+        self._layout_store = layout_store
+        self._current_layout: CharacterEditorLayout | None = None
+        self._detail_fields: dict[str, DetailFieldContainer] = {}
+        self._detail_sections: dict[str, CollapsibleSection] = {}
         self._setup_ui()
         self._connect_definition_changes()
 
@@ -77,14 +102,28 @@ class CharacterEditorView(QWidget):
     def load_project_dir(self, project_dir: Path) -> None:
         """Load all characters from disk and populate the list."""
         self._project_dir = project_dir
+        if self._layout_store is None or self._layout_store.project_dir != project_dir:
+            self._layout_store = EditorLayoutStore(project_dir)
+        for layout in self._layout_store.layout.characters.values():
+            self._sanitize_character_layout(layout)
         self._refresh_character_list()
         self._persisted_character_ids = set(self._characters)
+        for character_id, character in self._characters.items():
+            if character_id not in self._layout_store.layout.characters:
+                self._layout_store.layout.characters[character_id] = CharacterEditorLayout(
+                    visible_fields=sorted(initial_character_fields(character.core)),
+                    initialized_for_tier=character.core.tier.value,
+                )
+                self._layout_store.schedule_save()
         if self._characters:
             first_id = next(iter(self._characters))
             self._list.setCurrentRow(0)
             self._select_character(first_id)
         else:
             self._clear_detail()
+
+    def set_layout_store(self, layout_store: EditorLayoutStore) -> None:
+        self._layout_store = layout_store
 
     @property
     def is_dirty(self) -> bool:
@@ -189,6 +228,7 @@ class CharacterEditorView(QWidget):
         ):
             editor.textChanged.connect(self._recompute_core_dirty)
         self._core_tier.currentIndexChanged.connect(self._recompute_core_dirty)
+        self._core_tier.currentIndexChanged.connect(self._on_tier_changed)
         for editor in (
             self._core_aliases,
             self._core_skills,
@@ -204,7 +244,8 @@ class CharacterEditorView(QWidget):
         container = QWidget()
         form = QVBoxLayout(container)
 
-        # Name + Tier row
+        essentials = QGroupBox("基本信息")
+        essentials_layout = QVBoxLayout(essentials)
         row1 = QHBoxLayout()
         row1.addWidget(QLabel("姓名:"))
         self._core_name = QLineEdit()
@@ -215,77 +256,278 @@ class CharacterEditorView(QWidget):
         for tier in CharacterTier:
             self._core_tier.addItem(character_tier_label(tier), tier)
         row1.addWidget(self._core_tier)
-        form.addLayout(row1)
-
-        # Aliases
-        form.addWidget(QLabel("<b>别称</b>"))
-        self._core_aliases = StringListEditor()
-        form.addWidget(self._core_aliases)
-
-        # Identity
-        form.addWidget(QLabel("<b>身份</b>"))
+        essentials_layout.addLayout(row1)
+        essentials_layout.addWidget(QLabel("<b>身份</b>"))
         self._core_identity = QLineEdit()
         self._core_identity.setPlaceholderText("如：落云宗外门弟子")
-        form.addWidget(self._core_identity)
+        essentials_layout.addWidget(self._core_identity)
+        self._tier_suggestion = QLabel()
+        self._tier_suggestion.setVisible(False)
+        essentials_layout.addWidget(self._tier_suggestion)
+        self._recommended_btn = QPushButton("显示推荐字段")
+        self._recommended_btn.setVisible(False)
+        self._recommended_btn.clicked.connect(self._show_recommended_fields)
+        essentials_layout.addWidget(self._recommended_btn)
+        form.addWidget(essentials)
 
-        # Age
-        form.addWidget(QLabel("<b>年龄</b>"))
+        # Create every existing editor once; presentation controls only visibility.
+        self._core_aliases = StringListEditor()
         self._core_age = QLineEdit()
         self._core_age.setPlaceholderText("如：17")
-        form.addWidget(self._core_age)
-
-        # Appearance
-        form.addWidget(QLabel("<b>外貌</b>"))
         self._core_appearance = QTextEdit()
         self._core_appearance.setPlaceholderText("描述角色外貌特征...")
         self._core_appearance.setMaximumHeight(80)
-        form.addWidget(self._core_appearance)
-
-        # Personality
-        form.addWidget(QLabel("<b>性格</b>"))
         self._core_personality = QTextEdit()
         self._core_personality.setPlaceholderText("描述角色性格...")
         self._core_personality.setMaximumHeight(80)
-        form.addWidget(self._core_personality)
-
-        # Background
-        form.addWidget(QLabel("<b>背景</b>"))
         self._core_background = QTextEdit()
         self._core_background.setPlaceholderText("角色背景故事...")
         self._core_background.setMaximumHeight(100)
-        form.addWidget(self._core_background)
-
-        # Long-term goal
-        form.addWidget(QLabel("<b>长期目标</b>"))
         self._core_goal = QLineEdit()
         self._core_goal.setPlaceholderText("角色最终追求的目标")
-        form.addWidget(self._core_goal)
-
-        # Hidden motive
-        form.addWidget(QLabel("<b>隐藏动机</b>"))
         self._core_motive = QLineEdit()
         self._core_motive.setPlaceholderText("不为人知的深层动机")
-        form.addWidget(self._core_motive)
-
-        # Speech style
-        form.addWidget(QLabel("<b>说话风格</b>"))
         self._core_speech = QLineEdit()
         self._core_speech.setPlaceholderText("如：沉稳少言、活泼多话")
-        form.addWidget(self._core_speech)
-
-        # Core skills
-        form.addWidget(QLabel("<b>核心技能</b>"))
         self._core_skills = StringListEditor()
-        form.addWidget(self._core_skills)
-
-        # Core weaknesses
-        form.addWidget(QLabel("<b>核心弱点</b>"))
         self._core_weaknesses = StringListEditor()
-        form.addWidget(self._core_weaknesses)
+
+        section_titles = {
+            "characterization": "角色塑造",
+            "motivation_history": "动机与经历",
+            "identity_details": "身份细节",
+            "capabilities": "能力",
+        }
+        for section_id, title in section_titles.items():
+            section = CollapsibleSection(title, section_id=section_id)
+            content = QWidget()
+            content_layout = QVBoxLayout(content)
+            for definition in CHARACTER_DETAIL_DEFINITIONS:
+                if definition.section_id != section_id:
+                    continue
+                detail = DetailFieldContainer(
+                    definition.field_id,
+                    definition.label,
+                    getattr(self, definition.widget_attribute),
+                )
+                detail.hide_requested.connect(self._on_hide_detail)
+                self._detail_fields[definition.field_id] = detail
+                content_layout.addWidget(detail)
+            section.set_content_widget(content)
+            section.expanded_changed.connect(
+                lambda expanded, sid=section_id: self._on_section_expanded(
+                    sid, expanded
+                )
+            )
+            self._detail_sections[section_id] = section
+            form.addWidget(section)
+
+        self._add_detail_btn = QPushButton("+ 添加详情")
+        self._add_detail_menu = SearchableAddMenu(self)
+        self._add_detail_menu.item_selected.connect(self._on_add_detail)
+        self._add_detail_btn.clicked.connect(self._open_add_detail_menu)
+        form.addWidget(self._add_detail_btn)
+        self._reset_fields_btn = QPushButton("按角色重要性重置可见字段")
+        self._reset_fields_btn.clicked.connect(self._reset_visible_fields)
+        form.addWidget(self._reset_fields_btn)
+        self._layout_notice = QLabel()
+        self._layout_notice.setStyleSheet("color: #777;")
+        form.addWidget(self._layout_notice)
 
         form.addStretch()
         scroll.setWidget(container)
         return scroll
+
+    def _open_add_detail_menu(self) -> None:
+        visible = set(self._current_layout.visible_fields) if self._current_layout else set()
+        populated = (
+            populated_character_fields(self._gather_core(self._current_id))
+            if self._current_id
+            else set()
+        )
+        category_labels = {
+            "characterization": "角色塑造",
+            "motivation_history": "动机与经历",
+            "identity_details": "身份细节",
+            "capabilities": "能力",
+        }
+        self._add_detail_menu.set_items(
+            [
+                AddMenuItem(
+                    definition.field_id,
+                    definition.label,
+                    category_labels[definition.section_id],
+                    definition.description,
+                    definition.keywords,
+                )
+                for definition in CHARACTER_DETAIL_DEFINITIONS
+            ],
+            visible_ids=visible,
+            populated_ids=populated,
+        )
+        self._add_detail_menu.open_below(self._add_detail_btn)
+
+    def _sanitize_character_layout(self, layout: CharacterEditorLayout) -> None:
+        supported_fields = set(self._detail_fields)
+        supported_sections = set(self._detail_sections)
+        unknown = (
+            set(layout.visible_fields) - supported_fields
+        ) | (set(layout.collapsed_sections) - supported_sections)
+        if unknown:
+            logger.warning("Ignoring unknown character layout IDs: %s", sorted(unknown))
+        layout.visible_fields = [
+            field_id for field_id in layout.visible_fields if field_id in supported_fields
+        ]
+        layout.collapsed_sections = [
+            section_id
+            for section_id in layout.collapsed_sections
+            if section_id in supported_sections
+        ]
+
+    def _apply_character_layout(self, layout: CharacterEditorLayout) -> None:
+        self._sanitize_character_layout(layout)
+        self._current_layout = layout
+        visible = set(layout.visible_fields)
+        for field_id, detail in self._detail_fields.items():
+            detail.setVisible(field_id in visible)
+        for section_id, section in self._detail_sections.items():
+            section.set_expanded(section_id not in layout.collapsed_sections)
+        self._recompute_section_visibility()
+        self._layout_notice.clear()
+
+    def _set_detail_field_visible(
+        self,
+        field_id: str,
+        visible: bool,
+        *,
+        persist: bool = True,
+        customized: bool = True,
+    ) -> None:
+        if self._current_layout is None or field_id not in self._detail_fields:
+            return
+        visible_fields = set(self._current_layout.visible_fields)
+        if visible:
+            visible_fields.add(field_id)
+        else:
+            visible_fields.discard(field_id)
+        self._current_layout.visible_fields = sorted(visible_fields)
+        self._current_layout.visibility_customized |= customized
+        self._detail_fields[field_id].setVisible(visible)
+        self._recompute_section_visibility()
+        if persist and self._layout_store is not None:
+            self._layout_store.schedule_save()
+
+    def _recompute_section_visibility(self) -> None:
+        visible = set(self._current_layout.visible_fields) if self._current_layout else set()
+        for section_id, section in self._detail_sections.items():
+            section.setVisible(
+                any(
+                    definition.field_id in visible
+                    for definition in CHARACTER_DETAIL_DEFINITIONS
+                    if definition.section_id == section_id
+                )
+            )
+
+    def _on_add_detail(self, field_id: str) -> None:
+        self._set_detail_field_visible(field_id, True)
+        definition = next(
+            item for item in CHARACTER_DETAIL_DEFINITIONS if item.field_id == field_id
+        )
+        section = self._detail_sections[definition.section_id]
+        section.set_expanded(True)
+        self._on_section_expanded(definition.section_id, True)
+        self._detail_fields[field_id].focus_editor()
+
+    def _on_hide_detail(self, field_id: str) -> None:
+        if self._current_id is None:
+            return
+        populated = field_id in populated_character_fields(
+            self._gather_core(self._current_id)
+        )
+        self._set_detail_field_visible(field_id, False)
+        if populated:
+            label = next(
+                item.label
+                for item in CHARACTER_DETAIL_DEFINITIONS
+                if item.field_id == field_id
+            )
+            self._layout_notice.setText(f'“{label}”已隐藏，内容仍会保留。')
+
+    def _on_section_expanded(self, section_id: str, expanded: bool) -> None:
+        if self._current_layout is None:
+            return
+        collapsed = set(self._current_layout.collapsed_sections)
+        if expanded:
+            collapsed.discard(section_id)
+        else:
+            collapsed.add(section_id)
+        self._current_layout.collapsed_sections = sorted(collapsed)
+        if self._layout_store is not None:
+            self._layout_store.schedule_save()
+
+    def _on_tier_changed(self) -> None:
+        if self._populating or self._current_id is None or self._current_layout is None:
+            return
+        tier = self._core_tier.currentData()
+        if not isinstance(tier, CharacterTier):
+            return
+        if (
+            self._current_id not in self._persisted_character_ids
+            and not self._current_layout.visibility_customized
+        ):
+            self._current_layout.visible_fields = sorted(
+                default_character_fields(tier)
+                | populated_character_fields(self._gather_core(self._current_id))
+            )
+            self._current_layout.initialized_for_tier = tier.value
+            self._apply_character_layout(self._current_layout)
+            if self._layout_store is not None:
+                self._layout_store.schedule_save()
+        else:
+            missing = default_character_fields(tier) - set(
+                self._current_layout.visible_fields
+            )
+            self._tier_suggestion.setText(
+                f"此角色现在是{character_tier_label(tier)}。"
+            )
+            self._tier_suggestion.setVisible(bool(missing))
+            self._recommended_btn.setVisible(bool(missing))
+        self.characters_changed.emit()
+
+    def _show_recommended_fields(self) -> None:
+        tier = self._core_tier.currentData()
+        if not isinstance(tier, CharacterTier):
+            return
+        for field_id in default_character_fields(tier):
+            self._set_detail_field_visible(field_id, True, persist=False)
+        self._tier_suggestion.setVisible(False)
+        self._recommended_btn.setVisible(False)
+        if self._layout_store is not None:
+            self._layout_store.schedule_save()
+
+    def _reset_visible_fields(self) -> None:
+        if self._current_id is None or self._current_layout is None:
+            return
+        tier = self._core_tier.currentData()
+        if not isinstance(tier, CharacterTier):
+            return
+        target = default_character_fields(tier) | populated_character_fields(
+            self._gather_core(self._current_id)
+        )
+        hiding = set(self._current_layout.visible_fields) - target
+        if hiding and QMessageBox.question(
+            self,
+            "重置可见字段",
+            "这会隐藏空白的非推荐字段。字段内容不会被删除。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        self._current_layout.visible_fields = sorted(target)
+        self._current_layout.visibility_customized = True
+        self._apply_character_layout(self._current_layout)
+        if self._layout_store is not None:
+            self._layout_store.schedule_save()
 
     # ── State Tab ──────────────────────────────────────────────────────────
 
@@ -445,12 +687,16 @@ class CharacterEditorView(QWidget):
         char_id = self._current_id
         if char_id not in self._persisted_character_ids:
             self._characters.pop(char_id, None)
+            if self._layout_store is not None:
+                self._layout_store.layout.characters.pop(char_id, None)
+                self._layout_store.schedule_save()
             for row in range(self._list.count()):
                 item = self._list.item(row)
                 if item is not None and item.data(Qt.ItemDataRole.UserRole) == char_id:
                     self._list.takeItem(row)
                     break
             self._baseline_core = None
+            self.characters_changed.emit()
         else:
             character = load_character(self._project_dir, char_id)
             self._characters[char_id] = character
@@ -473,6 +719,12 @@ class CharacterEditorView(QWidget):
         try:
             self._populate_core_tab(char.core)
             self._populate_state_tab(char.state)
+            if self._layout_store is not None:
+                layout = self._layout_store.character_layout(char_id)
+                if not layout.visible_fields and char_id not in self._persisted_character_ids:
+                    layout.visible_fields = sorted(initial_character_fields(char.core))
+                    layout.initialized_for_tier = char.core.tier.value
+                self._apply_character_layout(layout)
         finally:
             self._populating = False
         self._baseline_core = char.core.model_copy(deep=True)
@@ -517,6 +769,7 @@ class CharacterEditorView(QWidget):
         self._state_status.clear()
         self._state_last_scene.clear()
         self._baseline_core = None
+        self._current_layout = None
         self._populating = False
         self._set_core_dirty(False)
         self._edit_state_btn.setEnabled(False)
@@ -652,6 +905,14 @@ class CharacterEditorView(QWidget):
         character = Character(core=core, state=state)
 
         self._characters[char_id] = character
+        if self._layout_store is not None:
+            self._layout_store.layout.characters[char_id] = CharacterEditorLayout(
+                visible_fields=sorted(
+                    default_character_fields(CharacterTier.SUPPORTING)
+                ),
+                initialized_for_tier=CharacterTier.SUPPORTING.value,
+            )
+            self._layout_store.schedule_save()
         self._add_to_list(character)
 
         # Select the new character
@@ -664,6 +925,11 @@ class CharacterEditorView(QWidget):
         if current is None or current.data(Qt.ItemDataRole.UserRole) != char_id:
             self._characters.pop(char_id, None)
             self._list.takeItem(self._list.count() - 1)
+            if self._layout_store is not None:
+                self._layout_store.layout.characters.pop(char_id, None)
+                self._layout_store.schedule_save()
+        else:
+            self.characters_changed.emit()
 
     def _on_delete_character(self) -> None:
         """Delete the selected character with confirmation."""
@@ -686,9 +952,14 @@ class CharacterEditorView(QWidget):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        delete_character(self._project_dir, self._current_id)
+        deleted_id = self._current_id
+        delete_character(self._project_dir, deleted_id)
+        if self._layout_store is not None:
+            self._layout_store.layout.characters.pop(deleted_id, None)
+            self._layout_store.schedule_save()
         self._refresh_character_list()
         self.saved.emit()
+        self.characters_changed.emit()
 
         # Select first character or clear
         if self._characters:
@@ -773,6 +1044,7 @@ class CharacterEditorView(QWidget):
             return False
 
         try:
+            was_new = self._current_id not in self._persisted_character_ids
             core = self._gather_core(self._current_id)
             char_dir = self._project_dir / "characters" / self._current_id
             if (char_dir / "definition.yaml").exists():
@@ -797,6 +1069,8 @@ class CharacterEditorView(QWidget):
             self._edit_state_btn.setEnabled(True)
             self._edit_state_btn.setToolTip("")
             self.saved.emit()
+            if was_new:
+                self.characters_changed.emit()
             return True
         except Exception as e:
             QMessageBox.warning(self, "保存失败", str(e))

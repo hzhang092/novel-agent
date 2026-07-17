@@ -15,6 +15,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from app.ui.widgets.collapsible_section import CollapsibleSection
+from app.ui.widgets.detail_field import DetailFieldContainer
+from app.ui.widgets.searchable_add_menu import AddMenuItem, SearchableAddMenu
+
 
 class StringListEditor(QWidget):
     """Editable list of strings with add/remove buttons."""
