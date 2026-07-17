@@ -11,6 +11,23 @@ from app.storage.bible_models import (
 from app.ui.bible_element_dialog import BibleElementDialog
 
 
+def test_add_dialog_uses_type_then_minimum_details_steps(qtbot):
+    dialog = BibleElementDialog()
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    assert dialog._steps.currentIndex() == 0
+    assert dialog._next_button.isVisible()
+    assert not dialog._name.isVisible()
+
+    dialog._type.setCurrentIndex(dialog._type.findData(BibleElementType.FACTION))
+    dialog._next_button.click()
+
+    assert dialog._steps.currentIndex() == 1
+    assert dialog._name.isVisible()
+    assert not dialog._definition.isVisible()
+
+
 @pytest.mark.parametrize(
     ("element_type", "expected_class"),
     [
@@ -48,3 +65,35 @@ def test_add_dialog_asks_for_terminology_definition(qtbot):
     assert draft.definition == "修行货币"
     assert not dialog._definition.isHidden()
 
+
+def test_add_dialog_rejects_missing_required_name(qtbot, monkeypatch):
+    from PyQt6.QtWidgets import QMessageBox
+
+    dialog = BibleElementDialog(default_type=BibleElementType.FACTION)
+    qtbot.addWidget(dialog)
+    warnings = []
+    monkeypatch.setattr(
+        QMessageBox, "warning", lambda *_args: warnings.append(True)
+    )
+
+    dialog.accept()
+
+    assert dialog.result() == 0
+    assert warnings == [True]
+
+
+def test_add_dialog_rejects_missing_terminology_definition(qtbot, monkeypatch):
+    from PyQt6.QtWidgets import QMessageBox
+
+    dialog = BibleElementDialog(default_type=BibleElementType.TERMINOLOGY)
+    qtbot.addWidget(dialog)
+    dialog._name.setText("Qi")
+    warnings = []
+    monkeypatch.setattr(
+        QMessageBox, "warning", lambda *_args: warnings.append(True)
+    )
+
+    dialog.accept()
+
+    assert dialog.result() == 0
+    assert warnings == [True]

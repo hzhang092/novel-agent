@@ -2,6 +2,7 @@ from app.storage.bible_models import (
     BibleManifest,
     FactionElement,
     HistoricalEventElement,
+    LocationElement,
     PowerRealm,
     PowerSystemElement,
     TerminologyElement,
@@ -91,6 +92,27 @@ def test_single_migrated_history_projects_to_exact_original_text():
     )
 
     assert world.history == "五百年前，正魔大战。\n此后天下三分。"
+
+
+def test_single_new_history_in_migrated_project_keeps_its_full_projection():
+    history = HistoricalEventElement(
+        id="new-history",
+        name="宗门联盟",
+        time_label="三年前",
+        description="联盟成立。",
+        consequences=["共同守卫东荒"],
+    )
+
+    world = project_elements_to_legacy_world(
+        WorldOverview(),
+        [history],
+        BibleManifest(
+            element_order=[history.id],
+            migrated_from_world_setting=True,
+        ),
+    )
+
+    assert world.history == "三年前 宗门联盟\n联盟成立。\nConsequences: 共同守卫东荒"
 
 
 def test_multiple_histories_project_in_manifest_order():
@@ -230,4 +252,27 @@ def test_world_markdown_renders_terminology():
     assert "## 术语" in markdown
     assert "### 灵石" in markdown
     assert "修仙货币" in markdown
+
+
+def test_world_markdown_renders_locations_in_manifest_order():
+    first = LocationElement(
+        id="l1",
+        name="青云山",
+        description="青云宗所在山脉",
+        atmosphere="云雾缭绕",
+        notable_features=["问剑峰"],
+    )
+    second = LocationElement(id="l2", name="魔渊")
+
+    markdown = render_world_markdown(
+        WorldOverview(),
+        [second, first],
+        BibleManifest(element_order=["l1", "l2"]),
+    )
+
+    assert "## 地点" in markdown
+    assert markdown.index("### 青云山") < markdown.index("### 魔渊")
+    assert "青云宗所在山脉" in markdown
+    assert "云雾缭绕" in markdown
+    assert "- 问剑峰" in markdown
 import pytest

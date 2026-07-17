@@ -138,11 +138,11 @@ def test_nonempty_overview_summarizes_current_bible_values(tmp_path, qtbot):
 
     summaries = [label.text() for label in editor._overview_summary.findChildren(QLabel)]
     assert not editor._overview_summary.isHidden()
-    assert any("1 个已显示设定" in text for text in summaries)
+    assert any("4 个概览部分 · 0 个元素" in text for text in summaries)
     assert any("1 个角色" in text and "1 位主要角色" in text for text in summaries)
     assert any("偏快 · 严肃 · 第三人称" in text for text in summaries)
 
-    editor._geo_edit.setPlainText("群山与海洋")
+    editor._world_tab._overview_geography.setPlainText("群山与海洋")
     editor._pacing_slider.setValue(5)
     editor._character_tab._core_tier.setCurrentIndex(
         editor._character_tab._core_tier.findData(CharacterTier.SUPPORTING)

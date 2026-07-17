@@ -9,6 +9,7 @@ from app.storage.bible_models import (
     BibleManifest,
     FactionElement,
     HistoricalEventElement,
+    LocationElement,
     PowerSystemElement,
     TerminologyElement,
     WorldOverview,
@@ -38,6 +39,21 @@ def render_world_markdown(
 
     if ordered:
         lines.extend(["# 故事元素", ""])
+    locations = [element for element in ordered if isinstance(element, LocationElement)]
+    if locations:
+        lines.extend(["## 地点", ""])
+        for element in locations:
+            lines.extend([f"### {element.name}", ""])
+            if element.description:
+                lines.extend([element.description, ""])
+            if element.atmosphere:
+                lines.extend([f"**氛围**: {element.atmosphere}", ""])
+            if element.notable_features:
+                lines.extend([
+                    "**显著特征**",
+                    *[f"- {feature}" for feature in element.notable_features],
+                    "",
+                ])
     factions = [element for element in ordered if isinstance(element, FactionElement)]
     if factions:
         lines.extend(["## 势力", ""])

@@ -10,6 +10,13 @@ from pydantic import BaseModel, Field
 from app.pipeline.agents.character import CharacterIntentAgent
 from app.pipeline.pipeline import ScenePipeline
 from app.providers.base import MockProvider
+from app.storage.bible_migration import ensure_bible_store
+from app.storage.bible_models import (
+    BibleElementRelation,
+    BibleRelationKind,
+    FactionElement,
+)
+from app.storage.bible_repository import BibleElementRepository
 from app.storage.models import (
     Project,
     Character,
@@ -37,6 +44,31 @@ def project_dir():
     with tempfile.TemporaryDirectory() as tmp:
         proj = Project(title="TestPipeline", genre="玄幻", llm_provider="mock")
         proj_dir = create_project(Path(tmp), proj)
+        ensure_bible_store(proj_dir)
+
+        bible_repository = BibleElementRepository(proj_dir)
+        bible_repository.create(
+            FactionElement(
+                id="faction-moyuan",
+                name="魔渊殿",
+                summary="隐世邪道宗门",
+                revision=2,
+            )
+        )
+        bible_repository.create(
+            FactionElement(
+                id="faction-qingyun",
+                name="青云宗",
+                summary="正道宗门",
+                revision=7,
+                relationships=[
+                    BibleElementRelation(
+                        kind=BibleRelationKind.OPPOSED_TO,
+                        target_element_id="faction-moyuan",
+                    )
+                ],
+            )
+        )
 
         char = Character(
             core=CharacterCore(
@@ -57,6 +89,7 @@ def project_dir():
             time="清晨",
             pov_character_id="char-1",
             participating_character_ids=["char-1"],
+            world_element_ids=["faction-qingyun"],
             scene_goal="发现秘境秘密",
             conflict="机关陷阱",
             ending_hook="秘境深处传来低语",
@@ -157,6 +190,16 @@ async def test_full_pipeline_generates_prose(
     assert result.review is not None
     assert result.review.overall_pass is True
     assert len(result.trace) >= 4  # Planner, Characters, Writer, Reviewer
+    assert result.generated_with["bible_elements"] == {
+        "faction-qingyun": {
+            "revision": 7,
+            "selection_reasons": ["explicit_scene_reference"],
+        },
+        "faction-moyuan": {
+            "revision": 2,
+            "selection_reasons": ["related_to:faction-qingyun:opposed_to"],
+        },
+    }
 
 
 @pytest.mark.asyncio

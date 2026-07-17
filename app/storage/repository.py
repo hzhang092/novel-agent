@@ -31,6 +31,41 @@ class Repository:
         from app.storage.project_files import save_world_setting as _save_world
         _save_world(Path(project_dir), world)
 
+    def list_elements(self, project_dir: Path) -> list:
+        """List typed World Bible elements in manifest order."""
+        from app.storage.bible_repository import WorldBibleService
+
+        return WorldBibleService(Path(project_dir)).load().elements
+
+    def load_element(self, project_dir: Path, element_id: str):
+        """Load one typed World Bible element."""
+        from app.storage.bible_repository import WorldBibleService
+
+        service = WorldBibleService(Path(project_dir))
+        service.load()
+        return service.repository.load(element_id)
+
+    def save_element(self, project_dir: Path, element):
+        """Create or update an element and synchronize compatibility files."""
+        from app.storage.bible_repository import WorldBibleService
+
+        return WorldBibleService(Path(project_dir)).save_element(element)
+
+    def delete_element(
+        self,
+        project_dir: Path,
+        element_id: str,
+        *,
+        unlink_references: bool = False,
+    ) -> None:
+        """Delete an element through the safe World Bible service."""
+        from app.storage.bible_repository import WorldBibleService
+
+        WorldBibleService(Path(project_dir)).delete_element(
+            element_id,
+            unlink_references=unlink_references,
+        )
+
     def save_style_guide(self, project_dir: Path, style) -> None:
         """Update style guide on disk."""
         from app.storage.project_files import save_style_guide as _save_style

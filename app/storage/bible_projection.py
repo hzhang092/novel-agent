@@ -45,7 +45,13 @@ def project_elements_to_legacy_world(
         terminology_names.add(normalized_name)
         terminology[element.name] = element.definition
     histories = [element for element in ordered if isinstance(element, HistoricalEventElement)]
-    if len(histories) == 1 and manifest.migrated_from_world_setting:
+    if (
+        len(histories) == 1
+        and manifest.migrated_from_world_setting
+        and histories[0].name == "World History"
+        and not histories[0].time_label
+        and not histories[0].consequences
+    ):
         history = histories[0].description
     else:
         rendered_histories = []

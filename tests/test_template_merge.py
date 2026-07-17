@@ -1,147 +1,245 @@
+import pytest
+
+from app.storage.bible_models import (
+    BibleElementRelation,
+    BibleElementType,
+    FactionElement,
+    LocationElement,
+    TerminologyElement,
+    WorldOverview,
+)
 from app.storage.models import PowerSystem, StyleGuide, WorldSetting
 from app.utils.template_merge import (
+    StoryTemplate,
     TemplateMergeMode,
+    apply_story_template,
     merge_style_guide,
     merge_world_setting,
+    preview_story_template_replace,
 )
-from app.utils.xianxia_template import get_xianxia_template
 
 
-def test_fill_empty_world_uses_template_only_for_empty_fields() -> None:
-    current = WorldSetting(
-        geography="已有地理",
-        factions=[{"name": "已有宗门"}],
-        history="已有历史",
-        rules=[],
-        technology_level="已有科技",
-        terminology={},
-    )
-    template = WorldSetting(
-        geography="模板地理",
-        power_system=PowerSystem(realms=["炼气"]),
-        factions=[{"name": "模板宗门"}],
-        history="模板历史",
-        rules=["模板规则"],
-        technology_level="模板科技",
-        terminology={"灵石": "货币"},
-    )
-
-    result = merge_world_setting(current, template, TemplateMergeMode.FILL_EMPTY)
-
-    assert result == WorldSetting(
-        geography="已有地理",
-        power_system=PowerSystem(realms=["炼气"]),
-        factions=[{"name": "已有宗门"}],
-        history="已有历史",
-        rules=["模板规则"],
-        technology_level="已有科技",
-        terminology={"灵石": "货币"},
-    )
-    assert current.power_system is None
-    assert template.power_system == PowerSystem(realms=["炼气"])
-
-
-def test_fill_empty_style_uses_template_only_for_empty_fields() -> None:
-    current = StyleGuide(
-        pacing="偏慢",
-        tone="已有基调",
-        taboo_patterns=["已有禁忌"],
-        preferred_patterns=[],
-        reference_passages=[],
-    )
-    template = StyleGuide(
-        pacing="很快",
-        dialogue_density="适中",
-        tone="热血",
-        taboo_patterns=["模板禁忌"],
-        preferred_patterns=["模板偏好"],
-        reference_passages=["模板段落"],
-    )
-
-    result = merge_style_guide(current, template, TemplateMergeMode.FILL_EMPTY)
-
-    assert result == StyleGuide(
-        pacing="偏慢",
-        dialogue_density="适中",
-        tone="已有基调",
-        taboo_patterns=["已有禁忌"],
-        preferred_patterns=["模板偏好"],
-        reference_passages=["模板段落"],
+def _template(*elements, overview=None) -> StoryTemplate:
+    return StoryTemplate(
+        template_id="test",
+        name="Test",
+        world_overview=overview or WorldOverview(),
+        elements=list(elements),
+        style_guide=StyleGuide(),
     )
 
 
-def test_merge_world_preserves_current_data_and_merges_power_system() -> None:
-    current = WorldSetting(
-        geography="已有地理",
-        power_system=PowerSystem(
-            realms=["筑基", "金丹"],
-            abilities={"筑基": "已有能力"},
-            limitations=["已有约束"],
+def test_fill_empty_elements_preserves_identity_and_author_metadata() -> None:
+    existing_relation = BibleElementRelation(
+        kind="located_in", target_element_id="location-1", note="作者关系"
+    )
+    current = FactionElement(
+        id="project-faction",
+        name="青云宗",
+        summary="",
+        tags=["作者标签"],
+        importance=5,
+        relationships=[existing_relation],
+        description="作者描述",
+        goals=[],
+    )
+    incoming = FactionElement(
+        id="template-faction",
+        name=" 青云宗 ",
+        summary="模板摘要",
+        tags=["模板标签"],
+        importance=1,
+        relationships=[],
+        description="模板描述",
+        goals=["模板目标"],
+    )
+    term = TerminologyElement(id="template-term", name="灵石", definition="货币")
+
+    result = apply_story_template(
+        WorldOverview(geography="作者地理"),
+        [current, LocationElement(id="location-1", name="青云山")],
+        StyleGuide(tone="作者基调"),
+        _template(
+            incoming,
+            term,
+            overview=WorldOverview(
+                geography="模板地理", rules=["模板规则"], technology_level="模板科技"
+            ),
         ),
-        history="",
-        rules=["共有规则", "已有规则"],
-        terminology={"灵石": "已有定义"},
-    )
-    template = WorldSetting(
-        geography="模板地理",
-        power_system=PowerSystem(
-            realms=["炼气", "筑基"],
-            abilities={"筑基": "模板能力", "炼气": "基础法术"},
-            limitations=["共有约束", "已有约束"],
-            costs=["消耗灵石"],
-        ),
-        history="模板历史",
-        rules=["模板规则", "共有规则"],
-        terminology={"灵石": "模板定义", "灵根": "修炼资质"},
+        TemplateMergeMode.FILL_EMPTY,
     )
 
-    result = merge_world_setting(current, template, TemplateMergeMode.MERGE)
+    faction = next(item for item in result.elements if item.element_type == "faction")
+    added_term = next(item for item in result.elements if item.element_type == "terminology")
+    assert result.world_overview.geography == "作者地理"
+    assert result.world_overview.rules == ["模板规则"]
+    assert result.world_overview.technology_level == "模板科技"
+    assert result.style_guide.tone == "作者基调"
+    assert faction.id == "project-faction"
+    assert faction.summary == "模板摘要"
+    assert faction.description == "作者描述"
+    assert faction.goals == ["模板目标"]
+    assert faction.tags == ["作者标签"]
+    assert faction.importance == 5
+    assert faction.relationships == [existing_relation]
+    assert added_term.id != "template-term"
+    assert added_term.definition == "货币"
 
-    assert result.geography == "已有地理"
-    assert result.history == "模板历史"
-    assert result.rules == ["共有规则", "已有规则", "模板规则"]
-    assert result.terminology == {"灵石": "已有定义", "灵根": "修炼资质"}
-    assert result.power_system == PowerSystem(
-        realms=["筑基", "金丹", "炼气"],
-        abilities={"筑基": "已有能力", "炼气": "基础法术"},
-        limitations=["已有约束", "共有约束"],
-        costs=["消耗灵石"],
-    )
-    assert current.power_system.realms == ["筑基", "金丹"]
 
-
-def test_merge_world_matches_factions_by_normalized_name() -> None:
-    current = WorldSetting(
-        factions=[
-            {
-                "name": " 青云宗 ",
-                "description": "",
-                "goals": "已有目标",
-                "note": "保留附注",
-            },
-            {"name": "魔渊殿", "description": "已有描述", "goals": ""},
-        ]
-    )
-    template = WorldSetting(
-        factions=[
-            {"name": "青云宗", "description": "模板描述", "goals": "模板目标"},
-            {"name": " 魔渊殿 ", "description": "模板魔殿", "goals": "模板魔目标"},
-            {"name": "天机阁", "description": "情报组织", "goals": "收集情报"},
-        ]
-    )
-
-    result = merge_world_setting(current, template, TemplateMergeMode.MERGE)
-
-    assert result.factions == [
-        {
-            "name": " 青云宗 ",
-            "description": "模板描述",
-            "goals": "已有目标",
-            "note": "保留附注",
-        },
-        {"name": "魔渊殿", "description": "已有描述", "goals": "模板魔目标"},
-        {"name": "天机阁", "description": "情报组织", "goals": "收集情报"},
+@pytest.mark.parametrize("mode", list(TemplateMergeMode))
+def test_template_application_rejects_ambiguous_project_element_identity(
+    mode: TemplateMergeMode,
+) -> None:
+    current = [
+        FactionElement(id="first", name="Spirit Order"),
+        FactionElement(id="second", name="ＳＰＩＲＩＴ ＯＲＤＥＲ"),
     ]
+    template = _template(FactionElement(id="template", name=" spirit order "))
+
+    with pytest.raises(ValueError, match="Ambiguous project elements"):
+        apply_story_template(
+            WorldOverview(), current, StyleGuide(), template, mode
+        )
+
+
+def test_template_application_rejects_duplicate_template_element_identity() -> None:
+    template = _template(
+        FactionElement(id="first", name="Spirit Order"),
+        FactionElement(id="second", name="ＳＰＩＲＩＴ ＯＲＤＥＲ"),
+    )
+
+    with pytest.raises(ValueError, match="Duplicate template elements"):
+        apply_story_template(
+            WorldOverview(), [], StyleGuide(), template, TemplateMergeMode.MERGE
+        )
+
+
+@pytest.mark.parametrize("mode", list(TemplateMergeMode))
+def test_story_template_application_does_not_mutate_its_inputs(
+    mode: TemplateMergeMode,
+) -> None:
+    overview = WorldOverview(geography="作者地理", rules=["作者规则"])
+    elements = [
+        FactionElement(id="project", name="青云宗", tags=["作者标签"]),
+        LocationElement(id="location", name="青云山"),
+    ]
+    style = StyleGuide(tone="作者基调", taboo_patterns=["作者禁忌"])
+    template = StoryTemplate(
+        template_id="test",
+        name="Test",
+        world_overview=WorldOverview(rules=["模板规则"]),
+        elements=[
+            FactionElement(id="template", name="青云宗", tags=["模板标签"])
+        ],
+        style_guide=StyleGuide(taboo_patterns=["模板禁忌"]),
+    )
+    snapshots = (
+        overview.model_copy(deep=True),
+        [element.model_copy(deep=True) for element in elements],
+        style.model_copy(deep=True),
+        template.model_copy(deep=True),
+    )
+
+    result = apply_story_template(overview, elements, style, template, mode)
+    result.world_overview.rules.append("修改结果")
+    result.elements[0].tags.append("修改结果")
+    result.style_guide.taboo_patterns.append("修改结果")
+
+    assert overview == snapshots[0]
+    assert elements == snapshots[1]
+    assert style == snapshots[2]
+    assert template == snapshots[3]
+
+
+def test_merge_remaps_template_relationship_targets_to_project_ids() -> None:
+    current_qingyun = FactionElement(
+        id="project-qingyun",
+        name="青云宗",
+        goals=["已有目标"],
+        relationships=[
+            BibleElementRelation(
+                kind="opposed_to", target_element_id="project-moyuan", note="作者说明"
+            )
+        ],
+    )
+    current_moyuan = FactionElement(id="project-moyuan", name="魔渊殿")
+    template_qingyun = FactionElement(
+        id="template-qingyun",
+        name="青云宗",
+        goals=["已有目标", "模板目标"],
+        relationships=[
+            BibleElementRelation(
+                kind="opposed_to", target_element_id="template-moyuan", note="模板说明"
+            )
+        ],
+    )
+    template_moyuan = FactionElement(id="template-moyuan", name="魔渊殿")
+
+    result = apply_story_template(
+        WorldOverview(rules=["已有规则"]),
+        [current_qingyun, current_moyuan],
+        StyleGuide(),
+        _template(
+            template_qingyun,
+            template_moyuan,
+            overview=WorldOverview(rules=["已有规则", "模板规则"]),
+        ),
+        TemplateMergeMode.MERGE,
+    )
+
+    qingyun = next(item for item in result.elements if item.id == "project-qingyun")
+    assert result.world_overview.rules == ["已有规则", "模板规则"]
+    assert qingyun.goals == ["已有目标", "模板目标"]
+    assert qingyun.relationships == [
+        BibleElementRelation(
+            kind="opposed_to", target_element_id="project-moyuan", note="作者说明"
+        )
+    ]
+
+
+def test_replace_reports_exact_counts_and_retains_unmanaged_locations() -> None:
+    current = [
+        FactionElement(id="existing-qingyun", name="青云宗", description="旧内容"),
+        FactionElement(id="obsolete", name="旧宗门"),
+        LocationElement(id="location-1", name="青云山"),
+        LocationElement(id="location-2", name="魔渊"),
+        LocationElement(id="location-3", name="天机城"),
+    ]
+    template = _template(
+        FactionElement(id="template-qingyun", name="青云宗", description="新内容"),
+        TerminologyElement(id="template-term", name="灵石", definition="货币"),
+        overview=WorldOverview(
+            geography="新地理",
+            rules=["新规则"],
+            taboos=["新禁忌"],
+            technology_level="新科技",
+            social_structure="新社会",
+        ),
+    )
+
+    preview = preview_story_template_replace(current, template)
+    result = apply_story_template(
+        WorldOverview(geography="旧地理"),
+        current,
+        StyleGuide(),
+        template,
+        TemplateMergeMode.REPLACE,
+    )
+
+    assert preview.overview_fields_replaced == 5
+    assert preview.elements_replaced == {
+        BibleElementType.FACTION: 1,
+        BibleElementType.TERMINOLOGY: 1,
+    }
+    assert preview.unaffected_elements == {BibleElementType.LOCATION: 3}
+    assert [item.id for item in result.elements if item.element_type == "location"] == [
+        "location-1", "location-2", "location-3"
+    ]
+    factions = [item for item in result.elements if item.element_type == "faction"]
+    assert len(factions) == 1
+    assert factions[0].id == "existing-qingyun"
+    assert factions[0].description == "新内容"
+    assert all(item.id != "obsolete" for item in result.elements)
 
 
 def test_merge_style_preserves_scalars_and_deduplicates_trimmed_patterns() -> None:
@@ -169,42 +267,64 @@ def test_merge_style_preserves_scalars_and_deduplicates_trimmed_patterns() -> No
     assert result.reference_passages == ["已有段落", "新段落"]
 
 
-def test_replace_world_returns_an_independent_copy_of_complete_template() -> None:
-    current = WorldSetting(geography="已有地理", rules=["已有规则"])
-    template = WorldSetting(
+def test_legacy_fill_empty_merge_helpers_remain_compatible() -> None:
+    current_world = WorldSetting(
+        geography="已有地理",
+        factions=[{"name": "已有宗门"}],
+        rules=[],
+    )
+    template_world = WorldSetting(
         geography="模板地理",
         power_system=PowerSystem(realms=["炼气"]),
+        factions=[{"name": "模板宗门"}],
         rules=["模板规则"],
     )
+    current_style = StyleGuide(pacing="偏慢", taboo_patterns=["已有禁忌"])
+    template_style = StyleGuide(
+        pacing="很快",
+        dialogue_density="适中",
+        taboo_patterns=["模板禁忌"],
+    )
 
-    result = merge_world_setting(current, template, TemplateMergeMode.REPLACE)
+    world = merge_world_setting(
+        current_world, template_world, TemplateMergeMode.FILL_EMPTY
+    )
+    style = merge_style_guide(current_style, template_style, TemplateMergeMode.FILL_EMPTY)
 
-    assert result == template
-    result.rules.append("表单修改")
-    result.power_system.realms.append("筑基")
-    assert template.rules == ["模板规则"]
-    assert template.power_system.realms == ["炼气"]
-
-
-def test_replace_style_returns_an_independent_copy_of_complete_template() -> None:
-    current = StyleGuide(pacing="偏慢", taboo_patterns=["已有禁忌"])
-    template = StyleGuide(pacing="很快", taboo_patterns=["模板禁忌"])
-
-    result = merge_style_guide(current, template, TemplateMergeMode.REPLACE)
-
-    assert result == template
-    result.taboo_patterns.append("表单修改")
-    assert template.taboo_patterns == ["模板禁忌"]
+    assert world.geography == "已有地理"
+    assert world.factions == [{"name": "已有宗门"}]
+    assert world.rules == ["模板规则"]
+    assert world.power_system == PowerSystem(realms=["炼气"])
+    assert style.pacing == "偏慢"
+    assert style.dialogue_density == "适中"
+    assert style.taboo_patterns == ["已有禁忌"]
 
 
-def test_xianxia_style_values_match_current_control_options() -> None:
-    _, style = get_xianxia_template()
+def test_legacy_merge_and_replace_helpers_remain_compatible() -> None:
+    current = WorldSetting(
+        power_system=PowerSystem(realms=["筑基"], abilities={"筑基": "已有能力"}),
+        factions=[{"name": " 青云宗 ", "description": "", "goals": "已有目标"}],
+    )
+    template = WorldSetting(
+        power_system=PowerSystem(
+            realms=["炼气", "筑基"],
+            abilities={"炼气": "基础法术", "筑基": "模板能力"},
+        ),
+        factions=[
+            {"name": "青云宗", "description": "模板描述", "goals": "模板目标"},
+            {"name": "天机阁", "description": "情报组织", "goals": "收集情报"},
+        ],
+    )
 
-    assert (
-        style.pacing,
-        style.dialogue_density,
-        style.description_style,
-        style.tone,
-        style.sentence_length,
-        style.pov,
-    ) == ("很快", "适中", "简练", "热血", "短句多", "第三人称")
+    merged = merge_world_setting(current, template, TemplateMergeMode.MERGE)
+    replaced = merge_world_setting(current, template, TemplateMergeMode.REPLACE)
+
+    assert merged.power_system.realms == ["筑基", "炼气"]
+    assert merged.power_system.abilities == {"筑基": "已有能力", "炼气": "基础法术"}
+    assert merged.factions == [
+        {"name": " 青云宗 ", "description": "模板描述", "goals": "已有目标"},
+        {"name": "天机阁", "description": "情报组织", "goals": "收集情报"},
+    ]
+    assert replaced == template
+    replaced.factions.append({"name": "表单修改"})
+    assert len(template.factions) == 2

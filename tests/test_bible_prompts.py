@@ -33,6 +33,20 @@ def world_context():
                     ],
                 },
                 {
+                    "id": "faction-moyuan",
+                    "type": "faction",
+                    "name": "魔渊殿",
+                    "summary": "隐于地下魔殿的邪道宗门",
+                    "tags": ["邪道"],
+                    "importance": 4,
+                    "details": {
+                        "description": "以禁术掠夺修为",
+                        "goals": ["颠覆青云宗"],
+                        "ideology": "强者为尊",
+                    },
+                    "relationships": [],
+                },
+                {
                     "id": "location-square",
                     "type": "location",
                     "name": "问剑广场",
@@ -52,6 +66,26 @@ def world_context():
                     "details": {"limitations": ["不得越级"], "costs": ["消耗灵石"]},
                     "relationships": [],
                 },
+                {
+                    "id": "history-war",
+                    "type": "historical_event",
+                    "name": "正魔大战",
+                    "summary": "百年前两宗决战",
+                    "tags": [],
+                    "importance": 4,
+                    "details": {"description": "大战重塑了东荒格局"},
+                    "relationships": [],
+                },
+                {
+                    "id": "term-sword-heart",
+                    "type": "terminology",
+                    "name": "剑心",
+                    "summary": "剑修的心境根基",
+                    "tags": [],
+                    "importance": 3,
+                    "details": {"definition": "人剑合一前的明悟"},
+                    "relationships": [],
+                },
             ],
         },
         "world_rules": {
@@ -60,7 +94,11 @@ def world_context():
             "factions": [{"name": "UNSELECTED_SENTINEL"}],
         },
         "world_element_read_points": {
-            "faction-qingyun": {"revision": 7, "selection_reasons": ["explicit_scene_reference"]}
+            "faction-qingyun": {"revision": 7, "selection_reasons": ["explicit_scene_reference"]},
+            "faction-moyuan": {
+                "revision": 2,
+                "selection_reasons": ["related_to:faction-qingyun:opposed_to"],
+            },
         },
     }
 
@@ -80,6 +118,7 @@ def test_agents_use_selected_typed_elements_without_storage_metadata(build_promp
     assert "不得干涉凡人" in prompt
     assert "青云宗" in prompt
     assert "魔渊殿" in prompt
+    assert "地下魔殿" in prompt
     assert "九重天境" in prompt
     assert "UNSELECTED_SENTINEL" not in prompt
     assert "faction-qingyun" not in prompt
@@ -93,3 +132,5 @@ def test_writer_uses_type_specific_element_headings():
     assert "【相关地点】" in prompt
     assert "【相关势力】" in prompt
     assert "【相关力量体系】" in prompt
+    assert "【相关历史事件】" in prompt
+    assert "【相关术语】" in prompt

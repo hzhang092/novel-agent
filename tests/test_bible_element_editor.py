@@ -111,6 +111,37 @@ def test_editor_relations_use_target_ids_exclude_self_and_show_missing(qtbot):
     assert editor.gather_element().relationships == element.relationships
 
 
+def test_relationship_target_search_matches_name_alias_and_tag(qtbot):
+    element = FactionElement(
+        id="f1",
+        name="青云宗",
+        relationships=[
+            BibleElementRelation(kind=BibleRelationKind.USES, target_element_id="l1")
+        ],
+    )
+    target = LocationElement(
+        id="l1", name="Jade Mountain", aliases=["Sword Peak"], tags=["Orthodox"]
+    )
+    other = LocationElement(id="l2", name="Abyss", tags=["Demonic"])
+    editor = BibleElementEditor()
+    qtbot.addWidget(editor)
+    editor.load_element(element, elements=[element, target, other])
+    target_combo = editor._relations.cellWidget(0, 1)
+
+    for query in ("jade", "SWORD", "orthodox"):
+        target_combo.lineEdit().clear()
+        qtbot.keyClicks(target_combo.lineEdit(), query)
+        visible_ids = [
+            target_combo.itemData(index)
+            for index in range(target_combo.count())
+            if not target_combo.view().isRowHidden(index)
+        ]
+        assert visible_ids == ["l1"]
+
+    target_combo.setCurrentIndex(target_combo.findData("l1"))
+    assert editor.gather_element().relationships[0].target_element_id == "l1"
+
+
 def test_editor_shows_inbound_relations_with_inverse_label(qtbot):
     current = LocationElement(id="l1", name="青云山")
     source = FactionElement(id="f1", name="青云宗")

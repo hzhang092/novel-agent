@@ -352,6 +352,9 @@ class BibleElementEditor(QWidget):
         self._relations.setCellWidget(row, 0, kind)
 
         target = QComboBox()
+        target.setEditable(True)
+        target.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        target.lineEdit().setPlaceholderText("Search by name, alias, or tag")
         current_id = self._baseline.id if self._baseline else ""
         candidates = [element for element in self._elements if element.id != current_id]
         duplicates = Counter(
@@ -363,16 +366,41 @@ class BibleElementEditor(QWidget):
             if duplicates[(normalize_text(element.name), element.element_type)] > 1:
                 label += f" · {element.id[:8]}"
             target.addItem(label, element.id)
+            target.setItemData(
+                target.count() - 1,
+                normalize_text(" ".join((element.name, *element.aliases, *element.tags))),
+                Qt.ItemDataRole.UserRole + 1,
+            )
         target_id = relation.target_element_id if relation is not None else ""
         index = target.findData(target_id)
         if target_id and index < 0:
             target.addItem(f"⚠ Missing element · {target_id}", target_id)
+            target.setItemData(
+                target.count() - 1,
+                normalize_text(target_id),
+                Qt.ItemDataRole.UserRole + 1,
+            )
             index = target.count() - 1
         if index >= 0:
             target.setCurrentIndex(index)
+        target.lineEdit().textEdited.connect(
+            lambda text, combo=target: self._filter_relation_targets(combo, text)
+        )
+        target.activated.connect(
+            lambda _index, combo=target: self._filter_relation_targets(combo, "")
+        )
         target.currentIndexChanged.connect(self._recompute_dirty)
         self._relations.setCellWidget(row, 1, target)
         self._relations.setItem(row, 2, QTableWidgetItem(relation.note if relation else ""))
+
+    @staticmethod
+    def _filter_relation_targets(combo: QComboBox, text: str) -> None:
+        terms = normalize_text(text).split()
+        for index in range(combo.count()):
+            document = combo.itemData(index, Qt.ItemDataRole.UserRole + 1) or ""
+            combo.view().setRowHidden(
+                index, not all(term in document for term in terms)
+            )
 
     def _remove_selected_relations(self) -> None:
         rows = {index.row() for index in self._relations.selectedIndexes()}

@@ -130,6 +130,13 @@ class MainWindow(QMainWindow):
         for key in ["dashboard", "bible", "outline", "workspace"]:
             self.stack.addWidget(self.views[key])
 
+        bible = self.views["bible"]
+        outline = self.views["outline"]
+        if isinstance(bible, BibleEditorView) and isinstance(outline, OutlineEditorView):
+            bible.elements_changed.connect(
+                lambda: outline._refresh_world_elements()
+            )
+
         workspace = self.views["workspace"]
         if isinstance(workspace, SceneWorkspaceView):
             workspace.editor.version_selected.connect(self._on_prose_version_selected)
@@ -454,6 +461,19 @@ class MainWindow(QMainWindow):
         bible = self.views.get("bible")
         if isinstance(bible, BibleEditorView):
             bible._character_tab.set_current_scene_id(scene_id)
+            from app.storage.project_files import load_all_volumes
+
+            referenced_ids = next(
+                (
+                    set(scene.world_element_ids)
+                    for volume in load_all_volumes(self._current_project_dir)
+                    for chapter in volume.chapters
+                    for scene in chapter.scenes
+                    if scene.id == scene_id
+                ),
+                set(),
+            )
+            bible._world_tab.set_current_scene_element_ids(referenced_ids)
 
         workspace = self.views.get("workspace")
         if not isinstance(workspace, SceneWorkspaceView):

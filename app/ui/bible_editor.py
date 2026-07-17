@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -27,14 +28,15 @@ from PyQt6.QtWidgets import (
 )
 
 from app.storage.editor_layout import EditorLayoutStore
+from app.storage.bible_models import BibleElementType, WorldOverview
 from app.storage.models import Project as ProjectModel
 from app.storage.models import CharacterTier, PowerSystem, StyleGuide, WorldSetting
 from app.storage.project_files import (
     load_project,
     save_style_guide,
-    save_world_setting,
 )
 from app.ui.character_editor import CharacterEditorView
+from app.ui.world_bible_editor import WorldBibleEditorView
 from app.ui.world_section_catalog import (
     WORLD_SECTION_DEFINITIONS,
     populated_world_sections,
@@ -51,8 +53,9 @@ from app.ui.widgets import (
 )
 from app.utils.template_merge import (
     TemplateMergeMode,
+    apply_story_template,
     merge_style_guide,
-    merge_world_setting,
+    preview_story_template_replace,
 )
 from app.utils.xianxia_template import get_xianxia_template
 
@@ -68,11 +71,11 @@ class BibleEditorView(QWidget):
 
     saved = pyqtSignal()
     dirty_changed = pyqtSignal(bool)
+    elements_changed = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._project_dir: Path | None = None
-        self._baseline_world: WorldSetting | None = None
         self._baseline_style: StyleGuide | None = None
         self._world_dirty = False
         self._style_dirty = False
@@ -98,30 +101,26 @@ class BibleEditorView(QWidget):
         self._character_tab.set_layout_store(self._layout_store)
         self._populating = True
         try:
-            self._populate_world_tab(project.world_setting)
+            self._world_tab.set_layout_store(self._layout_store)
+            self._world_tab.load_project_dir(project_dir)
             self._populate_style_tab(project.style_guide)
             self._character_tab.load_project_dir(project_dir)
             if not had_layout:
-                self._layout_store.layout.world.visible_sections = sorted(
-                    populated_world_sections(project.world_setting)
-                )
                 self._layout_store.layout.style.collapsed_sections = ["advanced"]
                 self._layout_store.schedule_save()
-            self._apply_world_layout()
             self._apply_style_layout()
             self._restore_selected_tab()
         finally:
             self._populating = False
-        self._baseline_world = self._gather_world()
         self._baseline_style = self._gather_style()
-        self._world_dirty = False
+        self._world_dirty = self._world_tab.is_dirty
         self._style_dirty = False
         self._update_aggregate_dirty_state()
         self._refresh_overview()
 
     @property
     def is_dirty(self) -> bool:
-        return self._world_dirty or self._style_dirty or self._character_tab.is_dirty
+        return self._world_tab.is_dirty or self._style_dirty or self._character_tab.is_dirty
 
     # ── UI Setup ───────────────────────────────────────────────────────────
 
@@ -150,7 +149,7 @@ class BibleEditorView(QWidget):
         # Tabs
         self._tabs = QTabWidget()
         self._overview_tab = self._build_overview_tab()
-        self._world_tab = self._build_world_tab()
+        self._world_tab = WorldBibleEditorView()
         self._style_tab = self._build_style_tab()
         self._character_tab = CharacterEditorView()
         self._tabs.addTab(self._overview_tab, "概览")
@@ -208,7 +207,7 @@ class BibleEditorView(QWidget):
 
     def _start_world_from_overview(self) -> None:
         self._tabs.setCurrentWidget(self._world_tab)
-        self._open_world_menu()
+        self._world_tab._element_list.select_element("overview")
 
     def _start_style_from_overview(self) -> None:
         self._tabs.setCurrentWidget(self._style_tab)
@@ -279,7 +278,8 @@ class BibleEditorView(QWidget):
         self._layout_store.schedule_save()
 
     def _refresh_overview(self) -> None:
-        world = self._gather_world()
+        world = self._world_tab.overview_in_memory()
+        elements = self._world_tab.elements_in_memory()
         style = self._gather_style()
         characters = {
             character_id: character.core
@@ -289,21 +289,23 @@ class BibleEditorView(QWidget):
             characters[self._character_tab._current_id] = self._character_tab._gather_core(
                 self._character_tab._current_id
             )
-        empty = world == WorldSetting() and style == StyleGuide() and not characters
+        empty = (
+            world == WorldOverview()
+            and not elements
+            and style == StyleGuide()
+            and not characters
+        )
         self._overview_empty.setVisible(empty)
         self._overview_summary.setVisible(not empty)
         if empty:
             return
 
-        populated_world = populated_world_sections(world)
-        visible_world = (
-            set(self._layout_store.layout.world.visible_sections)
-            if self._layout_store is not None
-            else set()
-        )
+        counts = Counter(element.element_type for element in elements)
         self._overview_world_summary.setText(
-            f"世界：{len(visible_world)} 个已显示设定 · "
-            f"{len(populated_world - visible_world)} 个含内容的隐藏设定"
+            f"世界：4 个概览部分 · {len(elements)} 个元素\n"
+            f"{counts[BibleElementType.FACTION]} 个势力 · "
+            f"{counts[BibleElementType.LOCATION]} 个地点 · "
+            f"{counts[BibleElementType.POWER_SYSTEM]} 个力量体系"
         )
         counts = {
             tier: sum(core.tier == tier for core in characters.values())
@@ -320,23 +322,9 @@ class BibleEditorView(QWidget):
         )
 
     def _connect_dirty_tracking(self) -> None:
-        for editor in (self._geo_edit, self._history_edit):
-            editor.textChanged.connect(self._recompute_world_dirty)
-        for editor in (self._tech_edit, self._social_edit):
-            editor.textChanged.connect(self._recompute_world_dirty)
-        for editor in (
-            self._rules_list,
-            self._taboos_list,
-            self._realms_list,
-            self._limitations_list,
-            self._costs_list,
-            self._resources_list,
-            self._forbidden_list,
-            self._factions_table,
-            self._term_table,
-            self._abilities_table,
-        ):
-            editor.changed.connect(self._recompute_world_dirty)
+        self._world_tab.dirty_changed.connect(self._on_world_dirty_changed)
+        self._world_tab.content_changed.connect(self._refresh_overview)
+        self._world_tab.elements_changed.connect(self.elements_changed)
 
         self._pacing_slider.valueChanged.connect(self._recompute_style_dirty)
         for row in (
@@ -356,6 +344,11 @@ class BibleEditorView(QWidget):
             editor.textChanged.connect(self._recompute_style_dirty)
         self._character_tab.dirty_changed.connect(self._update_aggregate_dirty_state)
         self._character_tab.characters_changed.connect(self._refresh_overview)
+
+    def _on_world_dirty_changed(self, dirty: bool) -> None:
+        self._world_dirty = dirty
+        self._update_aggregate_dirty_state()
+        self._refresh_overview()
 
     def _recompute_world_dirty(self) -> None:
         if self._populating:
@@ -806,16 +799,9 @@ class BibleEditorView(QWidget):
     def save_all(self) -> bool:
         if self._project_dir is None:
             return True
-        if self._world_dirty:
-            world = self._gather_world()
-            try:
-                save_world_setting(self._project_dir, world)
-            except Exception as error:
-                QMessageBox.warning(self, "世界设定保存失败", str(error))
-                return False
-            self._baseline_world = world.model_copy(deep=True)
-            self._world_dirty = False
-            self._update_aggregate_dirty_state()
+        if not self._world_tab.save_all():
+            self._tabs.setCurrentWidget(self._world_tab)
+            return False
         if self._style_dirty:
             style = self._gather_style()
             try:
@@ -841,44 +827,66 @@ class BibleEditorView(QWidget):
         dialog = TemplateApplyDialog(self)
         if not dialog.exec() or not (dialog.apply_world or dialog.apply_style):
             return
-        if dialog.merge_mode == TemplateMergeMode.REPLACE:
+        template = get_xianxia_template()
+        before_overview = self._world_tab.overview_in_memory()
+        before_elements = self._world_tab.elements_in_memory()
+        before_style = self._gather_style()
+        if dialog.merge_mode == TemplateMergeMode.REPLACE and dialog.apply_world:
+            preview = preview_story_template_replace(before_elements, template)
+            replaced = preview.elements_replaced
+            unaffected = preview.unaffected_elements
+            message = (
+                "World Overview:\n"
+                f"• {preview.overview_fields_replaced} fields replaced\n\n"
+                "Elements:\n"
+                f"• {replaced.get(BibleElementType.FACTION, 0)} factions replaced\n"
+                f"• {replaced.get(BibleElementType.TERMINOLOGY, 0)} terminology entries replaced\n"
+                f"• {replaced.get(BibleElementType.HISTORICAL_EVENT, 0)} historical event replaced\n"
+                f"• {replaced.get(BibleElementType.POWER_SYSTEM, 0)} power system replaced\n\n"
+                "Unaffected:\n"
+                f"• {unaffected.get(BibleElementType.LOCATION, 0)} locations retained\n\n"
+                "Changes are written only after Save."
+            )
             reply = QMessageBox.question(
                 self,
                 "确认替换",
-                "替换会覆盖所选范围中的现有内容，但只有在点击“保存”后才会写入磁盘。",
+                message,
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
 
-        before_world = self._gather_world()
-        before_style = self._gather_style()
-        template_world, template_style = get_xianxia_template()
+        application = None
+        if dialog.apply_world:
+            try:
+                application = apply_story_template(
+                    before_overview,
+                    before_elements,
+                    before_style,
+                    template,
+                    dialog.merge_mode,
+                )
+            except ValueError as error:
+                QMessageBox.warning(self, "模板应用失败", str(error))
+                return
+        style_after = (
+            application.style_guide
+            if application is not None
+            else merge_style_guide(before_style, template.style_guide, dialog.merge_mode)
+        )
         self._populating = True
         try:
             if dialog.apply_world:
-                self._populate_world_tab(
-                    merge_world_setting(
-                        self._gather_world(), template_world, dialog.merge_mode
-                    )
+                assert application is not None
+                self._world_tab.stage_snapshot(
+                    application.world_overview, application.elements
                 )
             if dialog.apply_style:
-                self._populate_style_tab(
-                    merge_style_guide(
-                        self._gather_style(), template_style, dialog.merge_mode
-                    )
-                )
+                self._populate_style_tab(style_after)
         finally:
             self._populating = False
-        after_world = self._gather_world()
         after_style = self._gather_style()
-        if dialog.apply_world:
-            for section_id in (
-                populated_world_sections(after_world)
-                - populated_world_sections(before_world)
-            ):
-                self._on_add_world_section(section_id)
         if dialog.apply_style:
             before_prose = any(
                 (
@@ -918,10 +926,9 @@ class BibleEditorView(QWidget):
             self._style_sections["advanced"].set_summary(
                 "新" if advanced_is_new else ""
             )
-        if dialog.apply_world:
-            self._recompute_world_dirty()
         if dialog.apply_style:
             self._recompute_style_dirty()
+        self._refresh_overview()
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────

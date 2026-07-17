@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import yaml
@@ -201,6 +202,37 @@ def test_manifest_failure_cleans_staging_and_keeps_legacy_fallback(
     assert (project_dir / "project.yaml").read_bytes() == original_yaml
     assert load_project(project_dir).world_setting == project.world_setting
     assert "World Bible migration failed" in caplog.text
+
+
+def test_compatibility_failure_does_not_commit_migration(tmp_path, monkeypatch):
+    project_dir = tmp_path / "legacy"
+    project = Project(
+        id="project-1",
+        title="旧项目",
+        genre="玄幻",
+        world_setting=WorldSetting(
+            factions=[{"name": "青云宗", "description": "原描述", "goals": "原目标"}]
+        ),
+    )
+    write_legacy_project(project_dir, project)
+    original_project = (project_dir / "project.yaml").read_bytes()
+    original_world = (project_dir / "world.md").read_bytes()
+    real_replace = os.replace
+
+    def fail_world_markdown(source, destination):
+        if Path(destination).name == "world.md":
+            raise OSError("world markdown replace failed")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", fail_world_markdown)
+
+    with pytest.raises(OSError, match="world markdown replace failed"):
+        ensure_bible_store(project_dir)
+
+    assert not (project_dir / "bible" / "manifest.yaml").exists()
+    assert list((project_dir / "bible" / "elements").glob("*.yaml")) == []
+    assert (project_dir / "project.yaml").read_bytes() == original_project
+    assert (project_dir / "world.md").read_bytes() == original_world
 
 
 def test_new_project_creation_initializes_bible_store(tmp_path):

@@ -25,7 +25,7 @@ from app.storage.bible_models import (
 )
 from app.storage.bible_projection import project_elements_to_legacy_world
 from app.storage.bible_renderer import write_world_markdown
-from app.storage.bible_repository import BibleElementRepository
+from app.storage.bible_repository import BibleElementRepository, rollback_files
 from app.storage.models import PowerSystem
 from app.storage.project_files import load_project
 
@@ -181,8 +181,7 @@ def ensure_bible_store(project_dir: Path) -> WorldBible:
     )
     projected = project_elements_to_legacy_world(overview, elements, manifest)
     staging = repository.bible_dir / f".migration-{uuid4()}"
-    installed: list[Path] = []
-    committed = False
+    destinations = [repository.elements_dir / f"{element.id}.yaml" for element in elements]
     try:
         staging.mkdir(parents=True)
         for element in elements:
@@ -195,29 +194,28 @@ def ensure_bible_store(project_dir: Path) -> WorldBible:
                 encoding="utf-8",
             )
         repository.elements_dir.mkdir(parents=True, exist_ok=True)
-        for element in elements:
-            destination = repository.elements_dir / f"{element.id}.yaml"
-            os.replace(staging / destination.name, destination)
-            installed.append(destination)
-        repository._write_yaml_atomic(
+        with rollback_files([
+            *destinations,
+            project_dir / "project.yaml",
+            project_dir / "world.md",
             repository.manifest_path,
-            manifest.model_dump(mode="json"),
-        )
-        committed = True
+        ]):
+            for destination in destinations:
+                os.replace(staging / destination.name, destination)
+            project.world_setting = projected
+            project.updated_at = datetime.now()
+            repository._write_yaml_atomic(
+                project_dir / "project.yaml",
+                project.model_dump(mode="json"),
+            )
+            write_world_markdown(project_dir, overview, elements, manifest)
+            repository._write_yaml_atomic(
+                repository.manifest_path,
+                manifest.model_dump(mode="json"),
+            )
     except Exception:
         logger.exception("World Bible migration failed")
         raise
     finally:
         shutil.rmtree(staging, ignore_errors=True)
-        if not committed:
-            for path in installed:
-                path.unlink(missing_ok=True)
-
-    project.world_setting = projected
-    project.updated_at = datetime.now()
-    repository._write_yaml_atomic(
-        project_dir / "project.yaml",
-        project.model_dump(mode="json"),
-    )
-    write_world_markdown(project_dir, overview, elements, manifest)
     return WorldBible(overview=overview, elements=elements, manifest=manifest)
