@@ -8,6 +8,7 @@ from app.storage.bible_models import (
     BibleManifest,
     BibleRelationKind,
     FactionElement,
+    LocationElement,
     PowerSystemElement,
     TerminologyElement,
 )
@@ -120,3 +121,20 @@ def test_inbound_relationships_are_derived(tmp_path):
 
     inbound = repo.get_inbound_relations("f2")
     assert [(source.id, edge.note) for source, edge in inbound] == [("f1", "长期敌对")]
+
+
+def test_relation_types_are_validated_at_the_repository_boundary(tmp_path):
+    repo = repository(tmp_path)
+    faction = repo.create(FactionElement(id="faction", name="Jade Sect"))
+    other_faction = repo.create(FactionElement(id="other-faction", name="Moon Sect"))
+    location = repo.create(LocationElement(id="location", name="Jade Peak"))
+
+    with pytest.raises(ValueError, match="Located in.*location"):
+        repo.save(faction.model_copy(update={"relationships": [
+            BibleElementRelation(kind="located_in", target_element_id=other_faction.id)
+        ]}))
+
+    with pytest.raises(ValueError, match="Allied with.*source.*faction"):
+        repo.save(location.model_copy(update={"relationships": [
+            BibleElementRelation(kind="allied_with", target_element_id="faction")
+        ]}))

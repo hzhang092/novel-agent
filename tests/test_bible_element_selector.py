@@ -1,4 +1,4 @@
-from app.pipeline.bible_element_selector import BibleElementSelector
+from app.pipeline.bible_element_selector import BibleElementSelector, BibleSelectionSeed
 from app.storage.bible_models import BibleElementRelation, FactionElement
 
 
@@ -163,3 +163,56 @@ def test_automatic_cap_uses_score_then_importance_then_input_order():
 
     assert [item.element.id for item in selected] == ["root", "always", "highest", "first"]
     assert [item.score for item in selected] == [1000, 830, 300, 280]
+
+
+def test_character_connection_seed_selects_element_with_traceable_reason():
+    faction = FactionElement(id="faction", name="Jade Sect")
+
+    selected = BibleElementSelector().select(
+        [faction],
+        {},
+        character_seeds=[
+            BibleSelectionSeed(
+                element_id="faction",
+                reason="character_relation:hero:member_of",
+                score=650,
+            )
+        ],
+    )
+
+    assert [(item.element.id, item.score, item.reasons) for item in selected] == [
+        ("faction", 650, ("character_relation:hero:member_of",))
+    ]
+
+
+def test_character_connection_seed_expands_one_relationship_hop_only():
+    faction = FactionElement(
+        id="faction",
+        name="Jade Sect",
+        relationships=[
+            BibleElementRelation(kind="uses", target_element_id="power")
+        ],
+    )
+    power = FactionElement(
+        id="power",
+        name="Moon Art",
+        relationships=[
+            BibleElementRelation(kind="related_to", target_element_id="deep")
+        ],
+    )
+    deep = FactionElement(id="deep", name="Deep")
+
+    selected = BibleElementSelector().select(
+        [faction, power, deep],
+        {},
+        character_seeds=[
+            BibleSelectionSeed(
+                element_id="faction",
+                reason="character_relation:hero:uses",
+                score=650,
+            )
+        ],
+    )
+
+    assert [item.element.id for item in selected] == ["faction", "power"]
+    assert selected[1].reasons == ("related_to:faction:uses",)

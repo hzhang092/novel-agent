@@ -822,6 +822,7 @@ class CharacterEditorView(QWidget):
         tier = self._core_tier.currentData()
         if not isinstance(tier, CharacterTier):
             tier = CharacterTier.SUPPORTING
+        stored = self._baseline_core or self._characters[char_id].core
 
         return CharacterCore(
             id=char_id,
@@ -838,6 +839,10 @@ class CharacterEditorView(QWidget):
             speech_style=self._core_speech.text().strip(),
             core_skills=self._core_skills.get_items(),
             core_weaknesses=self._core_weaknesses.get_items(),
+            custom_fields=stored.custom_fields,
+            element_relations=stored.element_relations,
+            definition_revision=stored.definition_revision,
+            definition_updated_at=stored.definition_updated_at,
         )
 
     def _recompute_core_dirty(self) -> None:
@@ -846,7 +851,15 @@ class CharacterEditorView(QWidget):
         current = self._gather_core(self._current_id)
         self._set_core_dirty(
             self._current_id not in self._persisted_character_ids
-            or current != self._baseline_core
+            or self._semantic_core(current) != self._semantic_core(self._baseline_core)
+        )
+
+    @staticmethod
+    def _semantic_core(core: CharacterCore | None) -> dict | None:
+        if core is None:
+            return None
+        return core.model_dump(
+            exclude={"definition_revision", "definition_updated_at"}
         )
 
     def _set_core_dirty(self, dirty: bool) -> None:
@@ -860,6 +873,8 @@ class CharacterEditorView(QWidget):
 
     def _update_current_list_item(self) -> None:
         if self._current_id is None:
+            return
+        if self._baseline_core is None and self._current_id not in self._characters:
             return
         core = self._gather_core(self._current_id)
         suffix = " *" if self._core_dirty else ""

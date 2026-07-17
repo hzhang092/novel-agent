@@ -93,7 +93,7 @@ def test_editor_relations_use_target_ids_exclude_self_and_show_missing(qtbot):
         name="青云宗",
         relationships=[
             BibleElementRelation(
-                kind=BibleRelationKind.OPPOSED_TO,
+                kind=BibleRelationKind.LOCATED_IN,
                 target_element_id="missing-faction",
                 note="旧敌",
             )
@@ -109,6 +109,27 @@ def test_editor_relations_use_target_ids_exclude_self_and_show_missing(qtbot):
     assert target_combo.findData("l1") >= 0
     assert "Missing" in target_combo.currentText()
     assert editor.gather_element().relationships == element.relationships
+
+
+def test_relation_kind_filters_target_types_and_previews_both_directions(qtbot):
+    element = FactionElement(id="f1", name="Jade Sect")
+    faction = FactionElement(id="f2", name="Moon Sect")
+    location = LocationElement(id="l1", name="Jade Peak")
+    editor = BibleElementEditor()
+    qtbot.addWidget(editor)
+    editor.load_element(element, elements=[element, faction, location])
+
+    editor._add_empty_relation()
+    kind = editor._relations.cellWidget(0, 0)
+    target = editor._relations.cellWidget(0, 1)
+    kind.setCurrentIndex(kind.findData(BibleRelationKind.LOCATED_IN))
+
+    assert target.view().isRowHidden(target.findData("f2"))
+    assert not target.view().isRowHidden(target.findData("l1"))
+
+    target.setCurrentIndex(target.findData("l1"))
+    assert "Jade Sect — Located in → Jade Peak" in editor._relation_preview.text()
+    assert "Jade Peak will display: Contains Jade Sect" in editor._relation_preview.text()
 
 
 def test_relationship_target_search_matches_name_alias_and_tag(qtbot):

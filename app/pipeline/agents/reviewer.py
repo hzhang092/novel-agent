@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.providers.base import LLMProvider, ProviderResponse
 from app.pipeline.agents._prose import select_prose_excerpt
 from app.storage.models import ReviewResult
+from app.pipeline.agents._character_context import character_prompt_lines
 from app.pipeline.agents._world_context import overview_lines, reviewer_element_lines
 
 
@@ -125,8 +126,10 @@ def _build_reviewer_prompt(
             state = mc.get("state", {})
             knowledge = state.get("current_knowledge", [])
             secrets = state.get("current_secrets", [])
-            if knowledge or secrets:
+            definition_lines = character_prompt_lines(core, state)
+            if knowledge or secrets or definition_lines:
                 lines.append(f"\n★ {name}")
+                lines.extend(definition_lines)
                 if knowledge:
                     lines.append(f"  已知信息：{'；'.join(knowledge[:15])}")
                 if secrets:

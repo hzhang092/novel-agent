@@ -19,6 +19,8 @@ class CharacterEditorLayout(BaseModel):
     collapsed_sections: list[str] = Field(default_factory=list)
     initialized_for_tier: str | None = None
     visibility_customized: bool = False
+    custom_section_collapsed: bool = False
+    hidden_custom_field_ids: list[str] = Field(default_factory=list)
 
 
 class WorldEditorLayout(BaseModel):
@@ -52,7 +54,7 @@ class StyleEditorLayout(BaseModel):
 
 
 class BibleEditorLayout(BaseModel):
-    schema_version: int = 2
+    schema_version: int = 3
     selected_tab: str = "overview"
     world: WorldEditorLayout = Field(default_factory=WorldEditorLayout)
     style: StyleEditorLayout = Field(default_factory=StyleEditorLayout)
@@ -138,8 +140,11 @@ class EditorLayoutStore:
     def _load(self) -> BibleEditorLayout:
         with self._path.open(encoding="utf-8") as handle:
             raw = yaml.safe_load(handle)
-        if isinstance(raw, dict) and raw.get("schema_version", 1) == 1:
-            raw = _migrate_v1(raw)
+        if isinstance(raw, dict):
+            if raw.get("schema_version", 1) == 1:
+                raw = _migrate_v1(raw)
+            if raw.get("schema_version") == 2:
+                raw = _migrate_v2(raw)
         return BibleEditorLayout.model_validate(raw)
 
 
@@ -161,4 +166,21 @@ def _migrate_v1(raw: dict) -> dict:
             if section in allowed
         ],
     }
+    return migrated
+
+
+def _migrate_v2(raw: dict) -> dict:
+    migrated = dict(raw)
+    migrated["schema_version"] = 3
+    characters = migrated.get("characters", {})
+    if isinstance(characters, dict):
+        migrated["characters"] = {
+            character_id: {
+                **layout,
+                "custom_section_collapsed": False,
+                "hidden_custom_field_ids": [],
+            }
+            for character_id, layout in characters.items()
+            if isinstance(layout, dict)
+        }
     return migrated

@@ -6,6 +6,7 @@ Outputs intentions only — NEVER writes prose.
 
 from __future__ import annotations
 
+from app.pipeline.agents._character_context import character_prompt_lines
 from app.providers.base import LLMProvider, ProviderResponse
 from app.storage.models import CharacterIntent
 
@@ -105,6 +106,7 @@ def _build_character_prompt(
     weaknesses = char_core.get("core_weaknesses", [])
     if weaknesses:
         lines.append(f"- 弱点：{'、'.join(weaknesses)}")
+    lines.extend(character_prompt_lines(char_core, char_state))
     lines.append("")
 
     lines.append("【当前状态】")

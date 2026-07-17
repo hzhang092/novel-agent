@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from app.pipeline.bible_element_selector import BibleElementSelector
+from app.pipeline.bible_element_selector import BibleElementSelector, BibleSelectionSeed
 from app.storage.bible_migration import ensure_bible_store
 from app.storage.bible_projection import project_elements_to_legacy_world
 
@@ -42,9 +42,11 @@ class RetrievalEngine:
         """
         scene = self._find_scene(project_dir, scene_id)
         scene_info = self._build_scene_info(project_dir, scene)
-        characters, read_points = self._collect_characters(project_dir, scene)
+        characters, read_points, character_seeds = self._collect_characters(
+            project_dir, scene
+        )
         world_context, world_read_points, world_rules = self._collect_world_context(
-            project_dir, scene_info
+            project_dir, scene_info, character_seeds
         )
         from app.storage.timeline_repository import load_scene_positions
 
@@ -144,7 +146,10 @@ class RetrievalEngine:
         }
 
     def _collect_world_context(
-        self, project_dir: Path, scene_info: dict
+        self,
+        project_dir: Path,
+        scene_info: dict,
+        character_seeds: list[BibleSelectionSeed] | None = None,
     ) -> tuple[dict, dict, dict]:
         try:
             bible = ensure_bible_store(project_dir)
@@ -152,7 +157,9 @@ class RetrievalEngine:
             logger.exception("World Bible migration failed; using legacy WorldSetting")
             return {}, {}, self._collect_world_rules(project_dir, scene_info)
 
-        selected = BibleElementSelector().select(bible.elements, scene_info)
+        selected = BibleElementSelector().select(
+            bible.elements, scene_info, character_seeds=character_seeds
+        )
         selected_elements = [item.element for item in selected]
         selected_ids = {element.id for element in selected_elements}
         by_id = {element.id: element for element in bible.elements}
@@ -212,7 +219,11 @@ class RetrievalEngine:
             "relationships": relationships,
         }
 
-    def _collect_characters(self, project_dir: Path, scene: dict | None) -> tuple[dict, dict]:
+    def _collect_characters(
+        self, project_dir: Path, scene: dict | None
+    ) -> tuple[dict, dict, list[BibleSelectionSeed]]:
+        from app.domain.character_element_relation_catalog import relation_definition
+        from app.pipeline.agents._character_context import compact_character_core
         from app.storage.timeline_repository import load_character_context_for_scene
 
         scene = scene or {}
@@ -225,33 +236,60 @@ class RetrievalEngine:
         all_chars, read_points = load_character_context_for_scene(
             project_dir, scene_id, character_ids
         )
+        try:
+            bible_elements = ensure_bible_store(project_dir).elements
+        except Exception:
+            bible_elements = []
 
         major: list[dict] = []
         supporting: list[dict] = []
         background: list[dict] = []
+        seeds: list[BibleSelectionSeed] = []
 
         for char in all_chars:
             if char.core.id not in character_ids:
                 continue
 
+            read_points.setdefault(char.core.id, {})["definition_revision"] = (
+                char.core.definition_revision
+            )
+            seeds.extend(
+                BibleSelectionSeed(
+                    element_id=relation.target_element_id,
+                    reason=(
+                        f"character_relation:{char.core.id}:{relation.kind.value}"
+                    ),
+                    score=650,
+                )
+                for relation in char.core.element_relations
+                if relation_definition(relation.kind).expand_in_context
+            )
+
             if char.core.tier.value == "major":
                 major.append({
-                    "core": char.core.model_dump(mode="json"),
+                    "core": compact_character_core(
+                        char.core, tier=char.core.tier, elements=bible_elements
+                    ),
                     "state": char.state.model_dump(mode="json"),
                 })
             elif char.core.tier.value == "supporting":
                 relationships = char.state.current_relationships
                 rel_line = ", ".join(f"{k}:{v}" for k, v in relationships.items()) if relationships else ""
-                supporting.append({
-                    "name": char.core.name,
-                    "tier": "supporting",
-                    "relationship": rel_line,
-                    "personality": char.core.personality[:120] if char.core.personality else "",
-                })
+                compact = compact_character_core(
+                    char.core, tier=char.core.tier, elements=bible_elements
+                )
+                compact["relationship"] = rel_line
+                supporting.append(compact)
             else:
-                background.append({"name": char.core.name, "tier": "background"})
+                background.append(
+                    compact_character_core(char.core, tier=char.core.tier)
+                )
 
-        return {"major": major, "supporting": supporting, "background": background}, read_points
+        return (
+            {"major": major, "supporting": supporting, "background": background},
+            read_points,
+            seeds,
+        )
 
     def _build_outline_context(self, project_dir: Path, scene: dict | None) -> dict:
         if not scene or not scene.get("volume_id"):

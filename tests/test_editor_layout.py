@@ -174,7 +174,7 @@ def test_schema_v1_world_layout_is_explicitly_migrated_to_overview(tmp_path):
 
     layout = EditorLayoutStore(tmp_path).layout
 
-    assert layout.schema_version == 2
+    assert layout.schema_version == 3
     assert layout.selected_tab == "world"
     assert layout.world.selected_item_id == "overview"
     assert layout.world.overview_visible_sections == [
@@ -183,3 +183,21 @@ def test_schema_v1_world_layout_is_explicitly_migrated_to_overview(tmp_path):
     assert layout.world.overview_collapsed_sections == ["geography", "rules"]
     assert layout.style.collapsed_sections == ["advanced"]
     assert layout.characters["char-1"].visible_fields == ["personality"]
+
+
+def test_schema_v2_adds_custom_character_presentation_defaults(tmp_path):
+    state_dir = tmp_path / ".novel-agent"
+    state_dir.mkdir()
+    (state_dir / "editor-layout.yaml").write_text(
+        "schema_version: 2\n"
+        "characters:\n"
+        "  char-1:\n"
+        "    visible_fields: [personality]\n",
+        encoding="utf-8",
+    )
+
+    layout = EditorLayoutStore(tmp_path).layout
+
+    assert layout.schema_version == 3
+    assert layout.characters["char-1"].custom_section_collapsed is False
+    assert layout.characters["char-1"].hidden_custom_field_ids == []

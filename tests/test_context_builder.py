@@ -155,6 +155,66 @@ def test_non_participating_characters_are_excluded(tmp_path):
     assert "路人乙" not in all_names
 
 
+def test_participating_character_connection_seeds_world_context_and_read_point(tmp_path):
+    from app.pipeline.context_builder import RetrievalEngine
+    from app.storage.bible_models import FactionElement
+    from app.storage.bible_repository import BibleElementRepository
+    from app.storage.models import (
+        Character,
+        CharacterCore,
+        CharacterCustomField,
+        CharacterElementRelation,
+        CharacterState,
+        ChapterOutline,
+        SceneOutline,
+        VolumeOutline,
+    )
+    from app.storage.project_files import create_project, save_character, save_volume_outline
+
+    project_dir = create_project(tmp_path, Project(title="Story", genre="Fantasy"))
+    BibleElementRepository(project_dir).create(
+        FactionElement(id="faction", name="Crimson Sect")
+    )
+    save_character(
+        project_dir,
+        Character(
+            core=CharacterCore(
+                id="hero",
+                name="Lin",
+                tier="major",
+                custom_fields=[
+                    CharacterCustomField(
+                        label="Moral conflict", value_type="text", value="Protect or expose"
+                    )
+                ],
+                element_relations=[
+                    CharacterElementRelation(kind="member_of", target_element_id="faction")
+                ],
+            ),
+            state=CharacterState(character_id="hero"),
+        ),
+    )
+    scene = SceneOutline(id="scene", title="Quiet room", participating_character_ids=["hero"])
+    save_volume_outline(
+        project_dir,
+        VolumeOutline(
+            title="Volume",
+            chapters=[ChapterOutline(title="Chapter", scenes=[scene])],
+        ),
+    )
+
+    context = RetrievalEngine().assemble(project_dir, "scene")
+
+    assert context["world_context"]["elements"][0]["id"] == "faction"
+    assert context["world_element_read_points"]["faction"]["selection_reasons"] == [
+        "character_relation:hero:member_of"
+    ]
+    assert context["characters"]["major"][0]["core"]["custom_fields"] == [
+        {"label": "Moral conflict", "value": "Protect or expose"}
+    ]
+    assert context["read_points"]["hero"]["definition_revision"] == 1
+
+
 def test_characters_use_previous_scene_checkpoint_in_context(tmp_path):
     """Regenerating an older scene must not use the latest character state."""
     from app.pipeline.context_builder import RetrievalEngine

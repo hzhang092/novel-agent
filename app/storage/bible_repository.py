@@ -157,7 +157,8 @@ class BibleElementRepository:
         ]
 
     def validate_graph(self, elements: list[BibleElement]) -> None:
-        ids = {element.id for element in elements}
+        by_id = {element.id: element for element in elements}
+        ids = set(by_id)
         directed: set[tuple[str, object, str]] = set()
         for source in elements:
             local: set[tuple[object, str]] = set()
@@ -167,10 +168,28 @@ class BibleElementRepository:
                     raise ValueError("A Bible Element cannot relate to itself")
                 if relation.target_element_id not in ids:
                     raise ValueError(f"Relationship target is missing: {relation.target_element_id}")
+                definition = relation_definition(relation.kind)
+                if (
+                    definition.allowed_source_types is not None
+                    and source.element_type not in definition.allowed_source_types
+                ):
+                    raise ValueError(
+                        f"{definition.label} source must be "
+                        + " or ".join(sorted(item.value for item in definition.allowed_source_types))
+                    )
+                target = by_id[relation.target_element_id]
+                if (
+                    definition.allowed_target_types is not None
+                    and target.element_type not in definition.allowed_target_types
+                ):
+                    raise ValueError(
+                        f"{definition.label} target must be "
+                        + " or ".join(sorted(item.value for item in definition.allowed_target_types))
+                    )
                 if edge in local:
                     raise ValueError("duplicate relationship")
                 local.add(edge)
-                if relation_definition(relation.kind).symmetric and (
+                if definition.symmetric and (
                     relation.target_element_id, relation.kind, source.id
                 ) in directed:
                     raise ValueError("A symmetric relationship must be stored in only one direction")
@@ -363,9 +382,12 @@ class WorldBibleService:
             unlink_scene_references,
         )
         from app.storage.project_files import load_all_volumes, save_volume_outline
+        from app.storage.character_definition_service import CharacterDefinitionService
 
         bible = self.load()
         self.repository.load(element_id)
+        character_definitions = CharacterDefinitionService(self.project_dir)
+        character_inbound = character_definitions.characters_referencing_element(element_id)
         volumes = load_all_volumes(self.project_dir)
         inbound = self.repository.get_inbound_relations(element_id)
         scene_referenced = any(
@@ -374,7 +396,7 @@ class WorldBibleService:
             for chapter in volume.chapters
             for scene in chapter.scenes
         )
-        if (inbound or scene_referenced) and not unlink_references:
+        if (inbound or character_inbound or scene_referenced) and not unlink_references:
             raise ValueError("Bible Element is referenced; delete with unlink_references=True")
 
         remaining = unlink_element_relations(bible.elements, element_id)
@@ -397,6 +419,9 @@ class WorldBibleService:
         ] + [
             self.project_dir / "outline" / f"{volume.id}.yaml"
             for volume in changed_volumes
+        ] + [
+            character_definitions.definition_path(core.id)
+            for core, _ in character_inbound
         ] + [self.repository.elements_dir / f"{element_id}.yaml"]
 
         with rollback_files(self._transaction_paths(changed_paths)):
@@ -404,6 +429,8 @@ class WorldBibleService:
                 self.repository.save(element)
             for volume in changed_volumes:
                 save_volume_outline(self.project_dir, volume)
+            if unlink_references:
+                character_definitions.unlink_element(element_id)
             self.repository.delete(element_id)
             self._synchronize(bible.overview)
 

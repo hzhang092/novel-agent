@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import AsyncGenerator
 
 from app.providers.base import LLMProvider
+from app.pipeline.agents._character_context import character_prompt_lines
 from app.pipeline.agents._world_context import overview_lines, writer_element_lines
 
 
@@ -188,6 +189,7 @@ def _build_writer_prompt(context: dict) -> str:
                     lines.append(f"  说话风格：{core['speech_style']}")
                 if core.get("core_skills"):
                     lines.append(f"  技能：{'、'.join(core['core_skills'])}")
+                lines.extend(character_prompt_lines(core, state))
                 if state.get("current_emotion"):
                     lines.append(f"  当前情绪：{state['current_emotion']}")
                 if state.get("current_goal"):

@@ -134,6 +134,9 @@ class BibleElementEditor(QWidget):
         self._relations.setHorizontalHeaderLabels(["Kind", "Target", "Note"])
         self._relations.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(self._relations)
+        self._relation_preview = QLabel()
+        self._relation_preview.setWordWrap(True)
+        layout.addWidget(self._relation_preview)
         relation_buttons = QHBoxLayout()
         self._add_relation = QPushButton("+ Add relationship")
         self._add_relation.clicked.connect(self._add_empty_relation)
@@ -348,7 +351,7 @@ class BibleElementEditor(QWidget):
             kind.addItem(definition.label, definition.kind)
         if relation is not None:
             kind.setCurrentIndex(kind.findData(relation.kind))
-        kind.currentIndexChanged.connect(self._recompute_dirty)
+        kind.currentIndexChanged.connect(self._on_relation_control_changed)
         self._relations.setCellWidget(row, 0, kind)
 
         target = QComboBox()
@@ -371,6 +374,11 @@ class BibleElementEditor(QWidget):
                 normalize_text(" ".join((element.name, *element.aliases, *element.tags))),
                 Qt.ItemDataRole.UserRole + 1,
             )
+            target.setItemData(
+                target.count() - 1,
+                element.element_type,
+                Qt.ItemDataRole.UserRole + 2,
+            )
         target_id = relation.target_element_id if relation is not None else ""
         index = target.findData(target_id)
         if target_id and index < 0:
@@ -389,24 +397,69 @@ class BibleElementEditor(QWidget):
         target.activated.connect(
             lambda _index, combo=target: self._filter_relation_targets(combo, "")
         )
-        target.currentIndexChanged.connect(self._recompute_dirty)
+        target.currentIndexChanged.connect(self._on_relation_control_changed)
         self._relations.setCellWidget(row, 1, target)
         self._relations.setItem(row, 2, QTableWidgetItem(relation.note if relation else ""))
+        self._filter_relation_targets(target, "")
+        self._update_relation_preview()
 
-    @staticmethod
-    def _filter_relation_targets(combo: QComboBox, text: str) -> None:
+    def _filter_relation_targets(self, combo: QComboBox, text: str) -> None:
         terms = normalize_text(text).split()
+        row = next(
+            (
+                index
+                for index in range(self._relations.rowCount())
+                if self._relations.cellWidget(index, 1) is combo
+            ),
+            -1,
+        )
+        definition = (
+            relation_definition(self._relations.cellWidget(row, 0).currentData())
+            if row >= 0
+            else None
+        )
         for index in range(combo.count()):
             document = combo.itemData(index, Qt.ItemDataRole.UserRole + 1) or ""
-            combo.view().setRowHidden(
-                index, not all(term in document for term in terms)
+            element_type = combo.itemData(index, Qt.ItemDataRole.UserRole + 2)
+            invalid_type = (
+                definition is not None
+                and definition.allowed_target_types is not None
+                and element_type is not None
+                and element_type not in definition.allowed_target_types
             )
+            combo.view().setRowHidden(
+                index, invalid_type or not all(term in document for term in terms)
+            )
+
+    def _on_relation_control_changed(self, *_args) -> None:
+        for row in range(self._relations.rowCount()):
+            combo = self._relations.cellWidget(row, 1)
+            self._filter_relation_targets(combo, "")
+        self._update_relation_preview()
+        self._recompute_dirty()
+
+    def _update_relation_preview(self) -> None:
+        if self._baseline is None or not self._relations.rowCount():
+            self._relation_preview.clear()
+            return
+        kind = self._relations.cellWidget(0, 0).currentData()
+        target_id = self._relations.cellWidget(0, 1).currentData()
+        target = next((item for item in self._elements if item.id == target_id), None)
+        if target is None:
+            self._relation_preview.clear()
+            return
+        definition = relation_definition(kind)
+        self._relation_preview.setText(
+            f"{self._baseline.name} — {definition.label} → {target.name}<br>"
+            f"{target.name} will display: {definition.inverse_label} {self._baseline.name}"
+        )
 
     def _remove_selected_relations(self) -> None:
         rows = {index.row() for index in self._relations.selectedIndexes()}
         for row in sorted(rows, reverse=True):
             self._relations.removeRow(row)
         if rows:
+            self._update_relation_preview()
             self._recompute_dirty()
 
     def _gather_relations(self) -> list[BibleElementRelation]:

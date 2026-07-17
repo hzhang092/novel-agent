@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Annotated, Literal, Optional, Union
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ── Character ──────────────────────────────────────────────────────────────
@@ -26,6 +26,76 @@ class AgentStepId(str, Enum):
     REVIEWER = "reviewer"
     FACT_EXTRACTOR = "fact_extractor"
     STATE_UPDATER = "state_updater"
+    BIBLE_ASSISTANT = "bible_assistant"
+
+
+class CharacterCustomFieldType(str, Enum):
+    TEXT = "text"
+    LONG_TEXT = "long_text"
+    STRING_LIST = "string_list"
+
+
+class CharacterCustomField(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    label: str
+    value_type: CharacterCustomFieldType
+    value: str | list[str] = ""
+    include_in_generation: bool = True
+
+    @field_validator("label")
+    @classmethod
+    def validate_label(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Custom field label cannot be empty")
+        if len(value) > 60:
+            raise ValueError("Custom field label cannot exceed 60 characters")
+        return value
+
+    @model_validator(mode="after")
+    def validate_value(self) -> "CharacterCustomField":
+        if self.value_type == CharacterCustomFieldType.STRING_LIST:
+            if self.value == "":
+                self.value = []
+            if not isinstance(self.value, list):
+                raise ValueError("String-list custom field value must be a list")
+            values = [value.strip() for value in self.value]
+            if any(not value for value in values):
+                raise ValueError("String-list custom field items cannot be empty")
+            if len(values) > 50 or any(len(value) > 500 for value in values):
+                raise ValueError("String-list custom field value is too large")
+            self.value = values
+        elif not isinstance(self.value, str):
+            raise ValueError("Text custom field value must be a string")
+        elif len(self.value) > (
+            2_000
+            if self.value_type == CharacterCustomFieldType.TEXT
+            else 10_000
+        ):
+            raise ValueError("Text custom field value is too large")
+        return self
+
+
+class CharacterElementRelationKind(str, Enum):
+    MEMBER_OF = "member_of"
+    LEADS = "leads"
+    SERVES = "serves"
+    OPPOSED_TO = "opposed_to"
+    ORIGINATES_FROM = "originates_from"
+    BASED_IN = "based_in"
+    USES = "uses"
+    ASSOCIATED_WITH = "associated_with"
+
+
+class CharacterElementRelation(BaseModel):
+    kind: CharacterElementRelationKind
+    target_element_id: str
+    note: str = ""
+
+    @field_validator("target_element_id", "note")
+    @classmethod
+    def trim_relation_text(cls, value: str) -> str:
+        return value.strip()
 
 
 class CharacterCore(BaseModel):
@@ -44,6 +114,20 @@ class CharacterCore(BaseModel):
     speech_style: str = ""
     core_skills: list[str] = Field(default_factory=list)
     core_weaknesses: list[str] = Field(default_factory=list)
+    custom_fields: list[CharacterCustomField] = Field(default_factory=list, max_length=30)
+    element_relations: list[CharacterElementRelation] = Field(default_factory=list)
+    definition_revision: int = Field(default=1, ge=1)
+    definition_updated_at: datetime = Field(default_factory=datetime.now)
+
+    @model_validator(mode="after")
+    def validate_custom_fields(self) -> "CharacterCore":
+        ids = [field.id for field in self.custom_fields]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Custom field IDs must be unique")
+        labels = [field.label.casefold() for field in self.custom_fields]
+        if len(labels) != len(set(labels)):
+            raise ValueError("Custom field labels must be unique")
+        return self
 
 
 class CharacterState(BaseModel):
@@ -255,12 +339,17 @@ class ProviderConfig(BaseModel):
         "reviewer": "ollama",
         "fact_extractor": "ollama",
         "state_updater": "ollama",
+        "bible_assistant": "ollama",
     })
 
     @model_validator(mode="after")
     def fill_missing_routes(self) -> "ProviderConfig":
         self.routing.setdefault(
             "state_updater",
+            self.routing.get("fact_extractor", "ollama"),
+        )
+        self.routing.setdefault(
+            "bible_assistant",
             self.routing.get("fact_extractor", "ollama"),
         )
         return self

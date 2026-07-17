@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app.providers.base import LLMProvider, ProviderResponse
 from app.storage.models import ScenePlan
+from app.pipeline.agents._character_context import character_prompt_lines
 from app.pipeline.agents._world_context import overview_lines, planner_element_lines
 
 
@@ -97,6 +98,7 @@ def _build_planner_prompt(context: dict) -> str:
             emotion = state.get("current_emotion", "")
             goal = state.get("current_goal", "")
             lines.append(f"- {name}：性格{personality}，当前情绪{emotion}，当前目标{goal}")
+            lines.extend(character_prompt_lines(core, state))
         lines.append("")
 
     # World rules

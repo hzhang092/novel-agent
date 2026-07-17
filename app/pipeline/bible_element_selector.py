@@ -33,6 +33,13 @@ _NON_DETAIL_FIELDS = {
 
 
 @dataclass(frozen=True)
+class BibleSelectionSeed:
+    element_id: str
+    reason: str
+    score: int
+
+
+@dataclass(frozen=True)
 class SelectedBibleElement:
     element: BibleElement
     score: int
@@ -45,6 +52,7 @@ class BibleElementSelector:
         elements: list[BibleElement],
         scene: dict,
         *,
+        character_seeds: list[BibleSelectionSeed] | None = None,
         max_auto_elements: int = 12,
     ) -> list[SelectedBibleElement]:
         explicit_ids = set(scene.get("world_element_ids", []))
@@ -58,6 +66,15 @@ class BibleElementSelector:
         scores = {element.id: 0 for element in unique}
         reasons = {element.id: [] for element in unique}
         text_matched: set[str] = set()
+        seeded: set[str] = set()
+
+        for seed in character_seeds or []:
+            if seed.element_id not in scores:
+                continue
+            seeded.add(seed.element_id)
+            scores[seed.element_id] = max(scores[seed.element_id], seed.score)
+            if seed.reason not in reasons[seed.element_id]:
+                reasons[seed.element_id].append(seed.reason)
 
         for element in unique:
             if element.id in explicit_ids:
@@ -87,7 +104,7 @@ class BibleElementSelector:
             for relation in source.relationships:
                 inbound.setdefault(relation.target_element_id, []).append((source, relation))
 
-        base_ids = explicit_ids | {
+        base_ids = explicit_ids | seeded | {
             element.id for element in unique if element.always_include
         } | text_matched
         for source in unique:
@@ -116,7 +133,7 @@ class BibleElementSelector:
         automatic = [
             element
             for element in unique
-            if element.id in text_matched | related
+            if element.id in text_matched | related | seeded
             and element.id not in explicit_ids
             and not element.always_include
         ]

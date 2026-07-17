@@ -2,6 +2,7 @@ import pytest
 
 from app.pipeline.agents.planner import ScenePlannerAgent
 from app.pipeline.agents.reviewer import ReviewerAgent
+from app.pipeline.agents.character import CharacterIntentAgent
 from app.pipeline.agents.writer import WriterAgent
 
 
@@ -134,3 +135,34 @@ def test_writer_uses_type_specific_element_headings():
     assert "【相关力量体系】" in prompt
     assert "【相关历史事件】" in prompt
     assert "【相关术语】" in prompt
+
+
+def test_character_custom_fields_and_connections_are_rendered_by_shared_prompt_path():
+    core = {
+        "name": "Lin",
+        "custom_fields": [
+            {"label": "Moral conflict", "value": "Protect or expose"}
+        ],
+        "story_connections": [
+            {
+                "kind": "member_of",
+                "target_name": "Crimson Sect",
+                "note": "Outer disciple",
+            }
+        ],
+    }
+    context = {
+        "characters": {"major": [{"core": core, "state": {}}]},
+        "scene_info": {},
+    }
+
+    prompts = (
+        WriterAgent().build_prompt(context),
+        CharacterIntentAgent().build_prompt(context, {}, core, {}),
+        ScenePlannerAgent().build_prompt(context),
+        ReviewerAgent().build_prompt(context, {}, {}, "prose"),
+    )
+
+    for prompt in prompts:
+        assert "Moral conflict：Protect or expose" in prompt
+        assert "Member of：Crimson Sect（Outer disciple）" in prompt

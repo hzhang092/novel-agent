@@ -252,16 +252,10 @@ def save_character(project_dir: Path, character: Character) -> None:
 
 def save_character_definition(project_dir: Path, core: CharacterCore) -> Path:
     """Write only characters/<id>/definition.yaml and return the character directory."""
-    char_root = project_dir / "characters"
-    char_root.mkdir(exist_ok=True)
-    char_dir = char_root / core.id
-    char_dir.mkdir(exist_ok=True)
+    from app.storage.character_definition_service import CharacterDefinitionService
 
-    definition_path = char_dir / "definition.yaml"
-    core_data = core.model_dump(mode="json")
-    with open(definition_path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(core_data, f, allow_unicode=True, sort_keys=False)
-    return char_dir
+    CharacterDefinitionService(project_dir).save(core)
+    return project_dir / "characters" / core.id
 
 
 def load_character(project_dir: Path, character_id: str) -> Character:
