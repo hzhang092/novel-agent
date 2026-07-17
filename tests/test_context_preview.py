@@ -69,3 +69,50 @@ def test_context_preview_expands_to_show_full_context(qapp, qtbot):
 
     qtbot.mouseClick(widget._badge_button, Qt.MouseButton.LeftButton)
     assert widget._detail_panel.isHidden()
+
+
+def test_context_preview_badge_includes_selected_element_count(qapp, qtbot):
+    widget = ContextPreviewView()
+    qtbot.addWidget(widget)
+
+    widget.set_context({
+        "world_context": {"elements": [{"id": "f1"}, {"id": "p1"}]},
+        "canon_facts": [{}, {}, {}],
+        "characters": {"major": [
+            {"core": {"name": "甲"}, "state": {}},
+            {"core": {"name": "乙"}, "state": {}},
+        ]},
+        "recent_summaries": [{}],
+    })
+
+    assert widget._badge_label.text() == (
+        "2 elements · 3 facts · 2 character states · 1 summary"
+    )
+
+
+def test_context_preview_explains_element_selection_without_raw_ids(qapp, qtbot):
+    widget = ContextPreviewView()
+    qtbot.addWidget(widget)
+    widget.set_context({
+        "world_context": {"elements": [
+            {"id": "faction-qingyun", "type": "faction", "name": "青云宗"},
+            {"id": "faction-moyuan", "type": "faction", "name": "魔渊殿"},
+            {"id": "power-main", "type": "power_system", "name": "九重天境"},
+        ]},
+        "world_element_read_points": {
+            "faction-qingyun": {"revision": 2, "selection_reasons": ["explicit_scene_reference"]},
+            "faction-moyuan": {
+                "revision": 1,
+                "selection_reasons": ["related_to:faction-qingyun:opposed_to"],
+            },
+            "power-main": {"revision": 1, "selection_reasons": ["always_include"]},
+        },
+    })
+
+    detail = widget._detail_content.text()
+    assert "── Story Elements ──" in detail
+    assert "青云宗 [Faction]" in detail
+    assert "Selected because: explicit scene reference" in detail
+    assert "Selected because: related through Opposed to" in detail
+    assert "Selected because: always included" in detail
+    assert "faction-qingyun" not in detail

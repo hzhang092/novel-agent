@@ -8,7 +8,15 @@ via category tags, keyword matching, recency, and importance thresholds.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+
+from app.pipeline.bible_element_selector import BibleElementSelector
+from app.storage.bible_migration import ensure_bible_store
+from app.storage.bible_projection import project_elements_to_legacy_world
+
+
+logger = logging.getLogger(__name__)
 
 
 class RetrievalEngine:
@@ -35,6 +43,9 @@ class RetrievalEngine:
         scene = self._find_scene(project_dir, scene_id)
         scene_info = self._build_scene_info(project_dir, scene)
         characters, read_points = self._collect_characters(project_dir, scene)
+        world_context, world_read_points, world_rules = self._collect_world_context(
+            project_dir, scene_info
+        )
         from app.storage.timeline_repository import load_scene_positions
 
         scene_orders = {
@@ -44,7 +55,9 @@ class RetrievalEngine:
 
         return {
             "scene_info": scene_info,
-            "world_rules": self._collect_world_rules(project_dir, scene),
+            "world_context": world_context,
+            "world_element_read_points": world_read_points,
+            "world_rules": world_rules,
             "characters": characters,
             "read_points": read_points,
             "outline_context": self._build_outline_context(project_dir, scene),
@@ -79,6 +92,7 @@ class RetrievalEngine:
                             "time": sc.time,
                             "pov_character_id": sc.pov_character_id,
                             "participating_character_ids": sc.participating_character_ids,
+                            "world_element_ids": sc.world_element_ids,
                             "scene_goal": sc.scene_goal,
                             "conflict": sc.conflict,
                             "required_plot_beats": sc.required_plot_beats,
@@ -127,6 +141,75 @@ class RetrievalEngine:
             "social_structure": world.social_structure,
             "terminology": world.terminology,
             "power_system": world.power_system.model_dump(mode="json") if world.power_system else {},
+        }
+
+    def _collect_world_context(
+        self, project_dir: Path, scene_info: dict
+    ) -> tuple[dict, dict, dict]:
+        try:
+            bible = ensure_bible_store(project_dir)
+        except Exception:
+            logger.exception("World Bible migration failed; using legacy WorldSetting")
+            return {}, {}, self._collect_world_rules(project_dir, scene_info)
+
+        selected = BibleElementSelector().select(bible.elements, scene_info)
+        selected_elements = [item.element for item in selected]
+        selected_ids = {element.id for element in selected_elements}
+        by_id = {element.id: element for element in bible.elements}
+        compact = [
+            self._compact_element(element, selected_ids, by_id)
+            for element in selected_elements
+        ]
+        read_points = {
+            item.element.id: {
+                "revision": item.element.revision,
+                "selection_reasons": list(item.reasons),
+            }
+            for item in selected
+        }
+        legacy = project_elements_to_legacy_world(
+            bible.overview,
+            selected_elements,
+            bible.manifest.model_copy(deep=True),
+        ).model_dump(mode="json")
+        return (
+            {
+                "overview": bible.overview.model_dump(mode="json"),
+                "elements": compact,
+            },
+            read_points,
+            legacy,
+        )
+
+    @staticmethod
+    def _compact_element(element, selected_ids: set[str], by_id: dict) -> dict:
+        details = element.model_dump(
+            mode="json",
+            exclude={
+                "id", "element_type", "name", "aliases", "summary", "tags",
+                "importance", "always_include", "revision", "relationships",
+                "created_at", "updated_at",
+            },
+        )
+        relationships = [
+            {
+                "kind": relation.kind.value,
+                "target_name": by_id[relation.target_element_id].name,
+                "note": relation.note,
+            }
+            for relation in element.relationships
+            if relation.target_element_id in selected_ids
+            and relation.target_element_id in by_id
+        ]
+        return {
+            "id": element.id,
+            "type": element.element_type.value,
+            "name": element.name,
+            "summary": element.summary,
+            "tags": element.tags,
+            "importance": element.importance,
+            "details": details,
+            "relationships": relationships,
         }
 
     def _collect_characters(self, project_dir: Path, scene: dict | None) -> tuple[dict, dict]:

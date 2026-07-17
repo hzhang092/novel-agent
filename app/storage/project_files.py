@@ -56,6 +56,9 @@ def create_project(project_dir: Path, project: Project) -> Path:
     _write_world_md(proj_path, project.world_setting)
     _write_style_yaml(proj_path, project.style_guide)
     _write_gitignore(proj_path)
+    from app.storage.bible_migration import ensure_bible_store
+
+    ensure_bible_store(proj_path)
 
     return proj_path
 

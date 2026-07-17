@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import AsyncGenerator
 
 from app.providers.base import LLMProvider
+from app.pipeline.agents._world_context import overview_lines, writer_element_lines
 
 
 class WriterAgent:
@@ -111,57 +112,62 @@ def _build_writer_prompt(context: dict) -> str:
         lines.append("")
 
     # ── World Rules ──
-    world = context.get("world_rules", {})
-    if world:
-        lines.append("【世界观设定】")
-        if world.get("geography"):
-            lines.append(f"- 地理：{world['geography']}")
-        factions = world.get("factions", [])
-        if factions:
-            lines.append("- 势力：" + "；".join(
-                "，".join(f"{key}：{value}" for key, value in faction.items())
-                for faction in factions
-            ))
-        if world.get("history"):
-            lines.append(f"- 历史：{world['history']}")
-        rules = world.get("rules", [])
-        if rules:
-            lines.append(f"- 世界规则：{'；'.join(rules)}")
-        taboos = world.get("taboos", [])
-        if taboos:
-            lines.append(f"- 禁忌：{'；'.join(taboos)}")
-        if world.get("technology_level"):
-            lines.append(f"- 技术水平：{world['technology_level']}")
-        if world.get("social_structure"):
-            lines.append(f"- 社会结构：{world['social_structure']}")
-        terminology = world.get("terminology", {})
-        if terminology:
-            lines.append("- 术语：" + "；".join(
-                f"{term}：{meaning}" for term, meaning in terminology.items()
-            ))
-        ps = world.get("power_system", {})
-        if ps:
-            realms = ps.get("realms", [])
-            if realms:
-                lines.append(f"- 修炼境界：{' → '.join(realms)}")
-            abilities = ps.get("abilities", {})
-            if abilities:
-                lines.append("- 境界能力：" + "；".join(
-                    f"{realm}：{ability}" for realm, ability in abilities.items()
+    world_context = context.get("world_context", {})
+    if world_context:
+        lines.extend(overview_lines(world_context, "【全局世界约束】"))
+        lines.extend(writer_element_lines(world_context))
+    else:
+        world = context.get("world_rules", {})
+        if world:
+            lines.append("【世界观设定】")
+            if world.get("geography"):
+                lines.append(f"- 地理：{world['geography']}")
+            factions = world.get("factions", [])
+            if factions:
+                lines.append("- 势力：" + "；".join(
+                    "，".join(f"{key}：{value}" for key, value in faction.items())
+                    for faction in factions
                 ))
-            limitations = ps.get("limitations", [])
-            if limitations:
-                lines.append(f"- 修炼限制：{'；'.join(limitations)}")
-            costs = ps.get("costs", [])
-            if costs:
-                lines.append(f"- 修炼代价：{'；'.join(costs)}")
-            resources = ps.get("rare_resources", [])
-            if resources:
-                lines.append(f"- 稀有资源：{'；'.join(resources)}")
-            forbidden = ps.get("forbidden_methods", [])
-            if forbidden:
-                lines.append(f"- 禁术：{'；'.join(forbidden)}")
-        lines.append("")
+            if world.get("history"):
+                lines.append(f"- 历史：{world['history']}")
+            rules = world.get("rules", [])
+            if rules:
+                lines.append(f"- 世界规则：{'；'.join(rules)}")
+            taboos = world.get("taboos", [])
+            if taboos:
+                lines.append(f"- 禁忌：{'；'.join(taboos)}")
+            if world.get("technology_level"):
+                lines.append(f"- 技术水平：{world['technology_level']}")
+            if world.get("social_structure"):
+                lines.append(f"- 社会结构：{world['social_structure']}")
+            terminology = world.get("terminology", {})
+            if terminology:
+                lines.append("- 术语：" + "；".join(
+                    f"{term}：{meaning}" for term, meaning in terminology.items()
+                ))
+            ps = world.get("power_system", {})
+            if ps:
+                realms = ps.get("realms", [])
+                if realms:
+                    lines.append(f"- 修炼境界：{' → '.join(realms)}")
+                abilities = ps.get("abilities", {})
+                if abilities:
+                    lines.append("- 境界能力：" + "；".join(
+                        f"{realm}：{ability}" for realm, ability in abilities.items()
+                    ))
+                limitations = ps.get("limitations", [])
+                if limitations:
+                    lines.append(f"- 修炼限制：{'；'.join(limitations)}")
+                costs = ps.get("costs", [])
+                if costs:
+                    lines.append(f"- 修炼代价：{'；'.join(costs)}")
+                resources = ps.get("rare_resources", [])
+                if resources:
+                    lines.append(f"- 稀有资源：{'；'.join(resources)}")
+                forbidden = ps.get("forbidden_methods", [])
+                if forbidden:
+                    lines.append(f"- 禁术：{'；'.join(forbidden)}")
+            lines.append("")
 
     # ── Characters ──
     chars = context.get("characters", {})

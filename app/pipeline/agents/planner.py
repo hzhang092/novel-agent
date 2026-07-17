@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app.providers.base import LLMProvider, ProviderResponse
 from app.storage.models import ScenePlan
+from app.pipeline.agents._world_context import overview_lines, planner_element_lines
 
 
 class ScenePlannerAgent:
@@ -99,16 +100,21 @@ def _build_planner_prompt(context: dict) -> str:
         lines.append("")
 
     # World rules
-    world = context.get("world_rules", {})
-    if world:
-        lines.append("【世界观约束】")
-        rules = world.get("rules", [])
-        if rules:
-            lines.append(f"- 规则：{'；'.join(rules[:5])}")
-        taboos = world.get("taboos", [])
-        if taboos:
-            lines.append(f"- 禁忌：{'；'.join(taboos[:5])}")
-        lines.append("")
+    world_context = context.get("world_context", {})
+    if world_context:
+        lines.extend(overview_lines(world_context, "【全局世界约束】"))
+        lines.extend(planner_element_lines(world_context))
+    else:
+        world = context.get("world_rules", {})
+        if world:
+            lines.append("【世界观约束】")
+            rules = world.get("rules", [])
+            if rules:
+                lines.append(f"- 规则：{'；'.join(rules[:5])}")
+            taboos = world.get("taboos", [])
+            if taboos:
+                lines.append(f"- 禁忌：{'；'.join(taboos[:5])}")
+            lines.append("")
 
     # Recent summaries
     summaries = context.get("recent_summaries", [])

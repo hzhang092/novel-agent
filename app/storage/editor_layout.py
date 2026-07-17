@@ -22,8 +22,29 @@ class CharacterEditorLayout(BaseModel):
 
 
 class WorldEditorLayout(BaseModel):
-    visible_sections: list[str] = Field(default_factory=list)
-    collapsed_sections: list[str] = Field(default_factory=list)
+    selected_item_id: str = "overview"
+    type_filter: str = ""
+    tag_filters: list[str] = Field(default_factory=list)
+    overview_visible_sections: list[str] = Field(default_factory=list)
+    overview_collapsed_sections: list[str] = Field(default_factory=list)
+    collapsed_type_groups: list[str] = Field(default_factory=list)
+
+    # Transitional aliases used by the Phase 2 editor until World extraction completes.
+    @property
+    def visible_sections(self) -> list[str]:
+        return self.overview_visible_sections
+
+    @visible_sections.setter
+    def visible_sections(self, value: list[str]) -> None:
+        self.overview_visible_sections = value
+
+    @property
+    def collapsed_sections(self) -> list[str]:
+        return self.overview_collapsed_sections
+
+    @collapsed_sections.setter
+    def collapsed_sections(self, value: list[str]) -> None:
+        self.overview_collapsed_sections = value
 
 
 class StyleEditorLayout(BaseModel):
@@ -31,7 +52,7 @@ class StyleEditorLayout(BaseModel):
 
 
 class BibleEditorLayout(BaseModel):
-    schema_version: int = 1
+    schema_version: int = 2
     selected_tab: str = "overview"
     world: WorldEditorLayout = Field(default_factory=WorldEditorLayout)
     style: StyleEditorLayout = Field(default_factory=StyleEditorLayout)
@@ -116,4 +137,28 @@ class EditorLayoutStore:
 
     def _load(self) -> BibleEditorLayout:
         with self._path.open(encoding="utf-8") as handle:
-            return BibleEditorLayout.model_validate(yaml.safe_load(handle))
+            raw = yaml.safe_load(handle)
+        if isinstance(raw, dict) and raw.get("schema_version", 1) == 1:
+            raw = _migrate_v1(raw)
+        return BibleEditorLayout.model_validate(raw)
+
+
+def _migrate_v1(raw: dict) -> dict:
+    allowed = {"geography", "society", "rules", "taboos"}
+    world_v1 = raw.get("world") if isinstance(raw.get("world"), dict) else {}
+    migrated = dict(raw)
+    migrated["schema_version"] = 2
+    migrated["world"] = {
+        "selected_item_id": "overview",
+        "overview_visible_sections": [
+            section
+            for section in world_v1.get("visible_sections", [])
+            if section in allowed
+        ],
+        "overview_collapsed_sections": [
+            section
+            for section in world_v1.get("collapsed_sections", [])
+            if section in allowed
+        ],
+    }
+    return migrated

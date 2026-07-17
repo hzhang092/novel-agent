@@ -14,6 +14,18 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from app.domain.bible_relation_catalog import relation_definition
+from app.storage.bible_models import BibleRelationKind
+
+
+_ELEMENT_TYPE_LABELS = {
+    "location": "Location",
+    "faction": "Faction",
+    "historical_event": "Historical event",
+    "power_system": "Power system",
+    "terminology": "Terminology",
+}
+
 
 class ContextPreviewView(QWidget):
     """Collapsed-by-default panel showing assembled context for audit.
@@ -91,17 +103,23 @@ class ContextPreviewView(QWidget):
         """Build badge text from context counts."""
         parts = []
 
+        elements_count = len(context.get("world_context", {}).get("elements", []))
+        if elements_count > 0:
+            parts.append(f"{elements_count} element{'s' if elements_count != 1 else ''}")
+
         facts_count = len(context.get("canon_facts", []))
         if facts_count > 0:
-            parts.append(f"{facts_count} facts")
+            parts.append(f"{facts_count} fact{'s' if facts_count != 1 else ''}")
 
         char_states = len(context.get("characters", {}).get("major", []))
         if char_states > 0:
-            parts.append(f"{char_states} character states")
+            parts.append(
+                f"{char_states} character state{'s' if char_states != 1 else ''}"
+            )
 
         summaries_count = len(context.get("recent_summaries", []))
         if summaries_count > 0:
-            parts.append(f"{summaries_count} summaries")
+            parts.append(f"{summaries_count} summar{'ies' if summaries_count != 1 else 'y'}")
 
         if not parts:
             parts.append("context ready")
@@ -148,6 +166,20 @@ class ContextPreviewView(QWidget):
                 lines.append(f"  · {name}" + (f" ({rel})" if rel else ""))
             for bc in background:
                 lines.append(f"  • {bc.get('name', '')}")
+            lines.append("")
+
+        # Selected Story Elements
+        elements = context.get("world_context", {}).get("elements", [])
+        read_points = context.get("world_element_read_points", {})
+        if elements:
+            lines.append("── Story Elements ──")
+            for element in elements:
+                label = _ELEMENT_TYPE_LABELS.get(element.get("type", ""), element.get("type", ""))
+                lines.append(f"  ✓ {element.get('name', '')} [{label}]")
+                for reason in read_points.get(element.get("id", ""), {}).get(
+                    "selection_reasons", []
+                ):
+                    lines.append(f"    Selected because: {self._selection_reason(reason)}")
             lines.append("")
 
         # World rules
@@ -202,6 +234,20 @@ class ContextPreviewView(QWidget):
             lines.append("")
 
         self._detail_content.setText("\n".join(lines))
+
+    @staticmethod
+    def _selection_reason(reason: str) -> str:
+        if reason == "explicit_scene_reference":
+            return "explicit scene reference"
+        if reason == "always_include":
+            return "always included"
+        if reason.startswith("related_to:"):
+            try:
+                kind = BibleRelationKind(reason.rsplit(":", 1)[1])
+                return f"related through {relation_definition(kind).label}"
+            except (ValueError, KeyError):
+                return "related story element"
+        return reason.replace("_", " ")
 
     def _toggle_expand(self) -> None:
         """Toggle the detail panel visibility."""

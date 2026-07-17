@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.providers.base import LLMProvider, ProviderResponse
 from app.pipeline.agents._prose import select_prose_excerpt
 from app.storage.models import ReviewResult
+from app.pipeline.agents._world_context import overview_lines, reviewer_element_lines
 
 
 class ReviewerAgent:
@@ -141,16 +142,21 @@ def _build_reviewer_prompt(
         lines.append("")
 
     # World rules
-    world = context.get("world_rules", {})
-    if world:
-        lines.append("【世界观规则】")
-        rules = world.get("rules", [])
-        if rules:
-            lines.append(f"- 规则：{'；'.join(rules)}")
-        taboos = world.get("taboos", [])
-        if taboos:
-            lines.append(f"- 禁忌：{'；'.join(taboos)}")
-        lines.append("")
+    world_context = context.get("world_context", {})
+    if world_context:
+        lines.extend(overview_lines(world_context, "【全局世界约束】"))
+        lines.extend(reviewer_element_lines(world_context))
+    else:
+        world = context.get("world_rules", {})
+        if world:
+            lines.append("【世界观规则】")
+            rules = world.get("rules", [])
+            if rules:
+                lines.append(f"- 规则：{'；'.join(rules)}")
+            taboos = world.get("taboos", [])
+            if taboos:
+                lines.append(f"- 禁忌：{'；'.join(taboos)}")
+            lines.append("")
 
     # Style guide
     style = context.get("style_guide", {})

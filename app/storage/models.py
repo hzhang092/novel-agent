@@ -116,6 +116,7 @@ class SceneOutline(BaseModel):
     time: str = ""
     pov_character_id: str = ""
     participating_character_ids: list[str] = Field(default_factory=list)
+    world_element_ids: list[str] = Field(default_factory=list)
     scene_goal: str = ""
     conflict: str = ""
     required_plot_beats: list[str] = Field(default_factory=list)
@@ -151,6 +152,16 @@ class StoryOutline(BaseModel):
 
 
 # ── Scene Generation ───────────────────────────────────────────────────────
+
+class GenerationReadPoints(BaseModel):
+    characters: dict[str, dict] = Field(default_factory=dict)
+    bible_elements: dict[str, dict] = Field(default_factory=dict)
+
+
+def parse_generation_read_points(generated_with: dict) -> GenerationReadPoints:
+    if "characters" in generated_with:
+        return GenerationReadPoints.model_validate(generated_with)
+    return GenerationReadPoints(characters=generated_with)
 
 class SceneGenerationRecord(BaseModel):
     """Stored alongside prose for traceability."""

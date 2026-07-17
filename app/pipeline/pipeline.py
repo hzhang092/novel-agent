@@ -130,7 +130,10 @@ class ScenePipeline:
         tracker = TokenTracker.get()
         # ── Step 1: Assemble context ──
         context = self.assemble_context(project_dir, scene_id)
-        result.generated_with = context.get("read_points", {})
+        result.generated_with = {
+            "characters": context.get("read_points", {}),
+            "bible_elements": context.get("world_element_read_points", {}),
+        }
 
         # ── Step 2: Planner ──
         planner_trace = AgentTraceEntry(agent_name="Scene Planner", stage="planner")

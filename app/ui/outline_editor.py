@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 
 from app.ui.display_labels import character_tier_label
 from app.ui.widgets import StringListEditor
+from app.ui.widgets.element_reference_picker import ElementReferencePicker
 
 ROLE_NODE_TYPE = Qt.ItemDataRole.UserRole
 ROLE_NODE_ID = Qt.ItemDataRole.UserRole + 1
@@ -55,6 +56,8 @@ class OutlineEditorView(QWidget):
 
         self._project_dir = project_dir
         self._volumes = load_all_volumes(project_dir)
+        self._scene_elements.set_selected_ids([])
+        self._refresh_world_elements()
         self._rebuild_tree()
 
     # ── UI Setup ───────────────────────────────────────────────────────────
@@ -236,6 +239,10 @@ class OutlineEditorView(QWidget):
         self._scene_participants.setMaximumHeight(100)
         form.addWidget(self._scene_participants)
 
+        form.addWidget(QLabel("<b>相关世界元素</b>（多选）"))
+        self._scene_elements = ElementReferencePicker()
+        form.addWidget(self._scene_elements)
+
         form.addWidget(QLabel("<b>场景目标</b>"))
         self._scene_goal = QTextEdit()
         self._scene_goal.setMaximumHeight(60)
@@ -298,6 +305,21 @@ class OutlineEditorView(QWidget):
         self._scene_emotional.setText(sc.emotional_turn)
         self._scene_ending_hook.setPlainText(sc.ending_hook)
         self._scene_constraints.set_items(sc.constraints)
+        self._scene_elements.set_selected_ids(sc.world_element_ids)
+
+    def _refresh_world_elements(self) -> None:
+        if self._project_dir is None:
+            return
+        manifest_path = self._project_dir / "bible" / "manifest.yaml"
+        if not manifest_path.exists():
+            self._scene_elements.set_elements([])
+            return
+
+        from app.storage.bible_repository import BibleElementRepository
+
+        self._scene_elements.set_elements(
+            BibleElementRepository(self._project_dir).load_all()
+        )
 
     def _refresh_character_dropdowns(self) -> None:
         if self._project_dir is None:
@@ -348,6 +370,7 @@ class OutlineEditorView(QWidget):
             time=self._scene_time.text().strip(),
             pov_character_id=pov_id,
             participating_character_ids=participants,
+            world_element_ids=self._scene_elements.selected_ids(),
             scene_goal=self._scene_goal.toPlainText().strip(),
             conflict=self._scene_conflict.toPlainText().strip(),
             required_plot_beats=self._scene_beats.get_items(),
@@ -693,6 +716,7 @@ class OutlineEditorView(QWidget):
                             sc.time = gathered.time
                             sc.pov_character_id = gathered.pov_character_id
                             sc.participating_character_ids = gathered.participating_character_ids
+                            sc.world_element_ids = gathered.world_element_ids
                             sc.scene_goal = gathered.scene_goal
                             sc.conflict = gathered.conflict
                             sc.required_plot_beats = gathered.required_plot_beats

@@ -361,3 +361,25 @@ def test_character_state_event_serializes_to_dict():
     d = event.model_dump(mode="json")
     assert d["event_id"] == 1
     assert d["changes"][0]["old"] == "become_elder"
+
+
+def test_generation_read_points_parse_legacy_and_nested_shapes():
+    from app.storage.models import parse_generation_read_points
+
+    legacy = parse_generation_read_points({
+        "char-1": {"checkpoint_id": "checkpoint-1", "event_id": 4}
+    })
+    nested = parse_generation_read_points({
+        "characters": {"char-1": {"checkpoint_id": "checkpoint-1"}},
+        "bible_elements": {
+            "faction-1": {
+                "revision": 3,
+                "selection_reasons": ["explicit_scene_reference"],
+            }
+        },
+    })
+
+    assert legacy.characters["char-1"]["event_id"] == 4
+    assert legacy.bible_elements == {}
+    assert nested.characters["char-1"]["checkpoint_id"] == "checkpoint-1"
+    assert nested.bible_elements["faction-1"]["revision"] == 3

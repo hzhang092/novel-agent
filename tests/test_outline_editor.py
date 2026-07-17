@@ -1,5 +1,6 @@
 """Integration tests for OutlineEditorView widget."""
 import pytest
+import yaml
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QApplication, QLabel
@@ -372,3 +373,83 @@ def test_populate_scene_preserves_blank_pov_when_characters_exist(editor):
     scene = widget._gather_scene("scene-1")
 
     assert scene.pov_character_id == ""
+
+
+def test_outline_loads_elements_and_round_trips_scene_element_ids(editor, qtbot):
+    from app.storage.bible_models import BibleManifest, FactionElement, LocationElement
+    from app.storage.bible_repository import BibleElementRepository
+    from app.ui.outline_editor import OutlineEditorView
+
+    widget, proj_dir = editor
+    elements_dir = proj_dir / "bible" / "elements"
+    elements_dir.mkdir(parents=True, exist_ok=True)
+    (proj_dir / "bible" / "manifest.yaml").write_text(
+        yaml.safe_dump(BibleManifest().model_dump(mode="json"), sort_keys=False),
+        encoding="utf-8",
+    )
+    repository = BibleElementRepository(proj_dir)
+    repository.create(FactionElement(id="faction-1", name="双城"))
+    repository.create(LocationElement(id="location-1", name="双城"))
+    widget._refresh_world_elements()
+
+    widget._on_add_volume()
+    widget._tree.setCurrentItem(widget._tree.topLevelItem(0))
+    widget._on_add_chapter()
+    widget._tree.setCurrentItem(widget._tree.topLevelItem(0).child(0))
+    widget._on_add_scene()
+    widget._tree.setCurrentItem(widget._tree.topLevelItem(0).child(0).child(0))
+    widget._scene_elements.set_selected_ids(["faction-1", "location-1"])
+    widget._on_save()
+
+    reopened = OutlineEditorView()
+    qtbot.addWidget(reopened)
+    reopened.load_project_dir(proj_dir)
+    reopened._tree.setCurrentItem(reopened._tree.topLevelItem(0).child(0).child(0))
+
+    assert reopened._scene_elements.selected_ids() == ["faction-1", "location-1"]
+    assert reopened._gather_scene(reopened._selected_node_id).world_element_ids == [
+        "faction-1",
+        "location-1",
+    ]
+    labels = [
+        group.child(index).text(0)
+        for group_index in range(reopened._scene_elements._tree.topLevelItemCount())
+        for group in [reopened._scene_elements._tree.topLevelItem(group_index)]
+        for index in range(group.childCount())
+    ]
+    assert "双城 · Faction" in labels
+    assert "双城 · Location" in labels
+
+
+def test_outline_keeps_missing_scene_element_ids_as_warnings(editor):
+    from app.storage.models import SceneOutline
+
+    widget, _ = editor
+    widget._populate_scene_form(
+        SceneOutline(id="scene-1", world_element_ids=["deleted-element"])
+    )
+
+    assert widget._scene_elements.selected_ids() == ["deleted-element"]
+    assert widget._gather_scene("scene-1").world_element_ids == ["deleted-element"]
+
+
+def test_outline_does_not_open_element_repository_without_manifest(
+    tmp_path, qtbot, monkeypatch
+):
+    from app.storage.bible_repository import BibleElementRepository
+    from app.ui.outline_editor import OutlineEditorView
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    (proj_dir / "bible" / "manifest.yaml").unlink()
+
+    def unexpected_repository(*_args, **_kwargs):
+        raise AssertionError("repository should not be opened")
+
+    monkeypatch.setattr(
+        "app.storage.bible_repository.BibleElementRepository", unexpected_repository
+    )
+    widget = OutlineEditorView()
+    qtbot.addWidget(widget)
+
+    widget.load_project_dir(proj_dir)
+    assert widget._scene_elements.selected_ids() == []

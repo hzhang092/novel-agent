@@ -24,6 +24,26 @@ _Avoid_: Story Element, custom object, section.
 A distinct named thing or concept in the Story Bible, such as a character, faction, location, culture, power system, historical event, item, or creature. Unlike a Detail Field, an element can exist independently and can have its own details.
 _Avoid_: Detail Field, world field, section.
 
+**Bible Element (设定元素)**:
+An independently stored, typed, author-controlled World Story Element: a faction, terminology entry, historical event, power system, or location. Characters remain separate because they have richer Definition, State, and Event models.
+_Avoid_: Character, Canon Fact, world section, arbitrary custom field.
+
+**Element Relationship (元素关系)**:
+A validated directed link from one Bible Element to another, stored by stable element ID. Inbound and inverse views are derived rather than duplicated in storage.
+_Avoid_: Embedded target name, character relationship, duplicated inverse edge.
+
+**Element Revision (元素修订号)**:
+The monotonically increasing semantic version of one Bible Element. Saving without a story-content change does not increment it; context assembly records the revision it read.
+_Avoid_: Editor Layout version, file timestamp, full revision history.
+
+**Explicit Scene Element (场景显式元素)**:
+A Bible Element whose stable ID the author attached to a Scene Outline. It is always included when assembling that scene's generation context.
+_Avoid_: Free-text scene location, automatic keyword match, Canon Fact tag.
+
+**Selected Story Element (已选故事元素)**:
+A Bible Element included in one scene's generation context because it was explicit, always included, textually relevant, or related by one eligible graph hop. Its revision and selection reasons are recorded for traceability.
+_Avoid_: Every stored element, visible editor row, hidden Detail Field.
+
 **Character Importance (角色重要性)**:
 The major, supporting, or background classification that controls the character editor's default Detail Fields and how much character data context assembly includes. It guides author effort but does not impose required fields.
 _Avoid_: Character type, completeness level, internal tier label in user-facing text.
@@ -98,7 +118,7 @@ A character state snapshot written immediately after a scene is approved. Used d
 _Avoid_: Scene snapshot, state checkpoint.
 
 **Read Point (读取点)**:
-The checkpoint or event position used to assemble a scene prompt for a specific character. Used to detect when a later scene was generated from an older timeline.
+The character checkpoint/event position or Bible Element revision used to assemble a scene prompt. Used to trace the exact story knowledge read by generation and to support precise stale detection later.
 _Avoid_: Dependency pointer, generated-with marker.
 
 **Stale Scene (过期场景)**:
@@ -112,6 +132,9 @@ _Avoid_: Deletion, removal, tombstone.
 ## Relationships
 
 - **Story Bible → Progressive Disclosure → Story Elements / Detail Fields**: World knowledge grows through distinct Story Elements; Character Definitions grow through optional Detail Fields. Writing Style keeps compact core controls with expandable advanced sections.
+- **Bible Element ↔ Canon Fact**: Bible Elements are reusable knowledge authored in the Story Bible. Canon Facts are scene-derived memory from a Published Scene Revision; neither is migrated into the other.
+- **Explicit Scene Element / Relevance / Element Relationship → Selected Story Element**: Context assembly includes explicit and always-included elements, deterministically selects textual matches, then expands no more than one eligible relationship hop.
+- **Selected Story Element → Element Revision → Read Point**: Each selected element records the semantic revision and selection reasons used for generation.
 - **Character Importance → Editor Defaults / Context Assembly**: Importance changes which Detail Fields appear initially and how character data is compressed for generation. Authors may expose more fields without changing importance.
 - **Editor Layout ↔ Story Data**: Editor Layout controls presentation only. Hiding a Detail Field preserves its value, and prompt inclusion follows story-data and context rules rather than UI visibility.
 - **Unsaved Character Edit → Character Switching**: Switching characters must first save the edit, explicitly discard it, or cancel the switch.

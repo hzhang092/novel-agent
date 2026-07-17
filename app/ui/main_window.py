@@ -907,10 +907,15 @@ class MainWindow(QMainWindow):
         }
         review_dict = result.review.model_dump(mode="json") if result.review else None
         generated_with = getattr(result, "generated_with", {})
+        from app.storage.models import parse_generation_read_points
+
+        character_read_points = parse_generation_read_points(
+            generated_with
+        ).characters
         generated_from_checkpoint_id = next(
             (
                 read_point.get("checkpoint_id", "")
-                for read_point in generated_with.values()
+                for read_point in character_read_points.values()
                 if read_point.get("checkpoint_id")
             ),
             "",

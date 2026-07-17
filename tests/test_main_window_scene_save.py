@@ -70,6 +70,46 @@ def test_save_generated_scene_keeps_active_timeline_unchanged(
     assert load_scene_writer_draft(proj_dir, "scene-2") == ""
 
 
+def test_save_generated_scene_reads_character_checkpoint_from_nested_read_points(
+    qtbot, tmp_path, monkeypatch
+):
+    from app.ui.main_window import MainWindow
+
+    proj_dir = create_project(tmp_path, Project(title="嵌套读取点", genre="玄幻"))
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(
+            id="vol-1",
+            chapters=[ChapterOutline(
+                id="ch-1",
+                scenes=[SceneOutline(id="scene-1")],
+            )],
+        ),
+    )
+    save_scene_writer_draft(proj_dir, "scene-1", "正文")
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._current_project_dir = proj_dir
+    monkeypatch.setattr(window, "_refresh_prose_versions", lambda *args: [])
+
+    record = window._save_generated_scene(SimpleNamespace(
+        scene_id="scene-1",
+        prose="正文",
+        plan=None,
+        character_intents={},
+        review=None,
+        generated_with={
+            "characters": {"char-1": {"checkpoint_id": "checkpoint-7"}},
+            "bible_elements": {"faction-1": {"revision": 2}},
+        },
+        extracted_facts=[],
+        state_changes=[],
+    ))
+
+    assert record.generated_from_checkpoint_id == "checkpoint-7"
+    assert record.generated_with["bible_elements"]["faction-1"]["revision"] == 2
+
+
 def test_writer_recovery_is_promoted_and_visible_after_restart(
     qtbot, tmp_path, monkeypatch
 ):

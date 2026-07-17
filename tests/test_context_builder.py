@@ -396,16 +396,14 @@ def test_world_rules_present_in_context(tmp_path):
     )
     from app.storage.project_files import create_project, save_volume_outline, save_world_setting
 
-    project = Project(title="测试", genre="玄幻")
-    proj_dir = create_project(tmp_path, project)
-
     world = WorldSetting(
         geography="东荒大陆",
         rules=["弱肉强食"],
         taboos=["不得背叛师门"],
         power_system=PowerSystem(realms=["练气", "筑基", "金丹"], abilities={"练气": "灵气感知"}),
     )
-    save_world_setting(proj_dir, world)
+    project = Project(title="测试", genre="玄幻", world_setting=world)
+    proj_dir = create_project(tmp_path, project)
 
     scene = SceneOutline(title="测试")
     chapter = ChapterOutline(title="第一章", scenes=[scene])
@@ -529,3 +527,79 @@ def test_missing_character_id_fails_context_assembly(tmp_path):
 
     with pytest.raises(ValueError, match="Scene references missing character IDs: missing-char"):
         RetrievalEngine().assemble(proj_dir, scene_id="scene-1")
+
+
+def test_world_context_selects_explicit_related_and_always_elements(tmp_path):
+    from app.pipeline.context_builder import RetrievalEngine
+    from app.storage.bible_migration import ensure_bible_store
+    from app.storage.bible_models import (
+        BibleElementRelation,
+        FactionElement,
+        LocationElement,
+        PowerSystemElement,
+    )
+    from app.storage.bible_repository import BibleElementRepository
+    from app.storage.models import ChapterOutline, SceneOutline, VolumeOutline, WorldSetting
+    from app.storage.project_files import save_volume_outline
+
+    project = Project(
+        title="元素上下文",
+        genre="玄幻",
+        world_setting=WorldSetting(
+            geography="东荒大陆",
+            rules=["不得干涉凡人"],
+            taboos=["夺舍"],
+            technology_level="古代",
+            social_structure="宗门治理",
+        ),
+    )
+    project_dir = create_project(tmp_path, project)
+    ensure_bible_store(project_dir)
+    repo = BibleElementRepository(project_dir)
+    related = repo.create(FactionElement(id="f2", name="魔渊殿"))
+    power = repo.create(PowerSystemElement(
+        id="p1", name="九重天境", summary="九层修炼体系", always_include=True
+    ))
+    repo.create(LocationElement(id="l1", name="无关海岛", description="遥远之地"))
+    explicit = repo.create(FactionElement(
+        id="f1",
+        name="青云宗",
+        summary="正道第一宗门",
+        relationships=[BibleElementRelation(kind="opposed_to", target_element_id="f2")],
+    ))
+    repo.reorder([explicit.id, related.id, power.id, "l1"])
+    repo.set_primary_power_system(power.id)
+    scene = SceneOutline(id="scene-1", title="宗门议事", world_element_ids=[explicit.id])
+    save_volume_outline(
+        project_dir,
+        VolumeOutline(
+            id="v1",
+            chapters=[ChapterOutline(id="c1", scenes=[scene])],
+        ),
+    )
+
+    context = RetrievalEngine().assemble(project_dir, "scene-1")
+
+    assert context["world_context"]["overview"] == {
+        "geography": "东荒大陆",
+        "rules": ["不得干涉凡人"],
+        "taboos": ["夺舍"],
+        "technology_level": "古代",
+        "social_structure": "宗门治理",
+    }
+    assert [item["id"] for item in context["world_context"]["elements"]] == [
+        "f1", "p1", "f2"
+    ]
+    assert "l1" not in context["world_element_read_points"]
+    assert context["world_element_read_points"]["f1"]["selection_reasons"] == [
+        "explicit_scene_reference"
+    ]
+    assert context["world_element_read_points"]["f2"]["selection_reasons"] == [
+        "related_to:f1:opposed_to"
+    ]
+    assert context["world_element_read_points"]["p1"]["revision"] == 1
+    compact = context["world_context"]["elements"][0]
+    assert "revision" not in compact
+    assert "created_at" not in compact
+    assert compact["relationships"][0]["target_name"] == "魔渊殿"
+    assert context["world_rules"]["factions"][0]["name"] == "青云宗"
