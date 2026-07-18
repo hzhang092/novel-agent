@@ -121,16 +121,12 @@ class BibleEditorView(QWidget):
 
         # Toolbar
         toolbar = QHBoxLayout()
-        self._template_btn = QPushButton("修仙模板")
-        self._template_btn.setToolTip("一键填充修仙世界观和写作风格")
-        self._template_btn.clicked.connect(self._on_apply_template)
-        toolbar.addWidget(self._template_btn)
         toolbar.addStretch()
-        self._unsaved_label = QLabel("未保存")
+        self._unsaved_label = QLabel("设定集未保存")
         self._unsaved_label.setStyleSheet("color: #d48806;")
         self._unsaved_label.setVisible(False)
         toolbar.addWidget(self._unsaved_label)
-        self._save_btn = QPushButton("保存")
+        self._save_btn = QPushButton("保存全部")
         self._save_btn.setToolTip("保存所有修改到磁盘")
         self._save_btn.clicked.connect(self._on_save)
         self._save_btn.setEnabled(False)

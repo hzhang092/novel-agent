@@ -182,19 +182,19 @@ class CharacterEditorView(QWidget):
         self._add_btn.clicked.connect(self._on_add_character)
         toolbar.addWidget(self._add_btn)
 
-        self._delete_btn = QPushButton("删除")
+        self._delete_btn = QPushButton("删除当前角色")
         self._delete_btn.setToolTip("删除选中的角色")
         self._delete_btn.clicked.connect(self._on_delete_character)
         toolbar.addWidget(self._delete_btn)
 
         toolbar.addStretch()
 
-        self._unsaved_label = QLabel("未保存")
+        self._unsaved_label = QLabel("当前角色未保存")
         self._unsaved_label.setStyleSheet("color: #d48806;")
         self._unsaved_label.setVisible(False)
         toolbar.addWidget(self._unsaved_label)
 
-        self._save_btn = QPushButton("保存")
+        self._save_btn = QPushButton("保存当前角色")
         self._save_btn.setToolTip("保存当前角色修改到磁盘")
         self._save_btn.clicked.connect(self._on_save)
         self._save_btn.setEnabled(False)
@@ -647,7 +647,7 @@ class CharacterEditorView(QWidget):
         form = QVBoxLayout(container)
 
         form.addWidget(QLabel("当前状态由已确认的场景事件生成。"))
-        explanation = QLabel("普通“保存”只保存角色基本设定，不会修改当前状态。")
+        explanation = QLabel("“保存当前角色”只保存角色基本设定，不会修改当前状态。")
         explanation.setStyleSheet("color: #777;")
         form.addWidget(explanation)
         self._edit_state_btn = QPushButton("手动修改状态")

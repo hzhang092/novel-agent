@@ -24,11 +24,30 @@ def test_bible_dirty_state_tracks_semantic_world_and_style_changes(tmp_path, qtb
 
     editor._world_tab._overview_geography.setPlainText("新地理")
     assert editor.is_dirty is True
+
     editor._world_tab._overview_geography.clear()
     assert editor.is_dirty is False
 
     editor._notes_edit.setPlainText("新风格")
     assert editor.is_dirty is True
+
+
+def test_bible_actions_state_their_scope_and_template_is_overview_only(qtbot):
+    from app.ui.bible_editor import BibleEditorView
+
+    editor = BibleEditorView()
+    qtbot.addWidget(editor)
+    editor.show()
+
+    assert editor._save_btn.text() == "保存全部"
+    assert editor._world_tab._save_button.text() == "保存此元素"
+    assert editor._world_tab._delete_button.text() == "删除元素"
+    assert editor._character_tab._save_btn.text() == "保存当前角色"
+    assert editor._character_tab._delete_btn.text() == "删除当前角色"
+    assert not hasattr(editor, "_template_btn")
+
+    editor._tabs.setCurrentWidget(editor._character_tab)
+    assert not editor._overview_template_btn.isVisibleTo(editor)
 
 
 def test_bible_save_all_persists_dirty_scopes_and_clears_state(tmp_path, qtbot):
@@ -97,7 +116,7 @@ def test_template_fill_empty_uses_current_form_without_saving(tmp_path, qtbot):
         dialog.accept()
 
     QTimer.singleShot(0, accept_dialog)
-    editor._template_btn.click()
+    editor._overview_template_btn.click()
 
     assert editor._world_tab.overview_in_memory().geography == "我的地理"
     assert editor._gather_style().pacing == "很快"
@@ -131,7 +150,7 @@ def test_cancelled_template_application_changes_nothing(tmp_path, qtbot):
         dialog.reject()
 
     QTimer.singleShot(0, reject_dialog)
-    editor._template_btn.click()
+    editor._overview_template_btn.click()
 
     assert editor._world_tab.overview_in_memory() == before_world
     assert editor._world_tab.elements_in_memory() == before_elements
@@ -163,7 +182,7 @@ def test_replace_template_requires_explicit_confirmation(tmp_path, qtbot, monkey
         lambda *_args, **_kwargs: QMessageBox.StandardButton.No,
     )
     QTimer.singleShot(0, choose_replace)
-    editor._template_btn.click()
+    editor._overview_template_btn.click()
 
     assert editor._world_tab.overview_in_memory() == before
 

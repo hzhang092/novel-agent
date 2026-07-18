@@ -68,7 +68,7 @@ def test_bible_editor_applies_typed_template_in_memory_then_saves(tmp_path, qtbo
         dialog.accept()
 
     QTimer.singleShot(0, accept_dialog)
-    editor._template_btn.click()
+    editor._overview_template_btn.click()
 
     assert editor.is_dirty is True
     assert len(editor._world_tab.elements_in_memory()) == 13
@@ -99,7 +99,7 @@ def test_replace_template_confirmation_shows_exact_counts(
 
     monkeypatch.setattr(QMessageBox, "question", confirm)
     QTimer.singleShot(0, choose_replace)
-    editor._template_btn.click()
+    editor._overview_template_btn.click()
 
     assert len(messages) == 1
     assert "5 fields replaced" in messages[0]
@@ -130,7 +130,7 @@ def test_style_only_template_ignores_ambiguous_world_names(tmp_path, qtbot):
         dialog.accept()
 
     QTimer.singleShot(0, accept_style_only)
-    editor._template_btn.click()
+    editor._overview_template_btn.click()
 
     assert editor._gather_style().pacing == "很快"
     assert editor.is_dirty is True
