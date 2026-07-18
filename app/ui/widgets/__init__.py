@@ -35,7 +35,9 @@ class StringListEditor(QWidget):
         self._list.itemChanged.connect(self._on_item_changed)
         self._populating = False
         layout.addWidget(self._list)
-        btn_row = QHBoxLayout()
+        self._button_row = QWidget()
+        btn_row = QHBoxLayout(self._button_row)
+        btn_row.setContentsMargins(0, 0, 0, 0)
         self._add_button = QPushButton("+")
         self._add_button.setFixedWidth(30)
         self._add_button.clicked.connect(self._on_add)
@@ -45,7 +47,7 @@ class StringListEditor(QWidget):
         self._delete_button.clicked.connect(self._on_remove)
         btn_row.addWidget(self._delete_button)
         btn_row.addStretch()
-        layout.addLayout(btn_row)
+        layout.addWidget(self._button_row)
 
     def _on_add(self) -> None:
         item = QListWidgetItem("")
@@ -90,8 +92,7 @@ class StringListEditor(QWidget):
             if read_only
             else self._editable_triggers
         )
-        self._add_button.setEnabled(not read_only)
-        self._delete_button.setEnabled(not read_only)
+        self._button_row.setVisible(not read_only)
 
 
 class KeyValueTable(QWidget):
@@ -113,7 +114,9 @@ class KeyValueTable(QWidget):
         self._table.cellChanged.connect(self._on_cell_changed)
         self._populating = False
         layout.addWidget(self._table)
-        btn_row = QHBoxLayout()
+        self._button_row = QWidget()
+        btn_row = QHBoxLayout(self._button_row)
+        btn_row.setContentsMargins(0, 0, 0, 0)
         self._add_button = QPushButton("+ 行")
         self._add_button.clicked.connect(self._on_add_row)
         btn_row.addWidget(self._add_button)
@@ -121,7 +124,7 @@ class KeyValueTable(QWidget):
         self._delete_button.clicked.connect(self._on_remove_row)
         btn_row.addWidget(self._delete_button)
         btn_row.addStretch()
-        layout.addLayout(btn_row)
+        layout.addWidget(self._button_row)
 
     def _on_add_row(self) -> None:
         row = self._table.rowCount()
@@ -166,8 +169,7 @@ class KeyValueTable(QWidget):
             if read_only
             else self._editable_triggers
         )
-        self._add_button.setEnabled(not read_only)
-        self._delete_button.setEnabled(not read_only)
+        self._button_row.setVisible(not read_only)
 
 
 def read_table_cell(table: QTableWidget, row: int, col: int) -> str:

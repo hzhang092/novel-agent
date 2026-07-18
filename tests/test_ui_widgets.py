@@ -40,7 +40,12 @@ def test_string_list_read_only_keeps_selection_but_blocks_changes(qtbot):
     list_widget = editor.findChild(QListWidget)
     assert list_widget.editTriggers() == QAbstractItemView.EditTrigger.NoEditTriggers
     assert list_widget.selectionMode() != QAbstractItemView.SelectionMode.NoSelection
-    assert all(not button.isEnabled() for button in editor.findChildren(QPushButton))
+    assert editor._button_row.isHidden()
+
+    editor.set_read_only(False)
+
+    assert not editor._button_row.isHidden()
+    assert list_widget.editTriggers() != QAbstractItemView.EditTrigger.NoEditTriggers
 
 
 def test_key_value_table_reports_edits_but_not_population(qtbot):
@@ -79,4 +84,9 @@ def test_key_value_table_read_only_keeps_selection_but_blocks_changes(qtbot):
     table = editor.findChild(QTableWidget)
     assert table.editTriggers() == QAbstractItemView.EditTrigger.NoEditTriggers
     assert table.selectionMode() != QAbstractItemView.SelectionMode.NoSelection
-    assert all(not button.isEnabled() for button in editor.findChildren(QPushButton))
+    assert editor._button_row.isHidden()
+
+    editor.set_read_only(False)
+
+    assert not editor._button_row.isHidden()
+    assert table.editTriggers() != QAbstractItemView.EditTrigger.NoEditTriggers
