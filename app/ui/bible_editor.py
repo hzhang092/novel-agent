@@ -10,18 +10,12 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
-    QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QScrollArea,
     QSlider,
     QTabWidget,
-    QTableWidget,
-    QTableWidgetItem,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -29,26 +23,17 @@ from PySide6.QtWidgets import (
 
 from app.storage.editor_layout import EditorLayoutStore
 from app.storage.bible_models import BibleElementType, WorldOverview
-from app.storage.models import Project as ProjectModel
-from app.storage.models import CharacterTier, PowerSystem, StyleGuide, WorldSetting
+from app.storage.models import CharacterTier, StyleGuide
 from app.storage.project_files import (
     load_project,
     save_style_guide,
 )
 from app.ui.character_editor import CharacterEditorView
 from app.ui.world_bible_editor import WorldBibleEditorView
-from app.ui.world_section_catalog import (
-    WORLD_SECTION_DEFINITIONS,
-    populated_world_sections,
-)
 from app.ui.widgets import (
-    AddMenuItem,
     CollapsibleSection,
-    KeyValueTable,
-    SearchableAddMenu,
     StringListEditor,
     combo_val as _combo_val,
-    read_table_cell,
     set_combo as _set_combo,
 )
 from app.utils.template_merge import (
@@ -83,8 +68,6 @@ class BibleEditorView(QWidget):
         self._populating = False
         self._last_dirty = False
         self._layout_store: EditorLayoutStore | None = None
-        self._world_sections: dict[str, CollapsibleSection] = {}
-        self._power_sections: dict[str, CollapsibleSection] = {}
         self._style_sections: dict[str, CollapsibleSection] = {}
         self._setup_ui()
         self._connect_dirty_tracking()
@@ -366,13 +349,6 @@ class BibleEditorView(QWidget):
         self._update_aggregate_dirty_state()
         self._refresh_overview()
 
-    def _recompute_world_dirty(self) -> None:
-        if self._populating:
-            return
-        self._world_dirty = self._gather_world() != self._baseline_world
-        self._update_aggregate_dirty_state()
-        self._refresh_overview()
-
     def _recompute_style_dirty(self) -> None:
         if self._populating:
             return
@@ -387,232 +363,6 @@ class BibleEditorView(QWidget):
         if dirty != self._last_dirty:
             self._last_dirty = dirty
             self.dirty_changed.emit(dirty)
-
-    # ── World Tab ──────────────────────────────────────────────────────────
-
-    def _build_world_tab(self) -> QScrollArea:
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        container = QWidget()
-        form = QVBoxLayout(container)
-
-        toolbar = QHBoxLayout()
-        toolbar.addWidget(QLabel("<h2>世界设定</h2>"))
-        toolbar.addStretch()
-        self._add_world_btn = QPushButton("+ 添加设定")
-        self._add_world_btn.clicked.connect(self._open_world_menu)
-        toolbar.addWidget(self._add_world_btn)
-        form.addLayout(toolbar)
-
-        self._world_empty_state = QWidget()
-        empty_layout = QVBoxLayout(self._world_empty_state)
-        empty_layout.addWidget(QLabel("<h3>按故事需要构建世界</h3>"))
-        empty_layout.addWidget(QLabel("只添加当前需要的部分，以后可以继续补充。"))
-        for label, section_id in (
-            ("添加地理", "geography"),
-            ("添加势力", "factions"),
-            ("添加力量体系", "power_system"),
-        ):
-            button = QPushButton(label)
-            button.clicked.connect(
-                lambda _checked=False, sid=section_id: self._on_add_world_section(sid)
-            )
-            empty_layout.addWidget(button)
-        browse = QPushButton("浏览全部设定")
-        browse.clicked.connect(self._open_world_menu)
-        empty_layout.addWidget(browse)
-        form.addWidget(self._world_empty_state)
-
-        self._geo_edit = QTextEdit()
-        self._geo_edit.setPlaceholderText("描述世界观的地理环境...")
-        self._geo_edit.setMaximumHeight(100)
-        self._history_edit = QTextEdit()
-        self._history_edit.setPlaceholderText("世界观的历史背景...")
-        self._history_edit.setMaximumHeight(80)
-        self._tech_edit = QLineEdit()
-        self._tech_edit.setPlaceholderText("如：修仙文明")
-        self._social_edit = QLineEdit()
-        self._social_edit.setPlaceholderText("如：宗门制，强者为尊")
-        self._rules_list = StringListEditor()
-        self._taboos_list = StringListEditor()
-        self._factions_table = KeyValueTable(["势力名称", "描述", "目标"])
-        self._term_table = KeyValueTable(["术语", "定义"])
-        self._realms_list = StringListEditor()
-        self._abilities_table = KeyValueTable(["境界", "能力描述"])
-        self._limitations_list = StringListEditor()
-        self._costs_list = StringListEditor()
-        self._resources_list = StringListEditor()
-        self._forbidden_list = StringListEditor()
-
-        section_content: dict[str, QWidget] = {}
-        for section_id in (
-            "geography", "history", "society", "rules", "taboos",
-            "factions", "terminology", "power_system",
-        ):
-            content = QWidget()
-            section_content[section_id] = content
-            content.setLayout(QVBoxLayout())
-        section_content["geography"].layout().addWidget(self._geo_edit)
-        section_content["history"].layout().addWidget(self._history_edit)
-        section_content["society"].layout().addWidget(QLabel("科技水平"))
-        section_content["society"].layout().addWidget(self._tech_edit)
-        section_content["society"].layout().addWidget(QLabel("社会结构"))
-        section_content["society"].layout().addWidget(self._social_edit)
-        section_content["rules"].layout().addWidget(self._rules_list)
-        section_content["taboos"].layout().addWidget(self._taboos_list)
-        section_content["factions"].layout().addWidget(self._factions_table)
-        section_content["terminology"].layout().addWidget(self._term_table)
-
-        for title, section_id, widgets in (
-            ("境界与能力", "realms", (self._realms_list, self._abilities_table)),
-            ("限制与代价", "costs", (self._limitations_list, self._costs_list)),
-            ("稀有资源与禁忌之术", "rare", (self._resources_list, self._forbidden_list)),
-        ):
-            nested_id = f"power_{section_id}"
-            nested = CollapsibleSection(title, section_id=nested_id)
-            nested_content = QWidget()
-            nested_layout = QVBoxLayout(nested_content)
-            for widget in widgets:
-                nested_layout.addWidget(widget)
-            nested.set_content_widget(nested_content)
-            nested.expanded_changed.connect(
-                lambda expanded, sid=nested_id: self._on_world_expanded(sid, expanded)
-            )
-            self._power_sections[nested_id] = nested
-            section_content["power_system"].layout().addWidget(nested)
-
-        labels = {
-            "geography": "地理",
-            "history": "历史",
-            "society": "社会与科技",
-            "rules": "世界规则",
-            "taboos": "禁忌",
-            "factions": "势力",
-            "terminology": "术语",
-            "power_system": "力量 / 修炼体系",
-        }
-        for definition in WORLD_SECTION_DEFINITIONS:
-            section = CollapsibleSection(
-                labels[definition.section_id],
-                section_id=definition.section_id,
-                hideable=True,
-            )
-            section.set_content_widget(section_content[definition.section_id])
-            section.hide_requested.connect(
-                lambda sid=definition.section_id: self._on_hide_world_section(sid)
-            )
-            section.expanded_changed.connect(
-                lambda expanded, sid=definition.section_id: self._on_world_expanded(
-                    sid, expanded
-                )
-            )
-            self._world_sections[definition.section_id] = section
-            form.addWidget(section)
-
-        self._world_add_menu = SearchableAddMenu(self)
-        self._world_add_menu.item_selected.connect(self._on_add_world_section)
-        form.addStretch()
-
-        scroll.setWidget(container)
-        return scroll
-
-    def _apply_world_layout(self) -> None:
-        if self._layout_store is None:
-            return
-        layout = self._layout_store.layout.world
-        supported_visible = set(self._world_sections)
-        supported_collapsed = supported_visible | set(self._power_sections)
-        unknown = (
-            set(layout.visible_sections) - supported_visible
-        ) | (set(layout.collapsed_sections) - supported_collapsed)
-        if unknown:
-            logger.warning("Ignoring unknown world layout IDs: %s", sorted(unknown))
-        layout.visible_sections = [
-            section_id
-            for section_id in layout.visible_sections
-            if section_id in supported_visible
-        ]
-        layout.collapsed_sections = [
-            section_id
-            for section_id in layout.collapsed_sections
-            if section_id in supported_collapsed
-        ]
-        visible = set(layout.visible_sections)
-        for section_id, section in self._world_sections.items():
-            section.setVisible(section_id in visible)
-            section.set_expanded(section_id not in layout.collapsed_sections)
-        for section_id, section in self._power_sections.items():
-            section.set_expanded(section_id not in layout.collapsed_sections)
-        self._world_empty_state.setVisible(not visible)
-
-    def _open_world_menu(self) -> None:
-        if self._layout_store is None:
-            return
-        categories = {
-            "geography": "环境",
-            "history": "环境",
-            "society": "环境",
-            "rules": "规则与体系",
-            "taboos": "规则与体系",
-            "power_system": "规则与体系",
-            "factions": "人物与语言",
-            "terminology": "人物与语言",
-        }
-        self._world_add_menu.set_items(
-            [
-                AddMenuItem(
-                    item.section_id,
-                    item.label,
-                    categories[item.section_id],
-                    item.description,
-                    item.keywords,
-                )
-                for item in WORLD_SECTION_DEFINITIONS
-            ],
-            visible_ids=set(self._layout_store.layout.world.visible_sections),
-            populated_ids=populated_world_sections(self._gather_world()),
-        )
-        self._world_add_menu.open_below(self._add_world_btn)
-
-    def _on_add_world_section(self, section_id: str) -> None:
-        if self._layout_store is None or section_id not in self._world_sections:
-            return
-        layout = self._layout_store.layout.world
-        layout.visible_sections = sorted(
-            set(layout.visible_sections) | {section_id}
-        )
-        collapsed = set(layout.collapsed_sections)
-        collapsed.discard(section_id)
-        layout.collapsed_sections = sorted(collapsed)
-        section = self._world_sections[section_id]
-        section.setVisible(True)
-        section.set_expanded(True)
-        self._world_empty_state.setVisible(False)
-        self._layout_store.schedule_save()
-        self._refresh_overview()
-
-    def _on_hide_world_section(self, section_id: str) -> None:
-        if self._layout_store is None or section_id not in self._world_sections:
-            return
-        layout = self._layout_store.layout.world
-        layout.visible_sections = sorted(
-            set(layout.visible_sections) - {section_id}
-        )
-        self._world_sections[section_id].setVisible(False)
-        self._world_empty_state.setVisible(not layout.visible_sections)
-        self._layout_store.schedule_save()
-        self._refresh_overview()
-
-    def _on_world_expanded(self, section_id: str, expanded: bool) -> None:
-        if self._layout_store is None:
-            return
-        collapsed = set(self._layout_store.layout.world.collapsed_sections)
-        if expanded:
-            collapsed.discard(section_id)
-        else:
-            collapsed.add(section_id)
-        self._layout_store.layout.world.collapsed_sections = sorted(collapsed)
-        self._layout_store.schedule_save()
 
     # ── Style Tab ──────────────────────────────────────────────────────────
 
@@ -711,29 +461,6 @@ class BibleEditorView(QWidget):
 
     # ── Populate ───────────────────────────────────────────────────────────
 
-    def _populate_world_tab(self, world: WorldSetting) -> None:
-        self._geo_edit.setPlainText(world.geography)
-        self._history_edit.setPlainText(world.history)
-        self._tech_edit.setText(world.technology_level)
-        self._social_edit.setText(world.social_structure)
-        self._rules_list.set_items(world.rules)
-        self._taboos_list.set_items(world.taboos)
-        self._factions_table.set_rows(
-            [["", "", ""]] if not world.factions
-            else [[f.get("name", ""), f.get("description", ""), f.get("goals", "")]
-                  for f in world.factions]
-        )
-        self._term_table.set_rows(
-            [[k, v] for k, v in world.terminology.items()]
-        )
-        ps = world.power_system or PowerSystem()
-        self._realms_list.set_items(ps.realms)
-        self._abilities_table.set_rows([[k, v] for k, v in ps.abilities.items()])
-        self._limitations_list.set_items(ps.limitations)
-        self._costs_list.set_items(ps.costs)
-        self._resources_list.set_items(ps.rare_resources)
-        self._forbidden_list.set_items(ps.forbidden_methods)
-
     def _populate_style_tab(self, style: StyleGuide) -> None:
         pacing_map = {"": 0, "很慢": 1, "偏慢": 2, "适中": 3, "偏快": 4, "很快": 5}
         self._pacing_slider.setValue(pacing_map.get(style.pacing, 0))
@@ -748,49 +475,6 @@ class BibleEditorView(QWidget):
         self._notes_edit.setPlainText(style.freeform_notes)
 
     # ── Gather ─────────────────────────────────────────────────────────────
-
-    def _gather_world(self) -> WorldSetting:
-        factions = []
-        for row in range(self._factions_table.rowCount()):
-            name = _cell(self._factions_table._table, row, 0)
-            desc = _cell(self._factions_table._table, row, 1)
-            goals = _cell(self._factions_table._table, row, 2)
-            if name or desc or goals:
-                factions.append({"name": name, "description": desc, "goals": goals})
-
-        terminology = {}
-        for row in range(self._term_table.rowCount()):
-            term = _cell(self._term_table._table, row, 0)
-            defn = _cell(self._term_table._table, row, 1)
-            if term:
-                terminology[term] = defn
-
-        abilities = {}
-        for row in range(self._abilities_table.rowCount()):
-            realm = _cell(self._abilities_table._table, row, 0)
-            desc = _cell(self._abilities_table._table, row, 1)
-            if realm:
-                abilities[realm] = desc
-
-        power_system = PowerSystem(
-            realms=self._realms_list.get_items(),
-            abilities=abilities,
-            limitations=self._limitations_list.get_items(),
-            costs=self._costs_list.get_items(),
-            rare_resources=self._resources_list.get_items(),
-            forbidden_methods=self._forbidden_list.get_items(),
-        )
-        return WorldSetting(
-            geography=self._geo_edit.toPlainText().strip(),
-            power_system=power_system if any(power_system.model_dump().values()) else None,
-            factions=factions,
-            history=self._history_edit.toPlainText().strip(),
-            rules=self._rules_list.get_items(),
-            taboos=self._taboos_list.get_items(),
-            technology_level=self._tech_edit.text().strip(),
-            social_structure=self._social_edit.text().strip(),
-            terminology=terminology,
-        )
 
     def _gather_style(self) -> StyleGuide:
         pacing_map = {0: "", 1: "很慢", 2: "偏慢", 3: "适中", 4: "偏快", 5: "很快"}
@@ -945,11 +629,4 @@ class BibleEditorView(QWidget):
         if dialog.apply_style:
             self._recompute_style_dirty()
         self._refresh_overview()
-
-
-# ── Helpers ────────────────────────────────────────────────────────────────
-
-def _cell(table, row: int, col: int) -> str:
-    """Read a table cell — delegates to shared widget helper."""
-    return read_table_cell(table, row, col)
 
