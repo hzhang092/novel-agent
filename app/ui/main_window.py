@@ -56,6 +56,7 @@ class MainWindow(QMainWindow):
         self._generation_in_progress: bool = False
         self._current_prose_version: str | None = None
         self._pending_draft: tuple | None = None
+        self._project_signal_connections = []
 
         self._repo = Repository(Path.home() / "NovelForge")
         self._current_project: ProjectModel | None = None
@@ -173,7 +174,29 @@ class MainWindow(QMainWindow):
             return
         outline = self.views.get("outline")
         if isinstance(outline, OutlineEditorView):
+            blocker = QSignalBlocker(outline)
             outline._select_by_id(scene_id)
+            del blocker
+            self._on_scene_selected(scene_id)
+
+    def _wire_project_signals(self) -> None:
+        """Connect project view signals once, regardless of how the project loaded."""
+        for signal, slot in self._project_signal_connections:
+            signal.disconnect(slot)
+        outline = self.views.get("outline")
+        workspace = self.views.get("workspace")
+        connections = []
+        if isinstance(outline, OutlineEditorView):
+            connections.append((outline.scene_selected, self._on_scene_selected))
+        if isinstance(workspace, SceneWorkspaceView):
+            connections.extend((
+                (workspace.generate_requested, self._on_generate_requested),
+                (workspace.retry_requested, self._retry_agent),
+                (workspace.next_scene_requested, self._on_next_scene),
+            ))
+        for signal, slot in connections:
+            signal.connect(slot)
+        self._project_signal_connections = connections
 
     def _on_nav_changed(self, index: int) -> None:
         if (
@@ -322,10 +345,10 @@ class MainWindow(QMainWindow):
         outline = self.views["outline"]
         if isinstance(outline, OutlineEditorView):
             outline.load_project_dir(proj_dir)
-            try:
-                outline.scene_selected.disconnect()
-            except TypeError:
-                pass
+        workspace = self.views["workspace"]
+        if isinstance(workspace, SceneWorkspaceView):
+            workspace.load_project_dir(proj_dir)
+        self._wire_project_signals()
 
         QMessageBox.information(
             self, "创建成功", f"项目「{project.title}」已创建\n{proj_dir}"
@@ -382,30 +405,10 @@ class MainWindow(QMainWindow):
         outline = self.views["outline"]
         if isinstance(outline, OutlineEditorView):
             outline.load_project_dir(Path(dir_path))
-            try:
-                outline.scene_selected.disconnect()
-            except TypeError:
-                pass
-            outline.scene_selected.connect(self._on_scene_selected)
-
-            workspace = self.views["workspace"]
-            if isinstance(workspace, SceneWorkspaceView):
-                workspace.load_project_dir(Path(dir_path))
-                try:
-                    workspace.generate_requested.disconnect()
-                except TypeError:
-                    pass
-                workspace.generate_requested.connect(self._on_generate_requested)
-                try:
-                    workspace.retry_requested.disconnect()
-                except TypeError:
-                    pass
-                workspace.retry_requested.connect(self._retry_agent)
-                try:
-                    workspace.next_scene_requested.disconnect()
-                except TypeError:
-                    pass
-                workspace.next_scene_requested.connect(self._on_next_scene)
+        workspace = self.views["workspace"]
+        if isinstance(workspace, SceneWorkspaceView):
+            workspace.load_project_dir(Path(dir_path))
+        self._wire_project_signals()
 
         from PySide6.QtCore import QSettings
         settings = QSettings()

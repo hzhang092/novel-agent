@@ -251,9 +251,61 @@ def test_usage_scene_navigation_opens_requested_scene(qtbot, monkeypatch):
     bible = window.views["bible"]
     outline = window.views["outline"]
     selected = []
+    opened = []
     monkeypatch.setattr(outline, "_select_by_id", selected.append)
+    monkeypatch.setattr(window, "_on_scene_selected", opened.append)
 
     bible.scene_requested.emit("scene-42")
 
     assert selected == ["scene-42"]
+    assert opened == ["scene-42"]
     assert window.sidebar.currentRow() == 3
+
+
+def test_new_project_wires_scene_selection_once(tmp_path, qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    selected = []
+    monkeypatch.setattr(window, "_on_scene_selected", selected.append)
+
+    class AcceptedDialog:
+        def __init__(self, *_args):
+            pass
+
+        def exec(self):
+            return True
+
+        def get_result(self):
+            return {
+                "title": "New",
+                "genre": "Fantasy",
+                "llm_provider": "",
+                "storage_dir": str(tmp_path),
+            }
+
+    monkeypatch.setattr("app.ui.main_window.CreateProjectDialog", AcceptedDialog)
+    monkeypatch.setattr(QMessageBox, "information", lambda *_args: None)
+
+    window._on_new_project()
+    window._wire_project_signals()
+    window.views["outline"].scene_selected.emit("scene-new")
+
+    assert selected == ["scene-new"]
+
+
+def test_open_project_wires_scene_selection_once(tmp_path, qtbot, monkeypatch):
+    project_dir = create_project(tmp_path, Project(title="Open", genre="Fantasy"))
+    window = MainWindow()
+    qtbot.addWidget(window)
+    selected = []
+    monkeypatch.setattr(window, "_on_scene_selected", selected.append)
+    monkeypatch.setattr(
+        "app.ui.main_window.QFileDialog.getExistingDirectory",
+        lambda *_args: str(project_dir),
+    )
+
+    window._on_open_project()
+    window._wire_project_signals()
+    window.views["outline"].scene_selected.emit("scene-open")
+
+    assert selected == ["scene-open"]
