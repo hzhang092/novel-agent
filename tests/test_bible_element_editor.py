@@ -222,3 +222,34 @@ def test_editor_shows_connected_characters_and_requests_open(qtbot):
     assert item.text(0) == "Lin — Has member"
     editor._connected_characters.itemActivated.emit(item, 0)
     assert requested == ["c1"]
+
+
+def test_inbound_sections_hide_and_restore_with_content(qtbot):
+    current = LocationElement(id="l1", name="青云山")
+    source = FactionElement(id="f1", name="青云宗")
+    relation = BibleElementRelation(
+        kind=BibleRelationKind.CONTROLS, target_element_id=current.id
+    )
+    character = CharacterCore(id="c1", name="林轩")
+    character_relation = CharacterElementRelation(
+        kind=CharacterElementRelationKind.MEMBER_OF,
+        target_element_id=source.id,
+    )
+    editor = BibleElementEditor()
+    qtbot.addWidget(editor)
+
+    editor.load_element(current)
+    assert editor._inbound_section.isHidden()
+    assert editor._connected_characters_section.isHidden()
+
+    editor.load_element(
+        current,
+        inbound_relations=[(source, relation)],
+        inbound_character_relations=[(character, character_relation)],
+    )
+    assert not editor._inbound_section.isHidden()
+    assert not editor._connected_characters_section.isHidden()
+
+    editor.load_element(current)
+    assert editor._inbound_section.isHidden()
+    assert editor._connected_characters_section.isHidden()

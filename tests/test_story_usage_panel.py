@@ -41,6 +41,22 @@ def test_usage_panel_groups_scene_usage_and_emits_selected_scene(qtbot):
     assert selected == ["scene-1"]
 
 
+def test_usage_panel_hides_and_restores_for_usage_transitions(qtbot):
+    panel = StoryUsagePanel()
+    qtbot.addWidget(panel)
+    empty = ElementUsageSummary("sect", ())
+    populated = ElementUsageSummary("sect", (
+        SceneUsage("scene-1", "chapter-1", 1, "Gate", frozenset({StoryUsageKind.EXPLICIT_OUTLINE})),
+    ))
+
+    panel.set_usage(empty)
+    assert panel.isHidden()
+    panel.set_usage(populated)
+    assert not panel.isHidden()
+    panel.clear()
+    assert panel.isHidden()
+
+
 def test_panel_displays_character_location_and_inference_reason(qtbot):
     panel = StoryUsagePanel(title="Scene presence")
     qtbot.addWidget(panel)

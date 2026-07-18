@@ -30,9 +30,11 @@ class StoryUsagePanel(QWidget):
         self._tree.setHeaderHidden(True)
         self._tree.itemActivated.connect(self._request_scene)
         layout.addWidget(self._tree)
+        self.setVisible(False)
 
     def set_usage(self, summary: ElementUsageSummary) -> None:
         self._tree.clear()
+        self.setVisible(bool(summary.scenes))
         for kind, label in _GROUPS:
             scenes = [scene for scene in summary.scenes if kind in scene.usage_kinds]
             if not scenes:
@@ -47,6 +49,7 @@ class StoryUsagePanel(QWidget):
 
     def clear(self) -> None:
         self._tree.clear()
+        self.setVisible(False)
 
     @staticmethod
     def _scene_label(scene: SceneUsage) -> str:

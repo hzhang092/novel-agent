@@ -658,7 +658,6 @@ def test_character_delete_confirmation_lists_impacted_scenes(
 
 
 def test_current_state_view_is_read_only(tmp_path, qtbot):
-    from PySide6.QtWidgets import QPushButton
     from app.ui.character_editor import CharacterEditorView
 
     editor = CharacterEditorView()
@@ -681,7 +680,8 @@ def test_current_state_view_is_read_only(tmp_path, qtbot):
         editor._state_knowledge,
         editor._state_secrets,
     ):
-        assert all(not button.isEnabled() for button in compound.findChildren(QPushButton))
+        assert compound._button_row.isHidden()
+    assert editor._presence_panel.isHidden()
 
 
 def test_manual_state_override_appends_event_for_active_scene(
@@ -977,6 +977,7 @@ def test_character_presence_is_read_only_and_navigates_to_scene(tmp_path, qtbot)
     editor.load_project_dir(project_dir)
 
     group = editor._presence_panel._tree.topLevelItem(0)
+    assert not editor._presence_panel.isHidden()
     assert group.text(0) == "Character presence (1)"
     assert "当前位置" in editor._saved_state_summary.text()
     with qtbot.waitSignal(editor.scene_requested) as signal:

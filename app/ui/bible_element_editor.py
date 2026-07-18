@@ -156,21 +156,31 @@ class BibleElementEditor(QWidget):
         relation_buttons.addStretch()
         layout.addLayout(relation_buttons)
 
-        layout.addWidget(QLabel("Referenced by"))
+        self._inbound_section = QWidget()
+        inbound_layout = QVBoxLayout(self._inbound_section)
+        inbound_layout.setContentsMargins(0, 0, 0, 0)
+        inbound_layout.addWidget(QLabel("Referenced by"))
         self._inbound = QTreeWidget()
         self._inbound.setHeaderHidden(True)
         self._inbound.setMaximumHeight(100)
         self._inbound.itemActivated.connect(self._request_inbound_source)
-        layout.addWidget(self._inbound)
+        inbound_layout.addWidget(self._inbound)
+        layout.addWidget(self._inbound_section)
 
-        layout.addWidget(QLabel("Connected characters"))
+        self._connected_characters_section = QWidget()
+        connected_layout = QVBoxLayout(self._connected_characters_section)
+        connected_layout.setContentsMargins(0, 0, 0, 0)
+        connected_layout.addWidget(QLabel("Connected characters"))
         self._connected_characters = QTreeWidget()
         self._connected_characters.setHeaderHidden(True)
         self._connected_characters.setMaximumHeight(100)
         self._connected_characters.itemActivated.connect(
             self._request_connected_character
         )
-        layout.addWidget(self._connected_characters)
+        connected_layout.addWidget(self._connected_characters)
+        layout.addWidget(self._connected_characters_section)
+        self._inbound_section.setVisible(False)
+        self._connected_characters_section.setVisible(False)
 
     def _build_typed_pages(self) -> None:
         self._faction_description = QTextEdit()
@@ -506,6 +516,7 @@ class BibleElementEditor(QWidget):
         self, inbound_relations: list[tuple[BibleElement, BibleElementRelation]]
     ) -> None:
         self._inbound.clear()
+        self._inbound_section.setVisible(bool(inbound_relations))
         for source, relation in inbound_relations:
             item = QTreeWidgetItem(
                 self._inbound,
@@ -521,6 +532,7 @@ class BibleElementEditor(QWidget):
         relations: list[tuple[CharacterCore, CharacterElementRelation]],
     ) -> None:
         self._connected_characters.clear()
+        self._connected_characters_section.setVisible(bool(relations))
         for character, relation in relations:
             item = QTreeWidgetItem(
                 self._connected_characters,
