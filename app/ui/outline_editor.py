@@ -4,9 +4,9 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QBrush, QColor
+from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QHeaderView,
@@ -40,8 +40,8 @@ class OutlineEditorView(QWidget):
     Receives the project directory path via ``load_project_dir()``.
     """
 
-    saved = pyqtSignal()
-    scene_selected = pyqtSignal(str)  # emits scene_id when user clicks a scene node
+    saved = Signal()
+    scene_selected = Signal(str)  # emits scene_id when user clicks a scene node
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)

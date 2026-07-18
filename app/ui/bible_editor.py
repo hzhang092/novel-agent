@@ -6,8 +6,8 @@ import logging
 from collections import Counter
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QHeaderView,
@@ -69,10 +69,10 @@ class BibleEditorView(QWidget):
     handles its own persistence. Emits ``saved`` after successful writes.
     """
 
-    saved = pyqtSignal()
-    dirty_changed = pyqtSignal(bool)
-    elements_changed = pyqtSignal()
-    scene_requested = pyqtSignal(str)
+    saved = Signal()
+    dirty_changed = Signal(bool)
+    elements_changed = Signal()
+    scene_requested = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)

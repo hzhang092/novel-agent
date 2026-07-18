@@ -1,7 +1,7 @@
 from datetime import datetime
 
 import pytest
-from PyQt6.QtCore import Qt
+from PySide6.QtCore import Qt
 
 from app.storage.bible_models import (
     BibleElementRelation,

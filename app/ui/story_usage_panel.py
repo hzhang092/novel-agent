@@ -1,7 +1,7 @@
 """Compact, navigable display of where a Story Bible element is used."""
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QLabel, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QLabel, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
 from app.domain.story_usage import ElementUsageSummary, SceneUsage, StoryUsageKind
 
@@ -17,7 +17,7 @@ _GROUPS = (
 class StoryUsagePanel(QWidget):
     """Lists each distinct usage kind, with scene navigation."""
 
-    scene_requested = pyqtSignal(str)
+    scene_requested = Signal(str)
 
     def __init__(
         self, parent: QWidget | None = None, *, title: str = "Story usage"

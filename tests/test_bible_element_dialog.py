@@ -67,7 +67,7 @@ def test_add_dialog_asks_for_terminology_definition(qtbot):
 
 
 def test_add_dialog_rejects_missing_required_name(qtbot, monkeypatch):
-    from PyQt6.QtWidgets import QMessageBox
+    from PySide6.QtWidgets import QMessageBox
 
     dialog = BibleElementDialog(default_type=BibleElementType.FACTION)
     qtbot.addWidget(dialog)
@@ -83,7 +83,7 @@ def test_add_dialog_rejects_missing_required_name(qtbot, monkeypatch):
 
 
 def test_add_dialog_rejects_missing_terminology_definition(qtbot, monkeypatch):
-    from PyQt6.QtWidgets import QMessageBox
+    from PySide6.QtWidgets import QMessageBox
 
     dialog = BibleElementDialog(default_type=BibleElementType.TERMINOLOGY)
     qtbot.addWidget(dialog)

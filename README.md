@@ -156,7 +156,7 @@ app/
 ├── pipeline/      # Scene-generation orchestration and context assembly
 ├── providers/     # Ollama and DeepSeek integrations
 ├── storage/       # Project models, repositories, timelines, and persistence
-├── ui/            # PyQt6 desktop interface
+├── ui/            # PySide6 desktop interface
 ├── events/        # Domain events and Qt bridge
 └── main.py        # Application entry point
 
@@ -192,4 +192,4 @@ Bug reports, design feedback, and focused pull requests are welcome. For larger 
 
 ## License
 
-A license has not yet been added to this repository. Until one is selected, the repository is publicly viewable but does not grant general permission to copy, modify, or redistribute the code.
+NovelForge is licensed under the [MIT License](LICENSE). Binary distributions also include third-party software under their own terms; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -1,7 +1,7 @@
 """Searchable, grouped list of typed Story Bible elements."""
 
-from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
-from PyQt6.QtWidgets import QCheckBox, QComboBox, QLineEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtCore import QSignalBlocker, Qt, Signal
+from PySide6.QtWidgets import QCheckBox, QComboBox, QLineEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
 from app.domain.bible_search import search_elements
 from app.storage.bible_models import BibleElement, BibleElementType
@@ -17,9 +17,9 @@ ELEMENT_TYPE_DETAILS = {
 
 
 class BibleElementList(QWidget):
-    element_selected = pyqtSignal(str)
-    filters_changed = pyqtSignal(str, object)
-    group_collapsed_changed = pyqtSignal(str, bool)
+    element_selected = Signal(str)
+    filters_changed = Signal(str, object)
+    group_collapsed_changed = Signal(str, bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)

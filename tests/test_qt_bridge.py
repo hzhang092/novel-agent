@@ -1,7 +1,7 @@
 """Tests for QtEventBridge cross-thread dispatch."""
 import pytest
-from PyQt6.QtCore import QThread, QTimer
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtCore import QThread, QTimer
+from PySide6.QtWidgets import QApplication
 
 from app.events.bus import EventBus
 from app.events.qt_bridge import QtEventBridge
@@ -22,7 +22,7 @@ class TestQtEventBridge:
 
     def test_publish_from_worker_thread_dispatches_to_main(self, qtbot):
         """When called from a QThread, the handler runs on the main thread
-        via QTimer.singleShot queued dispatch."""
+        via a queued Qt connection."""
         bus = EventBus()
         bridge = QtEventBridge(bus)
         received = []

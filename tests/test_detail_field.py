@@ -1,5 +1,5 @@
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLineEdit, QToolButton
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLineEdit, QToolButton
 
 from app.ui.widgets.detail_field import DetailFieldContainer
 

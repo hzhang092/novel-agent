@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QComboBox, QHBoxLayout, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget
 
 from app.domain.character_element_relation_catalog import relation_definition
 from app.storage.bible_models import BibleElement
@@ -11,7 +11,7 @@ from app.storage.models import CharacterElementRelation, CharacterElementRelatio
 
 
 class CharacterElementRelationEditor(QWidget):
-    changed = pyqtSignal()
+    changed = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -58,9 +58,7 @@ class CharacterElementRelationEditor(QWidget):
         return [relation.model_copy(deep=True) for relation in self._relations]
 
     def _refresh_targets(self) -> None:
-        kind = self._kind.currentData()
-        if not isinstance(kind, CharacterElementRelationKind):
-            return
+        kind = CharacterElementRelationKind(self._kind.currentData())
         allowed = relation_definition(kind).allowed_target_types
         self._target.clear()
         for element in self._elements:
@@ -68,8 +66,8 @@ class CharacterElementRelationEditor(QWidget):
                 self._target.addItem(element.name, element.id)
 
     def _add_relation(self) -> None:
-        kind, target = self._kind.currentData(), self._target.currentData()
-        if not isinstance(kind, CharacterElementRelationKind) or not isinstance(target, str):
+        kind, target = CharacterElementRelationKind(self._kind.currentData()), self._target.currentData()
+        if not isinstance(target, str):
             return
         relation = CharacterElementRelation(kind=kind, target_element_id=target, note=self._note.text())
         if any((item.kind, item.target_element_id) == (kind, target) for item in self._relations):
@@ -80,8 +78,8 @@ class CharacterElementRelationEditor(QWidget):
 
     def _update_relation(self) -> None:
         row = self._list.currentRow()
-        kind, target = self._kind.currentData(), self._target.currentData()
-        if row < 0 or not isinstance(kind, CharacterElementRelationKind) or not isinstance(target, str):
+        kind, target = CharacterElementRelationKind(self._kind.currentData()), self._target.currentData()
+        if row < 0 or not isinstance(target, str):
             return
         if any(index != row and (item.kind, item.target_element_id) == (kind, target) for index, item in enumerate(self._relations)):
             return

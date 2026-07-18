@@ -80,8 +80,8 @@ def test_bible_save_all_writes_only_dirty_sections(tmp_path, qtbot, monkeypatch)
 
 
 def test_template_fill_empty_uses_current_form_without_saving(tmp_path, qtbot):
-    from PyQt6.QtCore import QTimer
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication
     from app.ui.bible_editor import BibleEditorView
     from app.ui.template_apply_dialog import TemplateApplyDialog
 
@@ -111,8 +111,8 @@ def test_template_fill_empty_uses_current_form_without_saving(tmp_path, qtbot):
 
 
 def test_cancelled_template_application_changes_nothing(tmp_path, qtbot):
-    from PyQt6.QtCore import QTimer
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication
     from app.ui.bible_editor import BibleEditorView
     from app.ui.template_apply_dialog import TemplateApplyDialog
 
@@ -139,8 +139,8 @@ def test_cancelled_template_application_changes_nothing(tmp_path, qtbot):
 
 
 def test_replace_template_requires_explicit_confirmation(tmp_path, qtbot, monkeypatch):
-    from PyQt6.QtCore import QTimer
-    from PyQt6.QtWidgets import QApplication, QMessageBox
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication, QMessageBox
     from app.ui.bible_editor import BibleEditorView
     from app.ui.template_apply_dialog import TemplateApplyDialog
 

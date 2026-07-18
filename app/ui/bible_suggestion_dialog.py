@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 
 from pydantic import TypeAdapter, ValidationError
-from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
@@ -37,7 +37,7 @@ from app.storage.models import CharacterElementRelationKind
 class BibleSuggestionDialog(QDialog):
     """Edits proposals in memory; persistence remains the caller's job."""
 
-    proposals_accepted = pyqtSignal(list)
+    proposals_accepted = Signal(list)
 
     def __init__(self, proposals: list[BibleSuggestion], existing_elements=(), parent=None):
         super().__init__(parent)

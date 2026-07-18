@@ -1,7 +1,7 @@
 """Reusable editor widgets shared across UI modules."""
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QHBoxLayout,
@@ -23,7 +23,7 @@ from app.ui.widgets.searchable_add_menu import AddMenuItem, SearchableAddMenu
 class StringListEditor(QWidget):
     """Editable list of strings with add/remove buttons."""
 
-    changed = pyqtSignal()
+    changed = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -97,7 +97,7 @@ class StringListEditor(QWidget):
 class KeyValueTable(QWidget):
     """Editable key-value table with add/remove row buttons."""
 
-    changed = pyqtSignal()
+    changed = Signal()
 
     def __init__(self, headers: list[str], parent: QWidget | None = None) -> None:
         super().__init__(parent)

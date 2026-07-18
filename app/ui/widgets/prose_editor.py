@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QShortcut, QKeySequence
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QShortcut, QKeySequence
+from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QPushButton,
@@ -25,8 +25,8 @@ class ProseEditorWidget(QWidget):
     Preview mode: QTextBrowser rendering Markdown as styled HTML.
     """
 
-    version_selected = pyqtSignal(str)
-    set_active_requested = pyqtSignal(str)
+    version_selected = Signal(str)
+    set_active_requested = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)

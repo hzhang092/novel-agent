@@ -26,7 +26,7 @@ def test_history_widget_creation(qtbot):
 
 
 def test_history_labels_initial_event_as_story_start(qtbot):
-    from PyQt6.QtWidgets import QLabel
+    from PySide6.QtWidgets import QLabel
     from app.ui.widgets.character_history import CharacterHistoryWidget
 
     widget = CharacterHistoryWidget()

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from PyQt6.QtCore import QSignalBlocker, pyqtSignal
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QSignalBlocker, Signal
+from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMessageBox, QPushButton, QTextEdit, QVBoxLayout, QWidget,
 )
@@ -16,8 +16,8 @@ from app.storage.models import CharacterCustomField, CharacterCustomFieldType
 class CustomCharacterFieldEditor(QWidget):
     """Edit a compact list of custom fields; values remain model-owned."""
 
-    changed = pyqtSignal()
-    visibility_changed = pyqtSignal()
+    changed = Signal()
+    visibility_changed = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -102,9 +102,7 @@ class CustomCharacterFieldEditor(QWidget):
         return [line.strip() for line in text.splitlines() if line.strip()] if value_type == CharacterCustomFieldType.STRING_LIST else text
 
     def _editor_field(self, existing: CharacterCustomField | None = None) -> CharacterCustomField | None:
-        value_type = self._type.currentData()
-        if not isinstance(value_type, CharacterCustomFieldType):
-            return None
+        value_type = CharacterCustomFieldType(self._type.currentData())
         try:
             return CharacterCustomField(
                 id=existing.id if existing else str(uuid4()),
@@ -201,8 +199,8 @@ class CustomCharacterFieldEditor(QWidget):
         if row < 0 or row >= len(self._fields):
             return
         field = self._fields[row]
-        value_type = self._type.currentData()
-        if not isinstance(value_type, CharacterCustomFieldType) or value_type == field.value_type:
+        value_type = CharacterCustomFieldType(self._type.currentData())
+        if value_type == field.value_type:
             return
         populated = bool(field.value)
         if populated and QMessageBox.question(self, "转换字段类型", "转换类型会按行保留当前内容，是否继续？") != QMessageBox.StandardButton.Yes:

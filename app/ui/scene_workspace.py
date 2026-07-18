@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -31,10 +31,10 @@ class SceneWorkspaceView(QWidget):
     Emits ``generate_requested`` when the user clicks Generate or presses Enter.
     """
 
-    generate_requested = pyqtSignal(str)  # emits scene_id
-    retry_requested = pyqtSignal(str)  # emits agent_name
-    next_scene_requested = pyqtSignal()  # emits when user clicks Next Scene
-    continue_review_requested = pyqtSignal()
+    generate_requested = Signal(str)  # emits scene_id
+    retry_requested = Signal(str)  # emits agent_name
+    next_scene_requested = Signal()  # emits when user clicks Next Scene
+    continue_review_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)

@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import os
 import sys
 
+os.environ["QT_API"] = "pyside6"
+
 import qasync
-from PyQt6.QtCore import QCoreApplication
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtCore import QCoreApplication
+from PySide6.QtWidgets import QApplication
 
 from app.ui.main_window import MainWindow
 

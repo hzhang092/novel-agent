@@ -102,7 +102,7 @@ def test_unknown_character_layout_ids_are_logged_and_pruned(tmp_path, qtbot, cap
 def test_hiding_populated_detail_preserves_value_and_story_dirty_state(
     tmp_path, qtbot
 ):
-    from PyQt6.QtWidgets import QToolButton
+    from PySide6.QtWidgets import QToolButton
     from app.storage.project_files import save_character
     from app.ui.character_editor import CharacterEditorView
 
@@ -226,7 +226,7 @@ def test_uncustomized_draft_recalculates_visible_fields_when_tier_changes(
 def test_add_detail_reveals_and_focuses_existing_editor_without_story_change(
     tmp_path, qtbot
 ):
-    from PyQt6.QtCore import Qt
+    from PySide6.QtCore import Qt
     from app.ui.character_editor import CharacterEditorView
 
     editor = CharacterEditorView()
@@ -296,7 +296,7 @@ def test_existing_tier_change_preserves_fields_and_can_add_recommendations(
 def test_reset_visible_fields_keeps_defaults_and_populated_details(
     tmp_path, qtbot, monkeypatch
 ):
-    from PyQt6.QtWidgets import QMessageBox
+    from PySide6.QtWidgets import QMessageBox
     from app.storage.project_files import save_character
     from app.ui.character_editor import CharacterEditorView
 
@@ -349,7 +349,7 @@ def test_character_definition_dirty_state_is_semantic(tmp_path, qtbot):
 
 
 def test_character_list_detail_participates_in_semantic_dirty_state(tmp_path, qtbot):
-    from PyQt6.QtWidgets import QListWidget
+    from PySide6.QtWidgets import QListWidget
     from app.ui.character_editor import CharacterEditorView
 
     editor = CharacterEditorView()
@@ -382,7 +382,7 @@ def test_definition_save_clears_dirty_without_state_event(tmp_path, qtbot):
 
 
 def test_failed_definition_save_keeps_dirty_state(tmp_path, qtbot, monkeypatch):
-    from PyQt6.QtWidgets import QMessageBox
+    from PySide6.QtWidgets import QMessageBox
     from app.ui.character_editor import CharacterEditorView
 
     editor = CharacterEditorView()
@@ -400,7 +400,7 @@ def test_failed_definition_save_keeps_dirty_state(tmp_path, qtbot, monkeypatch):
 
 
 def test_saving_new_character_creates_initial_state(tmp_path, qtbot):
-    from PyQt6.QtCore import Qt
+    from PySide6.QtCore import Qt
     from app.ui.character_editor import CharacterEditorView
 
     proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
@@ -417,8 +417,8 @@ def test_saving_new_character_creates_initial_state(tmp_path, qtbot):
 
 
 def test_failed_save_prevents_character_switch(tmp_path, qtbot, monkeypatch):
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtWidgets import QMessageBox
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QMessageBox
     from app.ui.character_editor import CharacterEditorView
 
     proj_dir = _project_with_character(tmp_path)
@@ -446,8 +446,8 @@ def test_failed_save_prevents_character_switch(tmp_path, qtbot, monkeypatch):
 
 
 def test_cancel_character_switch_keeps_unsaved_edit(tmp_path, qtbot, monkeypatch):
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtWidgets import QMessageBox
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QMessageBox
     from app.ui.character_editor import CharacterEditorView
 
     proj_dir = _project_with_character(tmp_path)
@@ -470,7 +470,7 @@ def test_cancel_character_switch_keeps_unsaved_edit(tmp_path, qtbot, monkeypatch
 
 
 def test_discard_character_switch_restores_saved_definition(tmp_path, qtbot, monkeypatch):
-    from PyQt6.QtWidgets import QMessageBox
+    from PySide6.QtWidgets import QMessageBox
     from app.ui.character_editor import CharacterEditorView
 
     proj_dir = _project_with_character(tmp_path)
@@ -493,7 +493,7 @@ def test_discard_character_switch_restores_saved_definition(tmp_path, qtbot, mon
 
 
 def test_save_character_switch_persists_definition(tmp_path, qtbot, monkeypatch):
-    from PyQt6.QtWidgets import QMessageBox
+    from PySide6.QtWidgets import QMessageBox
     from app.ui.character_editor import CharacterEditorView
 
     proj_dir = _project_with_character(tmp_path)
@@ -516,8 +516,8 @@ def test_save_character_switch_persists_definition(tmp_path, qtbot, monkeypatch)
 
 
 def test_discard_new_character_removes_draft_without_files(tmp_path, qtbot, monkeypatch):
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtWidgets import QMessageBox
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QMessageBox
     from app.ui.character_editor import CharacterEditorView
 
     proj_dir = _project_with_character(tmp_path)
@@ -544,8 +544,8 @@ def test_discard_new_character_removes_draft_without_files(tmp_path, qtbot, monk
 def test_cancel_add_while_current_character_is_dirty_keeps_current_form(
     tmp_path, qtbot, monkeypatch
 ):
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtWidgets import QMessageBox
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QMessageBox
     from app.ui.character_editor import CharacterEditorView
 
     editor = CharacterEditorView()
@@ -568,7 +568,7 @@ def test_cancel_add_while_current_character_is_dirty_keeps_current_form(
 def test_dirty_character_delete_confirmation_mentions_unsaved_changes(
     tmp_path, qtbot, monkeypatch
 ):
-    from PyQt6.QtWidgets import QMessageBox
+    from PySide6.QtWidgets import QMessageBox
     from app.ui.character_editor import CharacterEditorView
 
     editor = CharacterEditorView()
@@ -592,7 +592,7 @@ def test_dirty_character_delete_confirmation_mentions_unsaved_changes(
 def test_successful_character_delete_removes_layout_entry(
     tmp_path, qtbot, monkeypatch
 ):
-    from PyQt6.QtWidgets import QMessageBox
+    from PySide6.QtWidgets import QMessageBox
     from app.ui.character_editor import CharacterEditorView
 
     proj_dir = _project_with_character(tmp_path)
@@ -615,7 +615,7 @@ def test_successful_character_delete_removes_layout_entry(
 def test_character_delete_confirmation_lists_impacted_scenes(
     tmp_path, qtbot, monkeypatch
 ):
-    from PyQt6.QtWidgets import QMessageBox
+    from PySide6.QtWidgets import QMessageBox
     from app.storage.models import ChapterOutline, SceneOutline, VolumeOutline
     from app.storage.project_files import save_volume_outline
     from app.ui.character_editor import CharacterEditorView
@@ -658,7 +658,7 @@ def test_character_delete_confirmation_lists_impacted_scenes(
 
 
 def test_current_state_view_is_read_only(tmp_path, qtbot):
-    from PyQt6.QtWidgets import QPushButton
+    from PySide6.QtWidgets import QPushButton
     from app.ui.character_editor import CharacterEditorView
 
     editor = CharacterEditorView()
@@ -687,8 +687,8 @@ def test_current_state_view_is_read_only(tmp_path, qtbot):
 def test_manual_state_override_appends_event_for_active_scene(
     tmp_path, qtbot, monkeypatch
 ):
-    from PyQt6.QtCore import QTimer
-    from PyQt6.QtWidgets import QApplication, QLineEdit, QMessageBox
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication, QLineEdit, QMessageBox
     from app.storage.character_events import load_events
     from app.ui.character_editor import CharacterEditorView
     from app.ui.character_state_edit_dialog import CharacterStateEditDialog
@@ -723,8 +723,8 @@ def test_manual_state_override_appends_event_for_active_scene(
 
 
 def test_noop_manual_state_override_appends_no_event(tmp_path, qtbot, monkeypatch):
-    from PyQt6.QtCore import QTimer
-    from PyQt6.QtWidgets import QApplication, QMessageBox
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication, QMessageBox
     from app.storage.character_events import load_events
     from app.ui.character_editor import CharacterEditorView
     from app.ui.character_state_edit_dialog import CharacterStateEditDialog
@@ -753,8 +753,8 @@ def test_noop_manual_state_override_appends_no_event(tmp_path, qtbot, monkeypatc
 
 
 def test_stale_manual_state_override_is_rejected(tmp_path, qtbot, monkeypatch):
-    from PyQt6.QtCore import QTimer
-    from PyQt6.QtWidgets import QApplication, QLineEdit, QMessageBox
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication, QLineEdit, QMessageBox
     from app.storage.character_events import load_events
     from app.storage.state_repository import commit_character_state_edit
     from app.ui.character_editor import CharacterEditorView
@@ -908,7 +908,7 @@ def test_story_connection_filters_targets_and_persists_stable_id(tmp_path, qtbot
 def test_custom_field_type_conversion_requires_confirmation_and_is_predictable(
     tmp_path, qtbot, monkeypatch
 ):
-    from PyQt6.QtWidgets import QMessageBox
+    from PySide6.QtWidgets import QMessageBox
     from app.storage.models import CharacterCustomField, CharacterCustomFieldType
     from app.ui.character_editor import CharacterEditorView
 

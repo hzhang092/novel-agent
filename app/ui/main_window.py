@@ -8,15 +8,16 @@ import os
 from pathlib import Path
 import tempfile
 
-from PyQt6.QtCore import QSignalBlocker, Qt, QUrl
-from PyQt6.QtGui import QAction, QDesktopServices
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QSignalBlocker, Qt, QUrl
+from PySide6.QtGui import QAction, QDesktopServices
+from PySide6.QtWidgets import (
     QFileDialog,
     QLabel,
     QHBoxLayout,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QSplitter,
     QStackedWidget,
@@ -80,7 +81,9 @@ class MainWindow(QMainWindow):
     def _setup_menu(self) -> None:
         menubar = self.menuBar()
 
-        file_menu = menubar.addMenu("文件(&F)")
+        self._file_menu = QMenu("文件(&F)", menubar)
+        menubar.addMenu(self._file_menu)
+        file_menu = self._file_menu
 
         new_action = QAction("新建项目(&N)", self)
         new_action.triggered.connect(self._on_new_project)
@@ -404,7 +407,7 @@ class MainWindow(QMainWindow):
                     pass
                 workspace.next_scene_requested.connect(self._on_next_scene)
 
-        from PyQt6.QtCore import QSettings
+        from PySide6.QtCore import QSettings
         settings = QSettings()
         key = f"last_scene/{Path(dir_path)}"
         last_scene_id = settings.value(key)
@@ -524,7 +527,7 @@ class MainWindow(QMainWindow):
         chapter_id = self._find_chapter_for_scene(scene_id)
         workspace.set_scene(scene_id, chapter_id or "")
 
-        from PyQt6.QtCore import QSettings
+        from PySide6.QtCore import QSettings
         settings = QSettings()
         if self._current_project_dir is not None:
             key = f"last_scene/{self._current_project_dir}"

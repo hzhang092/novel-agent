@@ -1,6 +1,6 @@
 """Options for applying a Story Template to the current form."""
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,

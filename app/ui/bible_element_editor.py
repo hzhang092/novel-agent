@@ -2,8 +2,8 @@
 
 from collections import Counter
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QHBoxLayout,
@@ -48,10 +48,10 @@ def _semantic_data(element: BibleElementBase) -> dict:
 
 
 class BibleElementEditor(QWidget):
-    dirty_changed = pyqtSignal(bool)
-    changed = pyqtSignal()
-    element_requested = pyqtSignal(str)
-    character_requested = pyqtSignal(str)
+    dirty_changed = Signal(bool)
+    changed = Signal()
+    element_requested = Signal(str)
+    character_requested = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)

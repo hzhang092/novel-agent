@@ -1,0 +1,16 @@
+name: fourteen
+channels:
+  - conda-forge
+dependencies:
+  - python=3.14
+  - pyside6=6.10
+  - pydantic>=2.7
+  - pyyaml>=6.0
+  - qasync>=0.27
+  - pytest>=8.2
+  - pytest-asyncio>=0.23
+  - pytest-qt
+  - pip
+
+# Install this project without letting pip replace conda's Qt stack:
+# python -m pip install -e . --no-deps

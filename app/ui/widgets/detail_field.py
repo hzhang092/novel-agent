@@ -1,11 +1,11 @@
 """Presentation wrapper for an existing story Detail Field editor."""
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QToolButton, QVBoxLayout, QWidget
 
 
 class DetailFieldContainer(QWidget):
-    hide_requested = pyqtSignal(str)
+    hide_requested = Signal(str)
 
     def __init__(
         self,

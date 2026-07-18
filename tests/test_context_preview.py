@@ -1,7 +1,7 @@
 """Tests for the Context Preview panel widget."""
 import pytest
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication
 
 from app.ui.context_preview import ContextPreviewView
 

@@ -1,5 +1,5 @@
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLineEdit, QPushButton, QTreeWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLineEdit, QPushButton, QTreeWidget
 
 from app.ui.widgets.searchable_add_menu import AddMenuItem, SearchableAddMenu
 

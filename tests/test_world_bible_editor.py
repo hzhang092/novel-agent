@@ -66,8 +66,8 @@ def test_world_editor_loads_pinned_overview_and_typed_elements(tmp_path, qtbot):
 
 
 def test_add_element_is_an_unsaved_in_memory_draft_until_saved(tmp_path, qtbot):
-    from PyQt6.QtCore import QTimer
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication
     from app.ui.bible_element_dialog import BibleElementDialog
 
     project_dir = create_project(tmp_path, Project(title="Story", genre="Fantasy"))
@@ -107,7 +107,7 @@ def test_add_element_is_an_unsaved_in_memory_draft_until_saved(tmp_path, qtbot):
 def test_failed_migration_clears_previous_project_state_and_cannot_save_it(
     tmp_path, qtbot, monkeypatch
 ):
-    from PyQt6.QtWidgets import QMessageBox
+    from PySide6.QtWidgets import QMessageBox
     from app.storage.bible_repository import WorldBibleService
 
     first_dir = create_project(
@@ -389,7 +389,7 @@ def test_suggest_menu_offers_all_phase4_text_sources(qtbot):
 async def test_rejected_ai_review_writes_nothing_and_closes_provider(
     tmp_path, qtbot, monkeypatch
 ):
-    from PyQt6.QtWidgets import QDialog
+    from PySide6.QtWidgets import QDialog
     from app.ui.bible_suggestion_dialog import BibleSuggestionDialog
 
     class ClosingProvider(MockProvider):
@@ -427,7 +427,7 @@ async def test_rejected_ai_review_writes_nothing_and_closes_provider(
 async def test_accepted_ai_review_applies_selected_suggestions(
     tmp_path, qtbot, monkeypatch
 ):
-    from PyQt6.QtWidgets import QDialog
+    from PySide6.QtWidgets import QDialog
     from app.ui.bible_suggestion_dialog import BibleSuggestionDialog
 
     project_dir = create_project(tmp_path, Project(title="Story", genre="Fantasy"))

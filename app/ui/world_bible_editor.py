@@ -6,8 +6,8 @@ import asyncio
 import logging
 from pathlib import Path
 
-from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QSignalBlocker, Qt, Signal
+from PySide6.QtWidgets import (
     QHBoxLayout,
     QApplication,
     QDialog,
@@ -48,13 +48,13 @@ logger = logging.getLogger(__name__)
 
 
 class WorldBibleEditorView(QWidget):
-    dirty_changed = pyqtSignal(bool)
-    content_changed = pyqtSignal()
-    element_saved = pyqtSignal(str)
-    element_deleted = pyqtSignal(str)
-    elements_changed = pyqtSignal()
-    character_requested = pyqtSignal(str)
-    scene_requested = pyqtSignal(str)
+    dirty_changed = Signal(bool)
+    content_changed = Signal()
+    element_saved = Signal(str)
+    element_deleted = Signal(str)
+    elements_changed = Signal()
+    character_requested = Signal(str)
+    scene_requested = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)

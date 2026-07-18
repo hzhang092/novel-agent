@@ -6,8 +6,8 @@ as a collapsible tree. Each node shows status icon, name, duration, token count.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -33,7 +33,7 @@ class AgentTracePanel(QWidget):
     Emits ``retry_requested`` when a user clicks the retry button on a failed agent.
     """
 
-    retry_requested = pyqtSignal(str)  # emits agent_name
+    retry_requested = Signal(str)  # emits agent_name
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -189,7 +189,7 @@ class AgentTracePanel(QWidget):
         error_data = item.data(0, Qt.ItemDataRole.UserRole + 1)
         if error_data is None:
             return
-        from PyQt6.QtWidgets import QMenu
+        from PySide6.QtWidgets import QMenu
         menu = QMenu(self)
         retry_action = menu.addAction("Retry this step")
         action = menu.exec(self._tree.viewport().mapToGlobal(pos))

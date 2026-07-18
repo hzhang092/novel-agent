@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 import yaml
-from PyQt6.QtCore import QTimer
+from PySide6.QtCore import QTimer
 from pydantic import BaseModel, Field, ValidationError
 
 

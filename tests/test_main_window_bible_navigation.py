@@ -1,7 +1,7 @@
 import pytest
 
-from PyQt6.QtGui import QCloseEvent
-from PyQt6.QtWidgets import QMessageBox
+from PySide6.QtGui import QCloseEvent
+from PySide6.QtWidgets import QMessageBox
 
 from app.storage.bible_models import FactionElement
 from app.storage.bible_repository import BibleElementRepository

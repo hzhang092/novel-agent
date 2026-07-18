@@ -1,5 +1,5 @@
-from PyQt6.QtTest import QSignalSpy
-from PyQt6.QtWidgets import QAbstractItemView, QListWidget, QPushButton, QTableWidget
+from PySide6.QtTest import QSignalSpy
+from PySide6.QtWidgets import QAbstractItemView, QListWidget, QPushButton, QTableWidget
 
 from app.ui.widgets import KeyValueTable, StringListEditor
 
@@ -10,10 +10,10 @@ def test_string_list_reports_edits_but_not_population(qtbot):
     changes = QSignalSpy(editor.changed)
 
     editor.set_items(["before"])
-    assert len(changes) == 0
+    assert changes.count() == 0
 
     editor.findChild(QListWidget).item(0).setText("after")
-    assert len(changes) == 1
+    assert changes.count() == 1
 
 
 def test_string_list_reports_add_and_remove_once(qtbot):
@@ -23,11 +23,11 @@ def test_string_list_reports_add_and_remove_once(qtbot):
     buttons = editor.findChildren(QPushButton)
 
     buttons[0].click()
-    assert len(changes) == 1
+    assert changes.count() == 1
 
     editor.findChild(QListWidget).item(0).setSelected(True)
     buttons[1].click()
-    assert len(changes) == 2
+    assert changes.count() == 2
 
 
 def test_string_list_read_only_keeps_selection_but_blocks_changes(qtbot):
@@ -49,10 +49,10 @@ def test_key_value_table_reports_edits_but_not_population(qtbot):
     changes = QSignalSpy(editor.changed)
 
     editor.set_rows([["before", "value"]])
-    assert len(changes) == 0
+    assert changes.count() == 0
 
     editor.findChild(QTableWidget).item(0, 0).setText("after")
-    assert len(changes) == 1
+    assert changes.count() == 1
 
 
 def test_key_value_table_reports_add_and_remove_once(qtbot):
@@ -62,11 +62,11 @@ def test_key_value_table_reports_add_and_remove_once(qtbot):
     buttons = editor.findChildren(QPushButton)
 
     buttons[0].click()
-    assert len(changes) == 1
+    assert changes.count() == 1
 
     editor.findChild(QTableWidget).selectRow(0)
     buttons[1].click()
-    assert len(changes) == 2
+    assert changes.count() == 2
 
 
 def test_key_value_table_read_only_keeps_selection_but_blocks_changes(qtbot):

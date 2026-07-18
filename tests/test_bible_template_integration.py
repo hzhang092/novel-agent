@@ -1,5 +1,5 @@
-from PyQt6.QtCore import QTimer
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from app.storage.bible_models import FactionElement, WorldOverview
 from app.storage.bible_repository import WorldBibleService

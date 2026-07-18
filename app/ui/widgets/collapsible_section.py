@@ -1,8 +1,8 @@
 """Reusable collapsible editor section."""
 
-from PyQt6.QtCore import Qt, QSignalBlocker, pyqtSignal
-from PyQt6.QtGui import QKeyEvent
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, QSignalBlocker, Signal
+from PySide6.QtGui import QKeyEvent
+from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -21,8 +21,8 @@ class _HeaderButton(QPushButton):
 
 
 class CollapsibleSection(QWidget):
-    expanded_changed = pyqtSignal(bool)
-    hide_requested = pyqtSignal()
+    expanded_changed = Signal(bool)
+    hide_requested = Signal()
 
     def __init__(
         self,

@@ -1,9 +1,9 @@
 """Integration tests for OutlineEditorView widget."""
 import pytest
 import yaml
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import QApplication, QLabel
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QApplication, QLabel
 
 from app.storage.models import Project
 from app.storage.project_files import create_project

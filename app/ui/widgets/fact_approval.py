@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
     QHBoxLayout,
@@ -23,7 +23,7 @@ class FactApprovalPanel(QWidget):
     dicts, and approved state change dicts when the user confirms.
     """
 
-    approval_batch_approved = pyqtSignal(str, str, list, list)
+    approval_batch_approved = Signal(str, str, list, list)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)

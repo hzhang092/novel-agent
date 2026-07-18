@@ -18,7 +18,7 @@ def _get_default_config() -> ProviderConfig:
 
 def load_provider_config() -> ProviderConfig:
     """Load provider config from QSettings, falling back to defaults."""
-    from PyQt6.QtCore import QSettings
+    from PySide6.QtCore import QSettings
 
     settings = QSettings()
     raw = settings.value("providers/config")
@@ -43,7 +43,7 @@ def load_provider_config() -> ProviderConfig:
 
 def save_provider_config(config: ProviderConfig) -> None:
     """Persist non-secret config to QSettings and the API key to keyring."""
-    from PyQt6.QtCore import QSettings
+    from PySide6.QtCore import QSettings
 
     if config.deepseek_api_key:
         keyring.set_password(

@@ -1,6 +1,6 @@
 """Minimal dialog for creating an in-memory typed Bible Element draft."""
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,

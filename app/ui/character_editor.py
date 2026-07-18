@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
-from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QSignalBlocker, Qt, Signal
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import (
     QComboBox,
     QCheckBox,
     QDialog,
@@ -79,10 +79,10 @@ class CharacterEditorView(QWidget):
     handles its own persistence. Emits ``saved`` after successful writes.
     """
 
-    saved = pyqtSignal()
-    dirty_changed = pyqtSignal(bool)
-    characters_changed = pyqtSignal()
-    scene_requested = pyqtSignal(str)
+    saved = Signal()
+    dirty_changed = Signal(bool)
+    characters_changed = Signal()
+    scene_requested = Signal(str)
 
     def __init__(
         self,
@@ -547,10 +547,9 @@ class CharacterEditorView(QWidget):
         form.addRow(buttons)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
-        value_type = field_type.currentData()
         return (
             label.text(),
-            value_type if isinstance(value_type, CharacterCustomFieldType) else CharacterCustomFieldType.TEXT,
+            CharacterCustomFieldType(field_type.currentData()),
             include.isChecked(),
         )
 
@@ -584,9 +583,7 @@ class CharacterEditorView(QWidget):
     def _on_tier_changed(self) -> None:
         if self._populating or self._current_id is None or self._current_layout is None:
             return
-        tier = self._core_tier.currentData()
-        if not isinstance(tier, CharacterTier):
-            return
+        tier = CharacterTier(self._core_tier.currentData())
         if (
             self._current_id not in self._persisted_character_ids
             and not self._current_layout.visibility_customized
@@ -611,9 +608,7 @@ class CharacterEditorView(QWidget):
         self.characters_changed.emit()
 
     def _show_recommended_fields(self) -> None:
-        tier = self._core_tier.currentData()
-        if not isinstance(tier, CharacterTier):
-            return
+        tier = CharacterTier(self._core_tier.currentData())
         for field_id in default_character_fields(tier):
             self._set_detail_field_visible(field_id, True, persist=False)
         self._tier_suggestion.setVisible(False)
@@ -624,9 +619,7 @@ class CharacterEditorView(QWidget):
     def _reset_visible_fields(self) -> None:
         if self._current_id is None or self._current_layout is None:
             return
-        tier = self._core_tier.currentData()
-        if not isinstance(tier, CharacterTier):
-            return
+        tier = CharacterTier(self._core_tier.currentData())
         target = default_character_fields(tier) | populated_character_fields(
             self._gather_core(self._current_id)
         )
@@ -964,9 +957,7 @@ class CharacterEditorView(QWidget):
         self._presence_panel.set_usage(ElementUsageSummary(self._current_id, tuple(usages)))
 
     def _gather_core(self, char_id: str) -> CharacterCore:
-        tier = self._core_tier.currentData()
-        if not isinstance(tier, CharacterTier):
-            tier = CharacterTier.SUPPORTING
+        tier = CharacterTier(self._core_tier.currentData())
         stored = self._baseline_core or self._characters[char_id].core
 
         return CharacterCore(

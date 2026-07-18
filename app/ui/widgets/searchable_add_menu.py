@@ -2,8 +2,8 @@
 
 from dataclasses import dataclass
 
-from PyQt6.QtCore import QEvent, QPoint, Qt, pyqtSignal
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QEvent, QPoint, Qt, Signal
+from PySide6.QtWidgets import (
     QFrame,
     QLineEdit,
     QTreeWidget,
@@ -23,7 +23,7 @@ class AddMenuItem:
 
 
 class SearchableAddMenu(QFrame):
-    item_selected = pyqtSignal(str)
+    item_selected = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent, Qt.WindowType.Popup)

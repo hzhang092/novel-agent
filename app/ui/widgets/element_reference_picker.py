@@ -1,7 +1,7 @@
 """ID-backed multi-select picker for Story Bible elements."""
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QLineEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QLineEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
 from app.storage.bible_models import BibleElement, BibleElementType, normalize_text
 
@@ -16,7 +16,7 @@ _TYPE_DETAILS = {
 
 
 class ElementReferencePicker(QWidget):
-    changed = pyqtSignal()
+    changed = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)

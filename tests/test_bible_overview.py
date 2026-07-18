@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QLabel, QPushButton
+from PySide6.QtWidgets import QLabel, QPushButton
 
 from app.storage.models import (
     Character,

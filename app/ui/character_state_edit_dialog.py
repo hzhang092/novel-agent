@@ -1,6 +1,6 @@
 """Explicit editor for a Manual State Override."""
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,

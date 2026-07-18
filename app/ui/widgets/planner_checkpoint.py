@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import (
     QFrame,
     QFormLayout,
     QHBoxLayout,
@@ -24,8 +24,8 @@ class PlannerCheckpointWidget(QWidget):
     provides Approve / Regenerate buttons.
     """
 
-    approved = pyqtSignal(dict)
-    rejected = pyqtSignal()
+    approved = Signal(dict)
+    rejected = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)

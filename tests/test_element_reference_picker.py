@@ -1,4 +1,4 @@
-from PyQt6.QtCore import Qt
+from PySide6.QtCore import Qt
 
 from app.storage.bible_models import FactionElement, LocationElement
 from app.ui.widgets.element_reference_picker import ElementReferencePicker

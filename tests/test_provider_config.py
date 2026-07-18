@@ -150,7 +150,7 @@ class TestSecureConfigStorage:
         config = ProviderConfig(deepseek_api_key="sk-secret")
 
         with (
-            patch("PyQt6.QtCore.QSettings") as qsettings,
+            patch("PySide6.QtCore.QSettings") as qsettings,
             patch("app.providers.config.keyring.set_password") as set_password,
         ):
             save_provider_config(config)
@@ -161,7 +161,7 @@ class TestSecureConfigStorage:
 
     def test_load_migrates_legacy_api_key(self):
         with (
-            patch("PyQt6.QtCore.QSettings") as qsettings,
+            patch("PySide6.QtCore.QSettings") as qsettings,
             patch("app.providers.config.keyring.get_password", return_value=None),
             patch("app.providers.config.keyring.set_password") as set_password,
         ):
@@ -175,7 +175,7 @@ class TestSecureConfigStorage:
 
     def test_save_empty_key_removes_stored_credential(self):
         with (
-            patch("PyQt6.QtCore.QSettings"),
+            patch("PySide6.QtCore.QSettings"),
             patch("app.providers.config.keyring.delete_password") as delete_password,
         ):
             save_provider_config(ProviderConfig())
