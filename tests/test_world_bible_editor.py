@@ -65,9 +65,10 @@ def test_world_editor_loads_pinned_overview_and_typed_elements(tmp_path, qtbot):
     assert editor.is_dirty is False
 
 
-def test_add_element_is_an_unsaved_in_memory_draft_until_saved(tmp_path, qtbot):
-    from PySide6.QtCore import QTimer
-    from PySide6.QtWidgets import QApplication
+def test_add_element_is_an_unsaved_in_memory_draft_until_saved(
+    tmp_path, qtbot, monkeypatch
+):
+    from PySide6.QtWidgets import QDialog
     from app.ui.bible_element_dialog import BibleElementDialog
 
     project_dir = create_project(tmp_path, Project(title="Story", genre="Fantasy"))
@@ -81,13 +82,11 @@ def test_add_element_is_an_unsaved_in_memory_draft_until_saved(tmp_path, qtbot):
     editor.elements_changed.connect(lambda: changed.append(True))
     editor.element_saved.connect(saved.append)
 
-    def accept_dialog():
-        dialog = QApplication.activeModalWidget()
-        assert isinstance(dialog, BibleElementDialog)
+    def accept_dialog(dialog):
         dialog._name.setText("Jade Sect")
-        dialog.accept()
+        return QDialog.DialogCode.Accepted
 
-    QTimer.singleShot(0, accept_dialog)
+    monkeypatch.setattr(BibleElementDialog, "exec", accept_dialog)
     editor.open_add_element_dialog(BibleElementType.FACTION)
     draft_id = editor._current_id
 
