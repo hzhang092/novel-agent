@@ -87,6 +87,8 @@ class WorldBibleEditorView(QWidget):
 
     def load_project_dir(self, project_dir: Path) -> None:
         self._project_dir = Path(project_dir)
+        self._suggest_status.clear()
+        self._suggest_status.setVisible(False)
         if (
             self._layout_store is None
             or self._layout_store.project_dir != self._project_dir
@@ -120,6 +122,7 @@ class WorldBibleEditorView(QWidget):
             self._splitter.setEnabled(False)
             self.content_changed.emit()
             self._emit_dirty()
+            self._update_suggestion_actions()
             QMessageBox.warning(self, "World Bible migration failed", str(error))
             return
 
@@ -156,6 +159,7 @@ class WorldBibleEditorView(QWidget):
         if self._current_id != selected:
             self._select_item(selected)
         self._emit_dirty()
+        self._update_suggestion_actions()
 
     def save_all(self) -> bool:
         if self._snapshot_dirty:
@@ -302,6 +306,7 @@ class WorldBibleEditorView(QWidget):
 
     def set_current_scene_id(self, scene_id: str | None) -> None:
         self._current_scene_id = scene_id
+        self._update_suggestion_actions()
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -316,13 +321,17 @@ class WorldBibleEditorView(QWidget):
         left_layout = QVBoxLayout(left)
         self._element_list = BibleElementList()
         left_layout.addWidget(self._element_list)
+        action_area = QWidget()
+        action_layout = QHBoxLayout(action_area)
+        action_layout.setContentsMargins(0, 0, 0, 0)
         self._add_button = QPushButton("+ Add Element")
         self._add_button.clicked.connect(lambda: self.open_add_element_dialog())
-        left_layout.addWidget(self._add_button)
+        action_layout.addWidget(self._add_button)
         self._suggest_button = QToolButton()
         self._suggest_button.setText("Suggest from text")
         self._suggest_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._suggest_menu = QMenu(self._suggest_button)
+        self._suggest_actions = {}
         for label, source in (
             ("World Overview", "overview"),
             ("Current Story Element", "element"),
@@ -331,13 +340,16 @@ class WorldBibleEditorView(QWidget):
             ("Paste text", "paste"),
             ("Selected text", "selected"),
         ):
-            self._suggest_menu.addAction(
+            self._suggest_actions[source] = self._suggest_menu.addAction(
                 label, lambda _checked=False, key=source: self._queue_suggestion_source(key)
             )
+        self._suggest_menu.aboutToShow.connect(self._update_suggestion_actions)
         self._suggest_button.setMenu(self._suggest_menu)
-        left_layout.addWidget(self._suggest_button)
+        action_layout.addWidget(self._suggest_button)
+        left_layout.addWidget(action_area)
         self._suggest_status = QLabel()
         self._suggest_status.setWordWrap(True)
+        self._suggest_status.setVisible(False)
         left_layout.addWidget(self._suggest_status)
         self._cancel_suggest_button = QPushButton("Cancel extraction")
         self._cancel_suggest_button.setVisible(False)
@@ -466,6 +478,7 @@ class WorldBibleEditorView(QWidget):
         self._overview_dirty = self._gather_overview() != self._baseline_overview
         self.content_changed.emit()
         self._emit_dirty()
+        self._update_suggestion_actions()
 
     def _save_overview(self) -> bool:
         if not self._overview_dirty or self._service is None:
@@ -534,6 +547,7 @@ class WorldBibleEditorView(QWidget):
                     inbound_character_relations=self._character_inbound_relations(item_id),
                 )
                 self._refresh_usage(item_id)
+        self._update_suggestion_actions()
         if self._layout_store is not None:
             self._layout_store.layout.world.selected_item_id = item_id
             self._layout_store.schedule_save()
@@ -781,6 +795,26 @@ class WorldBibleEditorView(QWidget):
             return
         self._suggest_task = asyncio.ensure_future(self._run_suggestions(text))
 
+    def _update_suggestion_actions(self) -> None:
+        available = {
+            "overview": self._project_dir is not None,
+            "element": self._current_id not in (None, "overview"),
+            "scene_outline": bool(self._suggestion_source_text("scene_outline")),
+            "scene_prose": bool(self._suggestion_source_text("scene_prose")),
+            "paste": True,
+            "selected": bool(self._suggestion_source_text("selected")),
+        }
+        reasons = {
+            "overview": "Open a project first",
+            "element": "Select a Story Element first",
+            "scene_outline": "No current scene outline is available",
+            "scene_prose": "The current scene has no prose",
+            "selected": "Select text in an editor first",
+        }
+        for source, action in self._suggest_actions.items():
+            action.setEnabled(available[source])
+            action.setToolTip("" if available[source] else reasons.get(source, ""))
+
     def _suggestion_source_text(self, source: str) -> str:
         if source == "overview":
             return self._gather_overview().model_dump_json()
@@ -829,6 +863,7 @@ class WorldBibleEditorView(QWidget):
         self._suggest_button.setEnabled(False)
         self._cancel_suggest_button.setVisible(True)
         self._suggest_status.setText("Extracting suggestions…")
+        self._suggest_status.setVisible(True)
         try:
             characters = [
                 self._character_service.load(character_id)

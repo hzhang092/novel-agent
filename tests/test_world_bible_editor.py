@@ -385,6 +385,21 @@ def test_suggest_menu_offers_all_phase4_text_sources(qtbot):
     ]
 
 
+def test_suggest_menu_disables_unavailable_context_sources(qtbot):
+    editor = WorldBibleEditorView()
+    qtbot.addWidget(editor)
+
+    editor._update_suggestion_actions()
+
+    assert not editor._suggest_actions["overview"].isEnabled()
+    assert editor._suggest_actions["overview"].toolTip() == "Open a project first"
+    assert not editor._suggest_actions["element"].isEnabled()
+    assert not editor._suggest_actions["scene_outline"].isEnabled()
+    assert not editor._suggest_actions["scene_prose"].isEnabled()
+    assert editor._suggest_actions["paste"].isEnabled()
+    assert not editor._suggest_actions["selected"].isEnabled()
+
+
 @pytest.mark.asyncio
 async def test_rejected_ai_review_writes_nothing_and_closes_provider(
     tmp_path, qtbot, monkeypatch
