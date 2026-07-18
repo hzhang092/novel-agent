@@ -532,7 +532,7 @@ class BibleEditorView(QWidget):
             replaced = preview.elements_replaced
             unaffected = preview.unaffected_elements
             message = (
-                "World Overview:\n"
+                "世界概览：\n"
                 f"• {preview.overview_fields_replaced} fields replaced\n\n"
                 "Elements:\n"
                 f"• {replaced.get(BibleElementType.FACTION, 0)} factions replaced\n"

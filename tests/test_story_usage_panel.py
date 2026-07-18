@@ -31,9 +31,9 @@ def test_usage_panel_groups_scene_usage_and_emits_selected_scene(qtbot):
         panel._tree.topLevelItem(index).text(0)
         for index in range(panel._tree.topLevelItemCount())
     ]
-    assert groups == ["Explicit outline (1)", "Generation context (1)", "Mentioned in prose (1)"]
+    assert groups == ["场景大纲 (1)", "生成上下文 (1)", "正文提及 (1)"]
     generated = panel._tree.topLevelItem(1).child(0)
-    assert "revision changed (1 → 2)" in generated.text(0)
+    assert "修订已变化 (1 → 2)" in generated.text(0)
     assert "explicit scene reference" in generated.toolTip(0)
 
     panel._tree.setCurrentItem(generated)
@@ -58,7 +58,7 @@ def test_usage_panel_hides_and_restores_for_usage_transitions(qtbot):
 
 
 def test_panel_displays_character_location_and_inference_reason(qtbot):
-    panel = StoryUsagePanel(title="Scene presence")
+    panel = StoryUsagePanel(title="场景出场")
     qtbot.addWidget(panel)
     panel.set_usage(ElementUsageSummary("character-1", (
         SceneUsage(

@@ -324,21 +324,21 @@ class WorldBibleEditorView(QWidget):
         action_area = QWidget()
         action_layout = QHBoxLayout(action_area)
         action_layout.setContentsMargins(0, 0, 0, 0)
-        self._add_button = QPushButton("+ Add Element")
+        self._add_button = QPushButton("+ 添加元素")
         self._add_button.clicked.connect(lambda: self.open_add_element_dialog())
         action_layout.addWidget(self._add_button)
         self._suggest_button = QToolButton()
-        self._suggest_button.setText("Suggest from text")
+        self._suggest_button.setText("从文本建议")
         self._suggest_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._suggest_menu = QMenu(self._suggest_button)
         self._suggest_actions = {}
         for label, source in (
-            ("World Overview", "overview"),
-            ("Current Story Element", "element"),
-            ("Current Scene Outline", "scene_outline"),
-            ("Current Scene Prose", "scene_prose"),
-            ("Paste text", "paste"),
-            ("Selected text", "selected"),
+            ("世界概览", "overview"),
+            ("当前故事元素", "element"),
+            ("当前场景大纲", "scene_outline"),
+            ("当前场景正文", "scene_prose"),
+            ("粘贴文本", "paste"),
+            ("选中文本", "selected"),
         ):
             self._suggest_actions[source] = self._suggest_menu.addAction(
                 label, lambda _checked=False, key=source: self._queue_suggestion_source(key)
@@ -351,7 +351,7 @@ class WorldBibleEditorView(QWidget):
         self._suggest_status.setWordWrap(True)
         self._suggest_status.setVisible(False)
         left_layout.addWidget(self._suggest_status)
-        self._cancel_suggest_button = QPushButton("Cancel extraction")
+        self._cancel_suggest_button = QPushButton("取消提取")
         self._cancel_suggest_button.setVisible(False)
         self._cancel_suggest_button.clicked.connect(self._cancel_suggestions)
         left_layout.addWidget(self._cancel_suggest_button)
@@ -371,7 +371,7 @@ class WorldBibleEditorView(QWidget):
         scroll.setWidgetResizable(True)
         container = QWidget()
         form = QVBoxLayout(container)
-        form.addWidget(QLabel("<h2>World Overview</h2>"))
+        form.addWidget(QLabel("<h2>世界概览</h2>"))
         self._overview_geography = QTextEdit()
         self._overview_technology = QLineEdit()
         self._overview_society = QLineEdit()
@@ -385,9 +385,9 @@ class WorldBibleEditorView(QWidget):
         contents["geography"] = geography
         society = QWidget()
         society_layout = QVBoxLayout(society)
-        society_layout.addWidget(QLabel("Technology level"))
+        society_layout.addWidget(QLabel("科技水平"))
         society_layout.addWidget(self._overview_technology)
-        society_layout.addWidget(QLabel("Social structure"))
+        society_layout.addWidget(QLabel("社会结构"))
         society_layout.addWidget(self._overview_society)
         contents["society"] = society
         for section_id, widget in (
@@ -805,11 +805,11 @@ class WorldBibleEditorView(QWidget):
             "selected": bool(self._suggestion_source_text("selected")),
         }
         reasons = {
-            "overview": "Open a project first",
-            "element": "Select a Story Element first",
-            "scene_outline": "No current scene outline is available",
-            "scene_prose": "The current scene has no prose",
-            "selected": "Select text in an editor first",
+            "overview": "请先打开项目",
+            "element": "请先选择一个故事元素",
+            "scene_outline": "当前没有可用的场景大纲",
+            "scene_prose": "当前场景没有正文",
+            "selected": "请先在文本字段中选择内容",
         }
         for source, action in self._suggest_actions.items():
             action.setEnabled(available[source])
@@ -822,7 +822,7 @@ class WorldBibleEditorView(QWidget):
             return self._element_editor.gather_element().model_dump_json()
         if source == "paste":
             text, accepted = QInputDialog.getMultiLineText(
-                self, "Suggest from text", "Source text"
+                self, "从文本建议", "源文本"
             )
             return text.strip() if accepted else ""
         if source == "selected":
@@ -862,7 +862,7 @@ class WorldBibleEditorView(QWidget):
             provider = get_provider_for_step("bible_assistant", load_provider_config())
         self._suggest_button.setEnabled(False)
         self._cancel_suggest_button.setVisible(True)
-        self._suggest_status.setText("Extracting suggestions…")
+        self._suggest_status.setText("正在提取建议…")
         self._suggest_status.setVisible(True)
         try:
             characters = [
@@ -876,11 +876,11 @@ class WorldBibleEditorView(QWidget):
                 characters=characters,
             )
             if not proposals:
-                self._suggest_status.setText("No suggestions found")
+                self._suggest_status.setText("未找到建议")
                 return
             dialog = BibleSuggestionDialog(proposals, self._elements, self)
             if dialog.exec() != QDialog.DialogCode.Accepted:
-                self._suggest_status.setText("Suggestions cancelled")
+                self._suggest_status.setText("已取消建议")
                 return
             selected = dialog.selected_proposals()
             if selected:
@@ -893,11 +893,11 @@ class WorldBibleEditorView(QWidget):
                 self.load_project_dir(project_dir)
                 self.elements_changed.emit()
                 self.content_changed.emit()
-            self._suggest_status.setText(f"Applied {len(selected)} suggestions")
+            self._suggest_status.setText(f"已应用 {len(selected)} 条建议")
         except asyncio.CancelledError:
-            self._suggest_status.setText("Suggestions cancelled")
+            self._suggest_status.setText("已取消建议")
         except Exception as error:
-            self._suggest_status.setText("Suggestion extraction failed")
+            self._suggest_status.setText("建议提取失败")
             QMessageBox.warning(self, "Story Bible suggestions failed", str(error))
         finally:
             try:

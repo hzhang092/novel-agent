@@ -122,13 +122,13 @@ class BibleElementEditor(QWidget):
         self._tags = StringListEditor()
         self._importance = QSpinBox()
         self._importance.setRange(1, 5)
-        self._always_include = QCheckBox("Always include in generation context")
+        self._always_include = QCheckBox("始终加入生成上下文")
         for label, widget in (
-            ("Name", self._name),
-            ("Aliases", self._aliases),
-            ("Summary", self._summary),
-            ("Tags", self._tags),
-            ("Importance", self._importance),
+            ("名称", self._name),
+            ("别名", self._aliases),
+            ("摘要", self._summary),
+            ("标签", self._tags),
+            ("重要程度", self._importance),
         ):
             layout.addWidget(QLabel(label))
             layout.addWidget(widget)
@@ -138,19 +138,19 @@ class BibleElementEditor(QWidget):
         self._build_typed_pages()
         layout.addWidget(self._typed_stack)
 
-        layout.addWidget(QLabel("Relationships"))
+        layout.addWidget(QLabel("关系"))
         self._relations = QTableWidget(0, 3)
-        self._relations.setHorizontalHeaderLabels(["Kind", "Target", "Note"])
+        self._relations.setHorizontalHeaderLabels(["类型", "目标", "备注"])
         self._relations.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(self._relations)
         self._relation_preview = QLabel()
         self._relation_preview.setWordWrap(True)
         layout.addWidget(self._relation_preview)
         relation_buttons = QHBoxLayout()
-        self._add_relation = QPushButton("+ Add relationship")
+        self._add_relation = QPushButton("+ 添加关系")
         self._add_relation.clicked.connect(self._add_empty_relation)
         relation_buttons.addWidget(self._add_relation)
-        self._remove_relation = QPushButton("Remove")
+        self._remove_relation = QPushButton("移除关系")
         self._remove_relation.clicked.connect(self._remove_selected_relations)
         relation_buttons.addWidget(self._remove_relation)
         relation_buttons.addStretch()
@@ -159,7 +159,7 @@ class BibleElementEditor(QWidget):
         self._inbound_section = QWidget()
         inbound_layout = QVBoxLayout(self._inbound_section)
         inbound_layout.setContentsMargins(0, 0, 0, 0)
-        inbound_layout.addWidget(QLabel("Referenced by"))
+        inbound_layout.addWidget(QLabel("被以下元素引用"))
         self._inbound = QTreeWidget()
         self._inbound.setHeaderHidden(True)
         self._inbound.setMaximumHeight(100)
@@ -170,7 +170,7 @@ class BibleElementEditor(QWidget):
         self._connected_characters_section = QWidget()
         connected_layout = QVBoxLayout(self._connected_characters_section)
         connected_layout.setContentsMargins(0, 0, 0, 0)
-        connected_layout.addWidget(QLabel("Connected characters"))
+        connected_layout.addWidget(QLabel("关联角色"))
         self._connected_characters = QTreeWidget()
         self._connected_characters.setHeaderHidden(True)
         self._connected_characters.setMaximumHeight(100)
@@ -189,9 +189,9 @@ class BibleElementEditor(QWidget):
         self._add_page(
             BibleElementType.FACTION,
             (
-                ("Description", self._faction_description),
-                ("Goals", self._faction_goals),
-                ("Ideology", self._faction_ideology),
+                ("描述", self._faction_description),
+                ("目标", self._faction_goals),
+                ("理念", self._faction_ideology),
             ),
         )
 
@@ -201,9 +201,9 @@ class BibleElementEditor(QWidget):
         self._add_page(
             BibleElementType.TERMINOLOGY,
             (
-                ("Definition", self._term_definition),
-                ("Category", self._term_category),
-                ("Examples", self._term_examples),
+                ("定义", self._term_definition),
+                ("分类", self._term_category),
+                ("示例", self._term_examples),
             ),
         )
 
@@ -213,13 +213,13 @@ class BibleElementEditor(QWidget):
         self._add_page(
             BibleElementType.HISTORICAL_EVENT,
             (
-                ("Time", self._history_time),
-                ("Description", self._history_description),
-                ("Consequences", self._history_consequences),
+                ("时间", self._history_time),
+                ("描述", self._history_description),
+                ("影响", self._history_consequences),
             ),
         )
 
-        self._power_realms = KeyValueTable(["Realm", "Abilities (one per line)"])
+        self._power_realms = KeyValueTable(["境界", "能力（每行一个）"])
         self._power_limitations = StringListEditor()
         self._power_costs = StringListEditor()
         self._power_resources = StringListEditor()
@@ -227,11 +227,11 @@ class BibleElementEditor(QWidget):
         self._add_page(
             BibleElementType.POWER_SYSTEM,
             (
-                ("Realms", self._power_realms),
-                ("Limitations", self._power_limitations),
-                ("Costs", self._power_costs),
-                ("Rare resources", self._power_resources),
-                ("Forbidden methods", self._power_forbidden),
+                ("境界", self._power_realms),
+                ("限制", self._power_limitations),
+                ("代价", self._power_costs),
+                ("稀有资源", self._power_resources),
+                ("禁忌方法", self._power_forbidden),
             ),
         )
 
@@ -241,9 +241,9 @@ class BibleElementEditor(QWidget):
         self._add_page(
             BibleElementType.LOCATION,
             (
-                ("Description", self._location_description),
-                ("Atmosphere", self._location_atmosphere),
-                ("Notable features", self._location_features),
+                ("描述", self._location_description),
+                ("氛围", self._location_atmosphere),
+                ("显著特征", self._location_features),
             ),
         )
 
@@ -391,7 +391,7 @@ class BibleElementEditor(QWidget):
         target = QComboBox()
         target.setEditable(True)
         target.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        target.lineEdit().setPlaceholderText("Search by name, alias, or tag")
+        target.lineEdit().setPlaceholderText("按名称、别名或标签搜索")
         current_id = self._baseline.id if self._baseline else ""
         candidates = [element for element in self._elements if element.id != current_id]
         duplicates = Counter(

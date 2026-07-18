@@ -7,10 +7,10 @@ from app.domain.story_usage import ElementUsageSummary, SceneUsage, StoryUsageKi
 
 
 _GROUPS = (
-    (StoryUsageKind.EXPLICIT_OUTLINE, "Explicit outline"),
-    (StoryUsageKind.GENERATION_CONTEXT, "Generation context"),
-    (StoryUsageKind.PROSE_MENTION, "Mentioned in prose"),
-    (StoryUsageKind.CHARACTER_PRESENCE, "Character presence"),
+    (StoryUsageKind.EXPLICIT_OUTLINE, "场景大纲"),
+    (StoryUsageKind.GENERATION_CONTEXT, "生成上下文"),
+    (StoryUsageKind.PROSE_MENTION, "正文提及"),
+    (StoryUsageKind.CHARACTER_PRESENCE, "角色出场"),
 )
 
 
@@ -20,7 +20,7 @@ class StoryUsagePanel(QWidget):
     scene_requested = Signal(str)
 
     def __init__(
-        self, parent: QWidget | None = None, *, title: str = "Story usage"
+        self, parent: QWidget | None = None, *, title: str = "故事用法"
     ) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
@@ -62,7 +62,7 @@ class StoryUsagePanel(QWidget):
             and scene.generated_element_revision != scene.current_element_revision
         ):
             label += (
-                " · revision changed "
+                " · 修订已变化 "
                 f"({scene.generated_element_revision} → {scene.current_element_revision})"
             )
         return label
@@ -71,13 +71,13 @@ class StoryUsagePanel(QWidget):
     def _scene_details(scene: SceneUsage) -> str:
         details = []
         if scene.selection_reasons:
-            details.append("Selected because: " + ", ".join(
+            details.append("选中原因：" + ", ".join(
                 reason.replace("_", " ") for reason in scene.selection_reasons
             ))
         if scene.matched_alias:
-            details.append(f"Matched: {scene.matched_alias}")
+            details.append(f"匹配：{scene.matched_alias}")
         if scene.location_reason:
-            details.append(f"Location inferred because: {scene.location_reason}")
+            details.append(f"位置推断原因：{scene.location_reason}")
         return "\n".join(details)
 
     def _request_scene(self, item: QTreeWidgetItem, _column: int) -> None:

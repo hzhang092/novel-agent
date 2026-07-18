@@ -710,7 +710,7 @@ class CharacterEditorView(QWidget):
         self._saved_state_summary = QLabel()
         self._saved_state_summary.setStyleSheet("color: #777;")
         form.addWidget(self._saved_state_summary)
-        self._presence_panel = StoryUsagePanel(title="Scene presence")
+        self._presence_panel = StoryUsagePanel(title="场景出场")
         self._presence_panel.scene_requested.connect(self.scene_requested)
         form.addWidget(self._presence_panel)
 

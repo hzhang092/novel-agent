@@ -54,7 +54,7 @@ def test_world_editor_loads_pinned_overview_and_typed_elements(tmp_path, qtbot):
     qtbot.addWidget(editor)
     editor.load_project_dir(project_dir)
 
-    assert editor._element_list._tree.topLevelItem(0).text(0) == "World Overview"
+    assert editor._element_list._tree.topLevelItem(0).text(0) == "世界概览"
     assert editor._element_list.selected_element_id() == "overview"
     assert editor._overview_geography.toPlainText() == "Mountain continent"
     assert editor._overview_technology.text() == "Bronze age"
@@ -270,8 +270,8 @@ def test_world_element_shows_usage_and_requests_scene(tmp_path, qtbot):
     scene = group.child(0)
     editor._usage_panel._tree.itemActivated.emit(scene, 0)
 
-    assert group.text(0) == "Explicit outline (1)"
-    assert "1 uses" in editor._element_list._find_item("faction").text(0)
+    assert group.text(0) == "场景大纲 (1)"
+    assert "使用 1 次" in editor._element_list._find_item("faction").text(0)
     assert requested == ["scene"]
 
 
@@ -368,7 +368,7 @@ def test_save_refreshes_usage_revision_mismatch(tmp_path, qtbot):
     assert editor.save_current_element()
 
     generated = editor._usage_panel._tree.topLevelItem(1).child(0)
-    assert "revision changed (1 → 2)" in generated.text(0)
+    assert "修订已变化 (1 → 2)" in generated.text(0)
 
 
 def test_suggest_menu_offers_all_phase4_text_sources(qtbot):
@@ -376,12 +376,12 @@ def test_suggest_menu_offers_all_phase4_text_sources(qtbot):
     qtbot.addWidget(editor)
 
     assert [action.text() for action in editor._suggest_menu.actions()] == [
-        "World Overview",
-        "Current Story Element",
-        "Current Scene Outline",
-        "Current Scene Prose",
-        "Paste text",
-        "Selected text",
+        "世界概览",
+        "当前故事元素",
+        "当前场景大纲",
+        "当前场景正文",
+        "粘贴文本",
+        "选中文本",
     ]
 
 
@@ -392,7 +392,7 @@ def test_suggest_menu_disables_unavailable_context_sources(qtbot):
     editor._update_suggestion_actions()
 
     assert not editor._suggest_actions["overview"].isEnabled()
-    assert editor._suggest_actions["overview"].toolTip() == "Open a project first"
+    assert editor._suggest_actions["overview"].toolTip() == "请先打开项目"
     assert not editor._suggest_actions["element"].isEnabled()
     assert not editor._suggest_actions["scene_outline"].isEnabled()
     assert not editor._suggest_actions["scene_prose"].isEnabled()
@@ -468,7 +468,7 @@ async def test_accepted_ai_review_applies_selected_suggestions(
     assert [item.name for item in BibleElementRepository(project_dir).load_all()] == [
         "Jade Sect"
     ]
-    assert editor._suggest_status.text() == "Applied 1 suggestions"
+    assert editor._suggest_status.text() == "已应用 1 条建议"
 
 
 @pytest.mark.asyncio
@@ -503,4 +503,4 @@ async def test_cancel_ai_extraction_closes_provider_and_restores_controls(
     assert provider.closed is True
     assert editor._suggest_button.isEnabled()
     assert not editor._cancel_suggest_button.isVisible()
-    assert editor._suggest_status.text() == "Suggestions cancelled"
+    assert editor._suggest_status.text() == "已取消建议"

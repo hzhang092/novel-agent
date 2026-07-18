@@ -242,7 +242,7 @@ def test_empty_world_starts_on_pinned_overview(tmp_path, qtbot):
     editor.load_project_dir(proj_dir)
 
     assert editor._world_tab._element_list.selected_element_id() == "overview"
-    assert editor._world_tab._element_list._tree.topLevelItem(0).text(0) == "World Overview"
+    assert editor._world_tab._element_list._tree.topLevelItem(0).text(0) == "世界概览"
     assert editor.is_dirty is False
 
 

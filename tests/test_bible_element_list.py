@@ -22,15 +22,15 @@ def test_element_list_searches_filters_and_groups_with_counts(qtbot):
     )
 
     assert _group_labels(widget) == [
-        "World Overview", "Locations (1)", "Factions (2)", "Terminology (1)"
+        "世界概览", "地点 (1)", "势力 (2)", "术语 (1)"
     ]
 
     widget.set_query("剑宗")
-    assert _group_labels(widget) == ["World Overview", "Factions (1)"]
+    assert _group_labels(widget) == ["世界概览", "势力 (1)"]
     widget.set_query("")
     widget.set_type_filter("faction")
     widget.set_tag_filters(["正道"])
-    assert _group_labels(widget) == ["World Overview", "Factions (1)"]
+    assert _group_labels(widget) == ["世界概览", "势力 (1)"]
 
 
 def test_element_list_pins_overview_and_restores_collapsed_groups(qtbot):
@@ -67,7 +67,7 @@ def test_element_list_selects_by_id_and_marks_unsaved(qtbot):
     assert selected[-1] == "same-2"
     item = widget._tree.currentItem()
     assert item.text(0).startswith("* ")
-    assert "Location" in item.text(0)
+    assert "地点" in item.text(0)
 
 
 def test_element_list_filters_unused_elements_and_shows_usage_counts(qtbot):
@@ -81,11 +81,11 @@ def test_element_list_filters_unused_elements_and_shows_usage_counts(qtbot):
     widget.set_usage_counts({"used": 3, "unused": 0})
     widget.set_unused_only(True)
 
-    assert _group_labels(widget) == ["World Overview", "Factions (1)"]
+    assert _group_labels(widget) == ["世界概览", "势力 (1)"]
     item = widget._tree.topLevelItem(1).child(0)
     assert item.data(0, 0x0100) == "unused"
-    assert "0 uses" in item.text(0)
+    assert "使用 0 次" in item.text(0)
 
     widget.set_unused_only(False)
     widget.select_element("used")
-    assert "3 uses" in widget._tree.currentItem().text(0)
+    assert "使用 3 次" in widget._tree.currentItem().text(0)

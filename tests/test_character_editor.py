@@ -978,7 +978,7 @@ def test_character_presence_is_read_only_and_navigates_to_scene(tmp_path, qtbot)
 
     group = editor._presence_panel._tree.topLevelItem(0)
     assert not editor._presence_panel.isHidden()
-    assert group.text(0) == "Character presence (1)"
+    assert group.text(0) == "角色出场 (1)"
     assert "当前位置" in editor._saved_state_summary.text()
     with qtbot.waitSignal(editor.scene_requested) as signal:
         editor._presence_panel._request_scene(group.child(0), 0)

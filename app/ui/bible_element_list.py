@@ -8,11 +8,11 @@ from app.storage.bible_models import BibleElement, BibleElementType
 
 
 ELEMENT_TYPE_DETAILS = {
-    BibleElementType.LOCATION: ("Locations", "Location"),
-    BibleElementType.FACTION: ("Factions", "Faction"),
-    BibleElementType.HISTORICAL_EVENT: ("Historical Events", "Historical event"),
-    BibleElementType.POWER_SYSTEM: ("Power Systems", "Power system"),
-    BibleElementType.TERMINOLOGY: ("Terminology", "Terminology"),
+    BibleElementType.LOCATION: ("地点", "地点"),
+    BibleElementType.FACTION: ("势力", "势力"),
+    BibleElementType.HISTORICAL_EVENT: ("历史事件", "历史事件"),
+    BibleElementType.POWER_SYSTEM: ("力量体系", "力量体系"),
+    BibleElementType.TERMINOLOGY: ("术语", "术语"),
 }
 
 
@@ -34,30 +34,30 @@ class BibleElementList(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self._search = QLineEdit()
-        self._search.setPlaceholderText("Search elements...")
+        self._search.setPlaceholderText("搜索元素…")
         self._search.textChanged.connect(self._rebuild)
         layout.addWidget(self._search)
 
         self._type_filter = QComboBox()
-        self._type_filter.addItem("All types", "")
+        self._type_filter.addItem("全部类型", "")
         for element_type, (_group, label) in ELEMENT_TYPE_DETAILS.items():
             self._type_filter.addItem(label, element_type.value)
         self._type_filter.currentIndexChanged.connect(self._on_filters_changed)
         layout.addWidget(self._type_filter)
 
         self._tag_filter = QLineEdit()
-        self._tag_filter.setPlaceholderText("Filter tags (comma separated)")
+        self._tag_filter.setPlaceholderText("按标签筛选（逗号分隔）")
         self._tag_filter.textChanged.connect(self._on_filters_changed)
         layout.addWidget(self._tag_filter)
 
         self._scope_filter = QComboBox()
-        self._scope_filter.addItem("All elements", "")
-        self._scope_filter.addItem("Always included", "always")
-        self._scope_filter.addItem("Referenced by current scene", "referenced")
+        self._scope_filter.addItem("全部元素", "")
+        self._scope_filter.addItem("始终加入上下文", "always")
+        self._scope_filter.addItem("当前场景引用", "referenced")
         self._scope_filter.currentIndexChanged.connect(self._rebuild)
         layout.addWidget(self._scope_filter)
 
-        self._unused_filter = QCheckBox("Unused only")
+        self._unused_filter = QCheckBox("仅未使用")
         self._unused_filter.toggled.connect(self._rebuild)
         layout.addWidget(self._unused_filter)
 
@@ -158,7 +158,7 @@ class BibleElementList(QWidget):
         self._rebuilding = True
         try:
             self._tree.clear()
-            overview = QTreeWidgetItem(self._tree, ["World Overview"])
+            overview = QTreeWidgetItem(self._tree, ["世界概览"])
             overview.setData(0, Qt.ItemDataRole.UserRole, "overview")
             for element_type, (group_label, type_label) in ELEMENT_TYPE_DETAILS.items():
                 elements = [item for item in filtered if item.element_type == element_type]
@@ -170,7 +170,7 @@ class BibleElementList(QWidget):
                 for element in elements:
                     marker = "* " if element.id in self._unsaved_ids else ""
                     tags = f" · {', '.join(element.tags)}" if element.tags else ""
-                    uses = f" · {self._usage_counts.get(element.id, 0)} uses"
+                    uses = f" · 使用 {self._usage_counts.get(element.id, 0)} 次"
                     item = QTreeWidgetItem(group, [f"{marker}{element.name} · {type_label}{tags}{uses}"])
                     item.setData(0, Qt.ItemDataRole.UserRole, element.id)
                 group.setExpanded(element_type.value not in self._collapsed_type_groups)
