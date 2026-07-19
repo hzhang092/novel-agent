@@ -78,6 +78,18 @@ class WorldBibleEditorView(QWidget):
     def is_dirty(self) -> bool:
         return self._snapshot_dirty or self._overview_dirty or self._element_is_dirty()
 
+    def show_overview(self) -> None:
+        """Select and display the World Overview."""
+        if self._current_id == "overview":
+            self._element_list.restore_selection("overview")
+            self._select_item("overview")
+        else:
+            self._element_list.select_element("overview")
+
+    def prepare_for_navigation(self) -> bool:
+        """Resolve pending edits before external navigation."""
+        return self._resolve_dirty_before_switch()
+
     def set_layout_store(self, layout_store: EditorLayoutStore) -> None:
         self._layout_store = layout_store
 

@@ -32,6 +32,73 @@ def test_bible_dirty_state_tracks_semantic_world_and_style_changes(tmp_path, qtb
     assert editor.is_dirty is True
 
 
+def test_bible_public_facade_delegates_context_bus_and_character_reload(
+    qtbot, monkeypatch
+):
+    from app.ui.bible_editor import BibleEditorView
+    from app.ui.character_editor import CharacterEditorView
+    from app.ui.world_bible_editor import WorldBibleEditorView
+
+    editor = BibleEditorView()
+    qtbot.addWidget(editor)
+    character = editor.findChild(CharacterEditorView)
+    world = editor.findChild(WorldBibleEditorView)
+    calls = []
+    monkeypatch.setattr(character, "set_event_bus", lambda bus: calls.append(("bus", bus)))
+    monkeypatch.setattr(
+        character,
+        "set_current_scene_id",
+        lambda scene_id: calls.append(("character-scene", scene_id)),
+    )
+    monkeypatch.setattr(
+        world,
+        "set_current_scene_id",
+        lambda scene_id: calls.append(("world-scene", scene_id)),
+    )
+    monkeypatch.setattr(
+        world,
+        "set_current_scene_element_ids",
+        lambda ids: calls.append(("elements", ids)),
+    )
+    monkeypatch.setattr(character, "reload", lambda: calls.append(("reload", None)))
+
+    bus = object()
+    editor.set_event_bus(bus)
+    editor.set_current_scene_context("scene-1", {"faction-1"})
+    editor.reload_characters()
+
+    assert calls == [
+        ("bus", bus),
+        ("character-scene", "scene-1"),
+        ("world-scene", "scene-1"),
+        ("elements", {"faction-1"}),
+        ("reload", None),
+    ]
+
+
+def test_bible_public_load_reload_and_character_navigation(tmp_path, qtbot):
+    from app.storage.character_definition_service import CharacterDefinitionService
+    from app.storage.models import CharacterCore
+    from app.ui.bible_editor import BibleEditorView
+
+    project_dir = create_project(tmp_path, Project(title="测试项目", genre="玄幻"))
+    characters = CharacterDefinitionService(project_dir)
+    characters.save(CharacterCore(id="first", name="First"))
+    editor = BibleEditorView()
+    qtbot.addWidget(editor)
+
+    assert editor.is_loaded is False
+    editor.load_project_dir(project_dir)
+    assert editor.is_loaded is True
+    assert editor.open_character("first") is True
+
+    characters.save(CharacterCore(id="second", name="Second"))
+    editor.reload()
+
+    assert editor.open_character("second") is True
+    assert editor.open_character("missing") is False
+
+
 def test_bible_actions_state_their_scope_and_template_is_overview_only(qtbot):
     from app.ui.bible_editor import BibleEditorView
 

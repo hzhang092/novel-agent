@@ -63,3 +63,26 @@ Status: complete
 ### Remaining violations
 
 - 17 unique private-access baseline entries and four raw workspace child names.
+
+## Checkpoint 2 — Bible editor tree contracts
+
+Status: complete
+
+### Contracts added
+
+- Character creation, immutable in-memory cores, selected ID, and reload contracts.
+- World overview and dirty-navigation contracts.
+- Bible load state, event bus, scene context, reload, and character navigation facade.
+
+### Private accesses removed
+
+- `BibleEditorView` no longer reads character collections, selection state, or form gathering.
+- `BibleEditorView` no longer calls child event handlers or World Bible private navigation.
+
+### Verification
+
+- Character, Bible, overview, World Bible, MainWindow navigation, and architecture tests — 111 passed.
+
+### Remaining violations
+
+- 11 unique private-access baseline entries and four raw workspace child names.

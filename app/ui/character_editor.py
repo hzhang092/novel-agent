@@ -146,6 +146,64 @@ class CharacterEditorView(QWidget):
                 return True
         return False
 
+    def create_character(self) -> str | None:
+        """Create and select a new unsaved character draft."""
+        if self._project_dir is None:
+            return None
+        from uuid import uuid4
+
+        char_id = str(uuid4())
+        core = CharacterCore(id=char_id, name="新角色")
+        character = Character(
+            core=core,
+            state=CharacterState(character_id=char_id),
+        )
+        self._characters[char_id] = character
+        if self._layout_store is not None:
+            self._layout_store.layout.characters[char_id] = CharacterEditorLayout(
+                visible_fields=sorted(
+                    default_character_fields(CharacterTier.SUPPORTING)
+                ),
+                initialized_for_tier=CharacterTier.SUPPORTING.value,
+            )
+            self._layout_store.schedule_save()
+        self._add_to_list(character)
+
+        self.select_character(char_id)
+        if self._current_id != char_id:
+            self._characters.pop(char_id, None)
+            self._list.takeItem(self._list.count() - 1)
+            if self._layout_store is not None:
+                self._layout_store.layout.characters.pop(char_id, None)
+                self._layout_store.schedule_save()
+            return None
+        self.characters_changed.emit()
+        return char_id
+
+    def character_cores_in_memory(self) -> tuple[CharacterCore, ...]:
+        """Return saved definitions plus current unsaved form edits."""
+        current = (
+            self._gather_core(self._current_id)
+            if self._current_id in self._characters
+            else None
+        )
+        return tuple(
+            (current if character_id == self._current_id else character.core).model_copy(
+                deep=True
+            )
+            for character_id, character in self._characters.items()
+        )
+
+    @property
+    def selected_character_id(self) -> str | None:
+        """Return the selected character ID."""
+        return self._current_id
+
+    def reload(self) -> None:
+        """Reload characters for the currently bound project."""
+        if self._project_dir is not None:
+            self.load_project_dir(self._project_dir)
+
     @property
     def is_dirty(self) -> bool:
         return self._core_dirty
@@ -1041,42 +1099,7 @@ class CharacterEditorView(QWidget):
     # ── Actions ────────────────────────────────────────────────────────────
 
     def _on_add_character(self) -> None:
-        """Create a new character with a default name."""
-        if self._project_dir is None:
-            return
-        from uuid import uuid4
-
-        char_id = str(uuid4())
-        core = CharacterCore(id=char_id, name="新角色")
-        state = CharacterState(character_id=char_id)
-        character = Character(core=core, state=state)
-
-        self._characters[char_id] = character
-        if self._layout_store is not None:
-            self._layout_store.layout.characters[char_id] = CharacterEditorLayout(
-                visible_fields=sorted(
-                    default_character_fields(CharacterTier.SUPPORTING)
-                ),
-                initialized_for_tier=CharacterTier.SUPPORTING.value,
-            )
-            self._layout_store.schedule_save()
-        self._add_to_list(character)
-
-        # Select the new character
-        for i in range(self._list.count()):
-            item = self._list.item(i)
-            if item is not None and item.data(Qt.ItemDataRole.UserRole) == char_id:
-                self._list.setCurrentRow(i)
-                break
-        current = self._list.currentItem()
-        if current is None or current.data(Qt.ItemDataRole.UserRole) != char_id:
-            self._characters.pop(char_id, None)
-            self._list.takeItem(self._list.count() - 1)
-            if self._layout_store is not None:
-                self._layout_store.layout.characters.pop(char_id, None)
-                self._layout_store.schedule_save()
-        else:
-            self.characters_changed.emit()
+        self.create_character()
 
     def _on_delete_character(self) -> None:
         """Delete the selected character with confirmation."""

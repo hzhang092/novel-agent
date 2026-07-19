@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from PySide6.QtWidgets import QMessageBox
 
 from app.pipeline.bible_suggestions import BibleSuggestionResponse, CreateElementSuggestion
 from app.providers.base import MockProvider
@@ -32,6 +33,48 @@ from app.storage.project_files import (
     set_active_scene_prose_version,
 )
 from app.ui.world_bible_editor import WorldBibleEditorView
+
+
+def test_world_editor_public_navigation_contracts(tmp_path, qtbot, monkeypatch):
+    project_dir = create_project(tmp_path, Project(title="Story", genre="Fantasy"))
+    BibleElementRepository(project_dir).create(
+        FactionElement(id="faction", name="Jade Sect")
+    )
+    editor = WorldBibleEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(project_dir)
+    editor._element_list.select_element("faction")
+
+    editor.show_overview()
+
+    assert editor._element_list.selected_element_id() == "overview"
+    editor._overview_geography.setPlainText("Unsaved")
+    monkeypatch.setattr(
+        "app.ui.world_bible_editor.QMessageBox.question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Cancel,
+    )
+    assert editor.prepare_for_navigation() is False
+
+
+@pytest.mark.parametrize(
+    "response",
+    [QMessageBox.StandardButton.Save, QMessageBox.StandardButton.Discard],
+)
+def test_world_editor_prepares_for_navigation_by_saving_or_discarding(
+    tmp_path, qtbot, monkeypatch, response
+):
+    project_dir = create_project(tmp_path, Project(title="Story", genre="Fantasy"))
+    editor = WorldBibleEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(project_dir)
+    editor._overview_geography.setPlainText("Unsaved")
+    monkeypatch.setattr(
+        "app.ui.world_bible_editor.QMessageBox.question",
+        lambda *_args, **_kwargs: response,
+    )
+
+    assert editor.prepare_for_navigation() is True
+    assert editor.is_dirty is False
 
 
 def test_world_editor_loads_pinned_overview_and_typed_elements(tmp_path, qtbot):

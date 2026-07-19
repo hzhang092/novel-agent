@@ -38,6 +38,59 @@ def _add_saved_character(proj_dir, *, character_id, name):
     )
 
 
+def test_public_character_contracts_include_unsaved_edits_and_return_copies(
+    tmp_path, qtbot
+):
+    from app.ui.character_editor import CharacterEditorView
+
+    project_dir = _project_with_character(tmp_path)
+    editor = CharacterEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(project_dir)
+    editor._core_name.setText("林轩改")
+
+    cores = editor.character_cores_in_memory()
+
+    assert editor.selected_character_id == "char-1"
+    assert [(core.id, core.name) for core in cores] == [("char-1", "林轩改")]
+    cores[0].name = "外部修改"
+    assert editor.character_cores_in_memory()[0].name == "林轩改"
+
+
+def test_create_character_returns_and_includes_unsaved_draft(tmp_path, qtbot):
+    from app.ui.character_editor import CharacterEditorView
+
+    project_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    editor = CharacterEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(project_dir)
+
+    character_id = editor.create_character()
+    editor._core_name.setText("新草稿")
+
+    assert character_id == editor.selected_character_id
+    assert [(core.id, core.name) for core in editor.character_cores_in_memory()] == [
+        (character_id, "新草稿")
+    ]
+
+
+def test_reload_characters_uses_current_project_binding(tmp_path, qtbot):
+    from app.ui.character_editor import CharacterEditorView
+
+    project_dir = _project_with_character(tmp_path)
+    editor = CharacterEditorView()
+    qtbot.addWidget(editor)
+    editor.load_project_dir(project_dir)
+    _add_saved_character(project_dir, character_id="char-2", name="梅兰")
+
+    editor.reload()
+
+    assert {core.id for core in editor.character_cores_in_memory()} == {
+        "char-1",
+        "char-2",
+    }
+
+
 def test_character_layout_starts_with_tier_defaults_and_populated_fields(
     tmp_path, qtbot
 ):

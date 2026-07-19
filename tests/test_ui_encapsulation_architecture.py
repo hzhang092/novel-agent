@@ -11,12 +11,6 @@ UI_ROOT = ROOT / "app/ui"
 
 # Temporary migration baseline. Each entry names its removal checkpoint and contract.
 PRIVATE_BASELINE = {
-    ("app/ui/bible_editor.py", "_on_add_character"): (2, "create_character"),
-    ("app/ui/bible_editor.py", "_element_list"): (2, "show_overview"),
-    ("app/ui/bible_editor.py", "_characters"): (2, "character_cores_in_memory"),
-    ("app/ui/bible_editor.py", "_current_id"): (2, "selected_character_id"),
-    ("app/ui/bible_editor.py", "_gather_core"): (2, "character_cores_in_memory"),
-    ("app/ui/bible_editor.py", "_resolve_dirty_before_switch"): (2, "prepare_for_navigation"),
     ("app/ui/main_window.py", "_select_by_id"): (5, "OutlineEditorView.activate_scene"),
     ("app/ui/main_window.py", "_refresh_world_elements"): (5, "OutlineEditorView.refresh_world_elements"),
     ("app/ui/main_window.py", "_project_dir"): (5, "view is_loaded and MainWindow project state"),

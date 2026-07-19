@@ -114,6 +114,40 @@ class BibleEditorView(QWidget):
     def is_dirty(self) -> bool:
         return self._world_tab.is_dirty or self._style_dirty or self._character_tab.is_dirty
 
+    @property
+    def is_loaded(self) -> bool:
+        """Return whether a project is bound to the editor."""
+        return self._project_dir is not None
+
+    def set_event_bus(self, bus) -> None:
+        """Bind the project event bus to Bible children."""
+        self._character_tab.set_event_bus(bus)
+
+    def set_current_scene_context(
+        self,
+        scene_id: str | None,
+        element_ids: set[str] | None,
+    ) -> None:
+        """Update Bible context for the active scene."""
+        self.set_current_scene_id(scene_id)
+        self._world_tab.set_current_scene_element_ids(element_ids)
+
+    def reload(self) -> None:
+        """Reload all Bible tabs from the currently bound project."""
+        if self._project_dir is not None:
+            self.load_project_dir(self._project_dir)
+
+    def reload_characters(self) -> None:
+        """Reload character definitions from the bound project."""
+        self._character_tab.reload()
+
+    def open_character(self, character_id: str) -> bool:
+        """Open a character after resolving pending World Bible edits."""
+        if not self._world_tab.prepare_for_navigation():
+            return False
+        self._tabs.setCurrentWidget(self._character_tab)
+        return self._character_tab.select_character(character_id)
+
     def set_current_scene_id(self, scene_id: str | None) -> None:
         self._character_tab.set_current_scene_id(scene_id)
         self._world_tab.set_current_scene_id(scene_id)
@@ -198,11 +232,11 @@ class BibleEditorView(QWidget):
 
     def _start_character_from_overview(self) -> None:
         self._tabs.setCurrentWidget(self._character_tab)
-        self._character_tab._on_add_character()
+        self._character_tab.create_character()
 
     def _start_world_from_overview(self) -> None:
         self._tabs.setCurrentWidget(self._world_tab)
-        self._world_tab._element_list.select_element("overview")
+        self._world_tab.show_overview()
 
     def _start_style_from_overview(self) -> None:
         self._tabs.setCurrentWidget(self._style_tab)
@@ -276,14 +310,7 @@ class BibleEditorView(QWidget):
         world = self._world_tab.overview_in_memory()
         elements = self._world_tab.elements_in_memory()
         style = self._gather_style()
-        characters = {
-            character_id: character.core
-            for character_id, character in self._character_tab._characters.items()
-        }
-        if self._character_tab._current_id in characters:
-            characters[self._character_tab._current_id] = self._character_tab._gather_core(
-                self._character_tab._current_id
-            )
+        characters = self._character_tab.character_cores_in_memory()
         empty = (
             world == WorldOverview()
             and not elements
@@ -303,7 +330,7 @@ class BibleEditorView(QWidget):
             f"{counts[BibleElementType.POWER_SYSTEM]} 个力量体系"
         )
         counts = {
-            tier: sum(core.tier == tier for core in characters.values())
+            tier: sum(core.tier == tier for core in characters)
             for tier in CharacterTier
         }
         self._overview_character_summary.setText(
@@ -320,7 +347,7 @@ class BibleEditorView(QWidget):
         self._world_tab.dirty_changed.connect(self._on_world_dirty_changed)
         self._world_tab.content_changed.connect(self._refresh_overview)
         self._world_tab.elements_changed.connect(self.elements_changed)
-        self._world_tab.character_requested.connect(self._open_character)
+        self._world_tab.character_requested.connect(self.open_character)
         self._world_tab.scene_requested.connect(self.scene_requested)
 
         self._pacing_slider.valueChanged.connect(self._recompute_style_dirty)
@@ -341,12 +368,6 @@ class BibleEditorView(QWidget):
             editor.textChanged.connect(self._recompute_style_dirty)
         self._character_tab.dirty_changed.connect(self._update_aggregate_dirty_state)
         self._character_tab.characters_changed.connect(self._refresh_overview)
-
-    def _open_character(self, character_id: str) -> None:
-        if not self._world_tab._resolve_dirty_before_switch():
-            return
-        self._tabs.setCurrentWidget(self._character_tab)
-        self._character_tab.select_character(character_id)
 
     def _on_world_dirty_changed(self, dirty: bool) -> None:
         self._world_dirty = dirty
