@@ -87,6 +87,27 @@ Status: complete
 
 - 11 unique private-access baseline entries and four raw workspace child names.
 
+## Checkpoint 4 — Scene workspace composite
+
+Status: complete
+
+### Contracts added
+
+- Read-only scene state and prose, trace, planner, status, navigation, and generation facades.
+- Top-level prose version, publication, plan decision, approval batch, and retry signals.
+
+### Private accesses removed
+
+- Workspace child widgets are private and no raw-child getters were added.
+
+### Verification
+
+- Scene workspace, fact approval, planner checkpoint, and architecture tests — 10 passed.
+
+### Remaining violations
+
+- `MainWindow` still has 11 private-access baseline entries and four raw workspace child names; checkpoint 5 removes them.
+
 ## Checkpoint 3 — Outline facade
 
 Status: complete

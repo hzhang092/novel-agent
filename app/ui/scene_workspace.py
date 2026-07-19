@@ -35,6 +35,11 @@ class SceneWorkspaceView(QWidget):
     retry_requested = Signal(str)  # emits agent_name
     next_scene_requested = Signal()  # emits when user clicks Next Scene
     continue_review_requested = Signal()
+    prose_version_selected = Signal(str)
+    publish_version_requested = Signal(str)
+    plan_approved = Signal(dict)
+    plan_rejected = Signal()
+    approval_batch_approved = Signal(str, str, list, list)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -42,6 +47,7 @@ class SceneWorkspaceView(QWidget):
         self._current_scene_id: str | None = None
         self._current_chapter_id: str | None = None
         self._generating = False
+        self._next_scene_available = False
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -87,9 +93,11 @@ class SceneWorkspaceView(QWidget):
         layout.addLayout(toolbar)
 
         # Planner Checkpoint (shown during plan approval)
-        self.planner_checkpoint = PlannerCheckpointWidget()
-        self.planner_checkpoint.hide()
-        layout.addWidget(self.planner_checkpoint)
+        self._planner_checkpoint = PlannerCheckpointWidget()
+        self._planner_checkpoint.approved.connect(self.plan_approved.emit)
+        self._planner_checkpoint.rejected.connect(self.plan_rejected.emit)
+        self._planner_checkpoint.hide()
+        layout.addWidget(self._planner_checkpoint)
 
         # ── Three-pane splitter ──
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -99,8 +107,8 @@ class SceneWorkspaceView(QWidget):
         left_layout = QVBoxLayout(left_pane)
         left_layout.setContentsMargins(0, 0, 4, 0)
         left_layout.addWidget(QLabel("<b>上下文预览</b>"))
-        self.context_preview = ContextPreviewView()
-        left_layout.addWidget(self.context_preview)
+        self._context_preview = ContextPreviewView()
+        left_layout.addWidget(self._context_preview)
         left_layout.addStretch()
         splitter.addWidget(left_pane)
 
@@ -109,17 +117,19 @@ class SceneWorkspaceView(QWidget):
         center_layout = QVBoxLayout(center_pane)
         center_layout.setContentsMargins(4, 0, 4, 0)
         center_layout.addWidget(QLabel("<b>正文编辑器</b>"))
-        self.editor = ProseEditorWidget()
-        center_layout.addWidget(self.editor)
+        self._editor = ProseEditorWidget()
+        self._editor.version_selected.connect(self.prose_version_selected.emit)
+        self._editor.set_active_requested.connect(self.publish_version_requested.emit)
+        center_layout.addWidget(self._editor)
         splitter.addWidget(center_pane)
 
         # Right: Agent Trace
         right_pane = QWidget()
         right_layout = QVBoxLayout(right_pane)
         right_layout.setContentsMargins(4, 0, 0, 0)
-        self.trace_panel = AgentTracePanel()
-        self.trace_panel.retry_requested.connect(self.retry_requested.emit)
-        right_layout.addWidget(self.trace_panel)
+        self._trace_panel = AgentTracePanel()
+        self._trace_panel.retry_requested.connect(self.retry_requested.emit)
+        right_layout.addWidget(self._trace_panel)
         splitter.addWidget(right_pane)
 
         splitter.setStretchFactor(0, 1)
@@ -144,15 +154,116 @@ class SceneWorkspaceView(QWidget):
         layout.addWidget(self._review_bar)
 
         # ── Fact Approval panel ──
-        self.fact_approval = FactApprovalPanel()
-        self.fact_approval.hide()
-        layout.addWidget(self.fact_approval)
+        self._fact_approval = FactApprovalPanel()
+        self._fact_approval.approval_batch_approved.connect(
+            self.approval_batch_approved.emit
+        )
+        self._fact_approval.hide()
+        layout.addWidget(self._fact_approval)
 
     # ── Public API ────────────────────────────────────────────────────────
 
     def load_project_dir(self, project_dir: Path) -> None:
         """Store project directory reference."""
         self._project_dir = project_dir
+
+    @property
+    def current_scene_id(self) -> str | None:
+        """Return the active scene ID."""
+        return self._current_scene_id
+
+    @property
+    def current_chapter_id(self) -> str | None:
+        """Return the active chapter ID."""
+        return self._current_chapter_id
+
+    def is_showing_scene(self, scene_id: str, chapter_id: str) -> bool:
+        """Return whether the workspace shows the requested scene."""
+        return (
+            self._current_scene_id == scene_id
+            and self._current_chapter_id == chapter_id
+        )
+
+    def set_prose_text(self, text: str) -> None:
+        """Replace the prose editor text."""
+        self._editor.setPlainText(text)
+
+    def prose_text(self) -> str:
+        """Return the current prose text."""
+        return self._editor.toPlainText()
+
+    def append_prose(self, text: str) -> None:
+        """Append streaming prose text."""
+        self._editor.append(text)
+
+    def prose_is_modified(self) -> bool:
+        """Return whether prose has unsaved user edits."""
+        return self._editor.is_modified()
+
+    def set_prose_versions(
+        self,
+        versions: list[str],
+        current: str | None = None,
+    ) -> None:
+        """Set available prose versions."""
+        self._editor.set_versions(versions, current)
+
+    def current_prose_version(self) -> str:
+        """Return the selected prose version."""
+        return self._editor.current_version()
+
+    def clear_trace(self) -> None:
+        """Clear the generation trace."""
+        self._trace_panel.clear()
+
+    def show_trace_waiting(self, message: str) -> None:
+        """Show a waiting message in the trace panel."""
+        self._trace_panel.set_waiting(message)
+
+    def update_trace(self, trace: list) -> None:
+        """Display the current generation trace."""
+        self._trace_panel.update_trace(trace)
+
+    def show_plan_checkpoint(self, plan: dict) -> None:
+        """Show a plan for user approval."""
+        self._planner_checkpoint.show_plan(plan)
+
+    def hide_plan_checkpoint(self) -> None:
+        """Hide the plan approval checkpoint."""
+        self._planner_checkpoint.hide_plan()
+
+    def set_plan_checkpoint_waiting(self) -> None:
+        """Disable plan decisions while generation continues."""
+        self._planner_checkpoint.set_waiting()
+
+    def set_status(self, text: str) -> None:
+        """Set the workspace status message."""
+        self._status_label.setText(text)
+
+    def set_next_scene_available(self, available: bool) -> None:
+        """Set whether next-scene navigation is available."""
+        self._next_scene_available = available
+        self._next_scene_btn.setEnabled(
+            available and not self._generating and self._current_scene_id is not None
+        )
+
+    def mark_last_scene(self) -> None:
+        """Disable next-scene navigation at the end of the outline."""
+        self.set_next_scene_available(False)
+        self.set_status("已是最后一场景")
+
+    def hide_continue_review(self) -> None:
+        """Hide the continue-after-review action."""
+        self._continue_review_btn.hide()
+
+    def begin_generation(self, waiting_message: str = "正在组装上下文...") -> None:
+        """Reset the workspace and enter generation state."""
+        self.set_generating(True)
+        self.set_prose_text("")
+        self.clear_trace()
+        self.show_trace_waiting(waiting_message)
+        self.hide_review_result()
+        self.hide_fact_approval()
 
     def set_scene(self, scene_id: str, chapter_id: str) -> None:
         """Called when a scene is selected in the outline."""
@@ -161,7 +272,7 @@ class SceneWorkspaceView(QWidget):
         self._generate_btn.setEnabled(True)
         self._regenerate_btn.setEnabled(True)
         self._status_label.setText("就绪")
-        self._next_scene_btn.setEnabled(True)
+        self.set_next_scene_available(True)
 
     def clear_scene(self) -> None:
         """Called when no scene is selected."""
@@ -170,27 +281,30 @@ class SceneWorkspaceView(QWidget):
         self._generate_btn.setEnabled(False)
         self._regenerate_btn.setEnabled(False)
         self.hide_fact_approval()
-        self._next_scene_btn.setEnabled(False)
+        self.set_next_scene_available(False)
 
     def show_context(self, context: dict) -> None:
         """Display assembled context in the preview panel."""
-        self.context_preview.set_context(context)
+        self._context_preview.set_context(context)
 
     def clear_context(self) -> None:
         """Clear the context preview."""
-        self.context_preview.clear()
+        self._context_preview.clear()
 
     def set_generating(self, generating: bool) -> None:
         """Set the UI into generating/idle state."""
         self._generating = generating
         self._generate_btn.setEnabled(not generating and self._current_scene_id is not None)
         self._regenerate_btn.setEnabled(not generating and self._current_scene_id is not None)
-        self._next_scene_btn.setEnabled(not generating and self._current_scene_id is not None)
+        self._next_scene_btn.setEnabled(
+            not generating
+            and self._current_scene_id is not None
+            and self._next_scene_available
+        )
         if generating:
             self._status_label.setText("生成中...")
         else:
             self._status_label.setText("就绪")
-        self._next_scene_btn.setEnabled(True)
 
     def show_review_result(self, passed: bool, summary: str) -> None:
         """Show the review result bar."""
@@ -216,13 +330,13 @@ class SceneWorkspaceView(QWidget):
         state_changes: list[dict],
     ) -> None:
         """Show the fact approval panel with extracted facts and state changes."""
-        self.fact_approval.show_items(
+        self._fact_approval.show_items(
             source_scene_id, source_revision_id, facts, state_changes
         )
 
     def hide_fact_approval(self) -> None:
         """Hide the fact approval panel."""
-        self.fact_approval.clear_and_hide()
+        self._fact_approval.clear_and_hide()
 
     # ── Actions ────────────────────────────────────────────────────────────
 
