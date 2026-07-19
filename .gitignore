@@ -5,7 +5,11 @@
 .codex/
 CLAUDE.md
 AGENTS.md
-docs/
+docs/*
+!docs/architecture/
+docs/architecture/*
+!docs/architecture/application-layer.md
+!docs/architecture/application-separation-progress.md
 BACKLOG.md
 CONTEXT.md
 PRD.md

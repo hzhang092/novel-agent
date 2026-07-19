@@ -25,6 +25,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.application.outlines import OutlineApplicationService
+from app.domain.outline_operations import (
+    add_chapter,
+    add_scene,
+    add_volume,
+    delete_node,
+    find_next_scene,
+    find_volume,
+    move_node,
+)
+from app.storage.models import ChapterOutline, SceneOutline, VolumeOutline
 from app.ui.display_labels import character_tier_label
 from app.ui.widgets import StringListEditor
 from app.ui.widgets.element_reference_picker import ElementReferencePicker
@@ -46,19 +57,28 @@ class OutlineEditorView(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._project_dir: Path | None = None
+        self._application: OutlineApplicationService | None = None
         self._volumes: list = []
         self._selected_node_id: str | None = None
         self._setup_ui()
 
     def load_project_dir(self, project_dir: Path) -> None:
         """Load all volumes from disk and populate the tree."""
-        from app.storage.project_files import load_all_volumes
-
         self._project_dir = project_dir
-        self._volumes = load_all_volumes(project_dir)
+        if (
+            self._application is None
+            or self._application.project_dir != Path(project_dir)
+        ):
+            self._application = OutlineApplicationService(project_dir)
+        snapshot = self._application.load_editor_snapshot()
+        self._volumes = list(snapshot.volumes)
         self._scene_elements.set_selected_ids([])
-        self._refresh_world_elements()
+        self._scene_elements.set_elements(snapshot.bible_elements)
         self._rebuild_tree()
+
+    def bind_application(self, service: OutlineApplicationService) -> None:
+        self._application = service
+        self._project_dir = service.project_dir
 
     # ── UI Setup ───────────────────────────────────────────────────────────
 
@@ -308,26 +328,16 @@ class OutlineEditorView(QWidget):
         self._scene_elements.set_selected_ids(sc.world_element_ids)
 
     def _refresh_world_elements(self) -> None:
-        if self._project_dir is None:
+        if self._application is None:
             return
-        manifest_path = self._project_dir / "bible" / "manifest.yaml"
-        if not manifest_path.exists():
-            self._scene_elements.set_elements([])
-            return
-
-        from app.storage.bible_repository import BibleElementRepository
-
         self._scene_elements.set_elements(
-            BibleElementRepository(self._project_dir).load_all()
+            self._application.load_editor_snapshot().bible_elements
         )
 
     def _refresh_character_dropdowns(self) -> None:
-        if self._project_dir is None:
+        if self._application is None:
             return
-
-        from app.storage.project_files import load_all_characters
-
-        chars = load_all_characters(self._project_dir)
+        chars = self._application.load_editor_snapshot().characters
         name_counts = Counter(c.core.name for c in chars)
         duplicate_names = {name for name, count in name_counts.items() if count > 1}
 
@@ -354,8 +364,6 @@ class OutlineEditorView(QWidget):
             self._scene_participants.addItem(item)
 
     def _gather_scene(self, sc_id: str):
-        from app.storage.models import SceneOutline
-
         pov_id = self._scene_pov.currentData() or ""
         participants = [
             self._scene_participants.item(i).data(ROLE_CHARACTER_ID)
@@ -451,10 +459,8 @@ class OutlineEditorView(QWidget):
     # ── CRUD Actions ──────────────────────────────────────────────────────
 
     def _on_add_volume(self) -> None:
-        from app.storage.models import VolumeOutline
-
         vol = VolumeOutline(title="新卷")
-        self._volumes.append(vol)
+        self._volumes = list(add_volume(self._volumes, vol))
         item = QTreeWidgetItem([vol.title])
         item.setData(0, ROLE_NODE_TYPE, "volume")
         item.setData(0, ROLE_NODE_ID, vol.id)
@@ -468,26 +474,12 @@ class OutlineEditorView(QWidget):
             return
         node_type = current.data(0, ROLE_NODE_TYPE)
 
-        from app.storage.models import ChapterOutline
-
         ch = ChapterOutline(title="新章")
-        if node_type == "volume":
-            vol = self._find_volume(current.data(0, ROLE_NODE_ID))
-            if vol:
-                vol.chapters.append(ch)
-        elif node_type == "chapter":
-            vid = self._get_parent_volume_id(current)
-            vol = self._find_volume(vid)
-            if vol:
-                ch_id = current.data(0, ROLE_NODE_ID)
-                for i, existing in enumerate(vol.chapters):
-                    if existing.id == ch_id:
-                        vol.chapters.insert(i + 1, ch)
-                        break
-                else:
-                    vol.chapters.append(ch)
-        else:
+        if node_type not in ("volume", "chapter"):
             return
+        self._volumes = list(
+            add_chapter(self._volumes, current.data(0, ROLE_NODE_ID), ch)
+        )
 
         self._rebuild_tree()
         self._select_by_id(ch.id)
@@ -500,29 +492,10 @@ class OutlineEditorView(QWidget):
         if node_type not in ("chapter", "scene"):
             return
 
-        from app.storage.models import SceneOutline
-
         sc = SceneOutline(title="新场景")
-        if node_type == "chapter":
-            ch_id = current.data(0, ROLE_NODE_ID)
-        else:
-            parent = current.parent()
-            ch_id = parent.data(0, ROLE_NODE_ID)
-
-        for vol in self._volumes:
-            for ch in vol.chapters:
-                if ch.id == ch_id:
-                    if node_type == "scene":
-                        sc_id = current.data(0, ROLE_NODE_ID)
-                        for i, existing in enumerate(ch.scenes):
-                            if existing.id == sc_id:
-                                ch.scenes.insert(i + 1, sc)
-                                break
-                        else:
-                            ch.scenes.append(sc)
-                    else:
-                        ch.scenes.append(sc)
-                    break
+        self._volumes = list(
+            add_scene(self._volumes, current.data(0, ROLE_NODE_ID), sc)
+        )
 
         self._rebuild_tree()
         self._select_by_id(sc.id)
@@ -531,18 +504,8 @@ class OutlineEditorView(QWidget):
         current = self._tree.currentItem()
         if current is None:
             return
-        node_type = current.data(0, ROLE_NODE_TYPE)
         node_id = current.data(0, ROLE_NODE_ID)
-
-        if node_type == "volume":
-            self._volumes = [v for v in self._volumes if v.id != node_id]
-        elif node_type == "chapter":
-            for vol in self._volumes:
-                vol.chapters = [c for c in vol.chapters if c.id != node_id]
-        elif node_type == "scene":
-            for vol in self._volumes:
-                for ch in vol.chapters:
-                    ch.scenes = [s for s in ch.scenes if s.id != node_id]
+        self._volumes = list(delete_node(self._volumes, node_id))
 
         self._rebuild_tree()
 
@@ -556,38 +519,8 @@ class OutlineEditorView(QWidget):
         current = self._tree.currentItem()
         if current is None:
             return
-        node_type = current.data(0, ROLE_NODE_TYPE)
         node_id = current.data(0, ROLE_NODE_ID)
-        parent = current.parent()
-
-        if node_type == "volume":
-            idx = self._tree.indexOfTopLevelItem(current)
-            new_idx = idx + offset
-            if 0 <= new_idx < len(self._volumes):
-                self._volumes.insert(new_idx, self._volumes.pop(idx))
-        elif node_type == "chapter":
-            vid = parent.data(0, ROLE_NODE_ID) if parent else self._get_parent_volume_id(current)
-            vol = self._find_volume(vid)
-            if vol:
-                for i, ch in enumerate(vol.chapters):
-                    if ch.id == node_id:
-                        new_i = i + offset
-                        if 0 <= new_i < len(vol.chapters):
-                            vol.chapters.insert(new_i, vol.chapters.pop(i))
-                        break
-        elif node_type == "scene":
-            parent_ch = parent
-            ch_id = parent_ch.data(0, ROLE_NODE_ID) if parent_ch else None
-            for vol in self._volumes:
-                for ch in vol.chapters:
-                    if ch.id == ch_id:
-                        for i, sc in enumerate(ch.scenes):
-                            if sc.id == node_id:
-                                new_i = i + offset
-                                if 0 <= new_i < len(ch.scenes):
-                                    ch.scenes.insert(new_i, ch.scenes.pop(i))
-                                break
-                        break
+        self._volumes = list(move_node(self._volumes, node_id, offset))
 
         self._rebuild_tree()
         self._select_by_id(node_id)
@@ -601,27 +534,14 @@ class OutlineEditorView(QWidget):
         Returns the next scene's ID, or None if this is the last scene.
         Navigates across chapter and volume boundaries.
         """
-        flat_scenes: list[tuple[str, str]] = []  # (scene_id, chapter_id)
-        for vol in self._volumes:
-            for ch in vol.chapters:
-                for sc in ch.scenes:
-                    flat_scenes.append((sc.id, ch.id))
-
-        for i, (sid, _chid) in enumerate(flat_scenes):
-            if sid == current_scene_id:
-                if i + 1 < len(flat_scenes):
-                    next_sid = flat_scenes[i + 1][0]
-                    self._select_by_id(next_sid)
-                    return next_sid
-                return None
-
-        return None
+        next_scene = find_next_scene(self._volumes, current_scene_id)
+        if next_scene is None:
+            return None
+        self._select_by_id(next_scene.id)
+        return next_scene.id
 
     def _find_volume(self, volume_id: str):
-        for vol in self._volumes:
-            if vol.id == volume_id:
-                return vol
-        return None
+        return find_volume(self._volumes, volume_id)
 
     def _get_parent_volume_id(self, item: QTreeWidgetItem) -> str | None:
         current = item.parent()
@@ -732,9 +652,6 @@ class OutlineEditorView(QWidget):
 
         self._gather_current_form()
 
-        from app.storage.project_files import save_volume_outline
-
-        for vol in self._volumes:
-            save_volume_outline(self._project_dir, vol)
+        self._volumes = list(self._application.save_outline(self._volumes))
 
         self.saved.emit()

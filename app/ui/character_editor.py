@@ -29,20 +29,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.storage.character_events import get_latest_event_id
-from app.storage.bible_repository import BibleElementRepository
-from app.domain.story_usage import ElementUsageSummary, StoryUsageService
+from app.application.characters import CharacterApplicationService
+from app.application.errors import ApplicationError, ConcurrentModificationError
+from app.domain.story_usage import ElementUsageSummary
 from app.storage.editor_layout import CharacterEditorLayout, EditorLayoutStore
 from app.storage.models import Character, CharacterCore, CharacterCustomFieldType, CharacterState, CharacterTier
-from app.storage.project_files import (
-    character_references,
-    delete_character,
-    list_character_ids,
-    load_character,
-    save_character,
-    save_character_definition,
-)
-from app.storage.state_repository import commit_character_state_edit
 from app.ui.character_detail_catalog import (
     CHARACTER_DETAIL_DEFINITIONS,
     default_character_fields,
@@ -75,8 +66,7 @@ TIER_COLORS = {
 class CharacterEditorView(QWidget):
     """Character card editor with character list and Core/State detail tabs.
 
-    Receives the project directory path via ``load_project_dir()`` and
-    handles its own persistence. Emits ``saved`` after successful writes.
+    Receives project operations through ``CharacterApplicationService``.
     """
 
     saved = Signal()
@@ -92,6 +82,7 @@ class CharacterEditorView(QWidget):
     ) -> None:
         super().__init__(parent)
         self._project_dir: Path | None = None
+        self._application: CharacterApplicationService | None = None
         self._characters: dict[str, Character] = {}  # id -> Character
         self._current_id: str | None = None
         self._current_scene_id: str = ""
@@ -113,6 +104,13 @@ class CharacterEditorView(QWidget):
     def load_project_dir(self, project_dir: Path) -> None:
         """Load all characters from disk and populate the list."""
         self._project_dir = project_dir
+        if (
+            self._application is None
+            or self._application.project_dir != Path(project_dir)
+        ):
+            self._application = CharacterApplicationService(
+                project_dir, event_bus=self._bus
+            )
         if self._layout_store is None or self._layout_store.project_dir != project_dir:
             self._layout_store = EditorLayoutStore(project_dir)
         for layout in self._layout_store.layout.characters.values():
@@ -132,6 +130,10 @@ class CharacterEditorView(QWidget):
             self._select_character(first_id)
         else:
             self._clear_detail()
+
+    def bind_application(self, service: CharacterApplicationService) -> None:
+        self._application = service
+        self._project_dir = service.project_dir
 
     def set_layout_store(self, layout_store: EditorLayoutStore) -> None:
         self._layout_store = layout_store
@@ -154,6 +156,8 @@ class CharacterEditorView(QWidget):
         if self._bus is not None:
             return  # already subscribed
         self._bus = bus
+        if self._application is not None:
+            self._application.set_event_bus(bus)
         bus.subscribe("character_state_updated", self._on_state_updated)
 
     def set_current_scene_id(self, scene_id: str) -> None:
@@ -734,19 +738,14 @@ class CharacterEditorView(QWidget):
 
     def _refresh_character_list(self) -> None:
         """Reload character list from disk."""
-        if self._project_dir is None:
+        if self._application is None:
             return
         self._characters.clear()
         self._list.clear()
 
-        ids = list_character_ids(self._project_dir)
-        for cid in ids:
-            try:
-                char = load_character(self._project_dir, cid)
-                self._characters[cid] = char
-                self._add_to_list(char)
-            except (ValueError, FileNotFoundError):
-                continue
+        for character in self._application.list_characters():
+            self._characters[character.core.id] = character
+            self._add_to_list(character)
 
     def _add_to_list(self, character: Character) -> None:
         """Add a character entry to the list widget with tier badge."""
@@ -814,7 +813,7 @@ class CharacterEditorView(QWidget):
             self._baseline_core = None
             self.characters_changed.emit()
         else:
-            character = load_character(self._project_dir, char_id)
+            character = self._application.load_character(char_id)
             self._characters[char_id] = character
             self._populating = True
             try:
@@ -914,11 +913,10 @@ class CharacterEditorView(QWidget):
         self._core_weaknesses.set_items(core.core_weaknesses)
         self._custom_fields.set_fields(core.custom_fields)
         self._element_relations.set_relations(core.element_relations)
-        if self._project_dir is not None:
-            try:
-                self._element_relations.set_elements(BibleElementRepository(self._project_dir).load_all())
-            except FileNotFoundError:
-                self._element_relations.set_elements([])
+        if self._application is not None:
+            self._element_relations.set_elements(
+                self._application.list_bible_elements()
+            )
 
     def _populate_state_tab(self, state: CharacterState) -> None:
         self._state_goal.setText(state.current_goal)
@@ -937,10 +935,10 @@ class CharacterEditorView(QWidget):
 
     def _reload_state_tab(self) -> None:
         """Reload the current character's state from disk."""
-        if self._project_dir is None or self._current_id is None:
+        if self._application is None or self._current_id is None:
             return
         try:
-            char = load_character(self._project_dir, self._current_id)
+            char = self._application.load_character(self._current_id)
             self._characters[self._current_id] = char
             self._populate_state_tab(char.state)
             self._refresh_presence()
@@ -950,11 +948,11 @@ class CharacterEditorView(QWidget):
     # ── Gather ─────────────────────────────────────────────────────────────
 
     def _refresh_presence(self) -> None:
-        if self._project_dir is None or self._current_id is None:
+        if self._application is None or self._current_id is None:
             self._presence_panel.clear()
             return
-        usages = StoryUsageService(self._project_dir).character_presence(self._current_id)
-        self._presence_panel.set_usage(ElementUsageSummary(self._current_id, tuple(usages)))
+        usages = self._application.character_presence(self._current_id)
+        self._presence_panel.set_usage(ElementUsageSummary(self._current_id, usages))
 
     def _gather_core(self, char_id: str) -> CharacterCore:
         tier = CharacterTier(self._core_tier.currentData())
@@ -1090,29 +1088,29 @@ class CharacterEditorView(QWidget):
         char = self._characters.get(self._current_id)
         name = self._core_name.text().strip() or (char.core.name if char else "未知")
         try:
-            references = character_references(self._project_dir, self._current_id)
-        except (OSError, ValueError) as error:
+            impact = self._application.inspect_deletion(self._current_id)
+        except (ApplicationError, OSError, ValueError) as error:
             QMessageBox.warning(self, "无法检查角色引用", str(error))
             return
 
-        if references["pov_scenes"]:
-            scenes = "、".join(item["name"] for item in references["pov_scenes"])
+        if impact.pov_scenes:
+            scenes = "、".join(item.name for item in impact.pov_scenes)
             QMessageBox.warning(
                 self,
                 "无法删除角色",
-                f"该角色是 {len(references['pov_scenes'])} 个场景的 POV：{scenes}\n"
+                f"该角色是 {len(impact.pov_scenes)} 个场景的 POV：{scenes}\n"
                 "请先在大纲中替换 POV 角色。",
             )
             return
 
         message = f"确定删除角色「{name}」吗？"
-        participant_scenes = references["participant_scenes"]
-        relationship_characters = references["relationship_characters"]
+        participant_scenes = impact.participant_scenes
+        relationship_characters = impact.relationship_characters
         if participant_scenes:
-            scenes = "、".join(item["name"] for item in participant_scenes)
+            scenes = "、".join(item.name for item in participant_scenes)
             message += f"\n\n将从 {len(participant_scenes)} 个场景的参与角色中移除：{scenes}"
         if relationship_characters:
-            characters = "、".join(item["name"] for item in relationship_characters)
+            characters = "、".join(item.name for item in relationship_characters)
             message += (
                 f"\n\n将从 {len(relationship_characters)} 个角色的关系中移除："
                 f"{characters}"
@@ -1132,14 +1130,13 @@ class CharacterEditorView(QWidget):
 
         deleted_id = self._current_id
         try:
-            delete_character(
-                self._project_dir,
+            self._application.delete_character(
                 deleted_id,
                 unlink_references=bool(
                     participant_scenes or relationship_characters
                 ),
             )
-        except (OSError, ValueError) as error:
+        except (ApplicationError, OSError, ValueError) as error:
             QMessageBox.warning(self, "删除角色失败", str(error))
             return
         if self._layout_store is not None:
@@ -1167,13 +1164,12 @@ class CharacterEditorView(QWidget):
         from app.ui.character_state_edit_dialog import CharacterStateEditDialog
 
         char_dir = self._project_dir / "characters" / self._current_id
-        persisted = load_character(self._project_dir, self._current_id)
-        opened_at_event_id = get_latest_event_id(char_dir)
-        dialog = CharacterStateEditDialog(persisted.state, self)
+        session = self._application.begin_state_edit(self._current_id)
+        dialog = CharacterStateEditDialog(session.original_state, self)
         if not dialog.exec():
             return
         proposed = dialog.gathered_state()
-        if proposed == persisted.state:
+        if proposed == session.original_state:
             return
 
         changed_labels = [
@@ -1188,7 +1184,7 @@ class CharacterEditorView(QWidget):
                 ("current_knowledge", "已知信息"),
                 ("current_secrets", "隐藏秘密"),
             )
-            if getattr(persisted.state, attribute) != getattr(proposed, attribute)
+            if getattr(session.original_state, attribute) != getattr(proposed, attribute)
         ]
         reply = QMessageBox.question(
             self,
@@ -1199,23 +1195,20 @@ class CharacterEditorView(QWidget):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        if get_latest_event_id(char_dir) != opened_at_event_id:
+        try:
+            saved_state = self._application.commit_state_edit(
+                session,
+                proposed,
+                scene_id=self._current_scene_id,
+            )
+        except ConcurrentModificationError:
             QMessageBox.warning(
                 self,
                 "状态已变化",
                 "角色状态在编辑期间已发生变化。为避免覆盖新状态，请重新打开编辑窗口。",
             )
             return
-
-        event = commit_character_state_edit(
-            char_dir,
-            persisted.state,
-            proposed,
-            scene_id=self._current_scene_id,
-            bus=self._bus,
-            source="manual_event",
-        )
-        if event is not None:
+        if saved_state is not None:
             self._reload_state_tab()
             self._history_tab.set_character(char_dir, self._current_scene_id)
 
@@ -1234,16 +1227,7 @@ class CharacterEditorView(QWidget):
         try:
             was_new = self._current_id not in self._persisted_character_ids
             core = self._gather_core(self._current_id)
-            char_dir = self._project_dir / "characters" / self._current_id
-            if (char_dir / "definition.yaml").exists():
-                save_character_definition(self._project_dir, core)
-            else:
-                save_character(
-                    self._project_dir,
-                    Character(core=core, state=CharacterState(character_id=self._current_id)),
-                )
-
-            saved_character = load_character(self._project_dir, self._current_id)
+            saved_character = self._application.save_definition(core)
             self._characters[self._current_id] = saved_character
             self._persisted_character_ids.add(self._current_id)
             self._baseline_core = saved_character.core.model_copy(deep=True)

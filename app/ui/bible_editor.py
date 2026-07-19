@@ -21,13 +21,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.application.project_context import (
+    ProjectApplicationContext,
+    build_project_application,
+)
 from app.storage.editor_layout import EditorLayoutStore
 from app.storage.bible_models import BibleElementType, WorldOverview
 from app.storage.models import CharacterTier, StyleGuide
-from app.storage.project_files import (
-    load_project,
-    save_style_guide,
-)
 from app.ui.character_editor import CharacterEditorView
 from app.ui.world_bible_editor import WorldBibleEditorView
 from app.ui.widgets import (
@@ -38,9 +38,6 @@ from app.ui.widgets import (
 )
 from app.utils.template_merge import (
     TemplateMergeMode,
-    apply_story_template,
-    merge_style_guide,
-    preview_story_template_replace,
 )
 from app.utils.xianxia_template import get_xianxia_template
 
@@ -50,8 +47,7 @@ logger = logging.getLogger(__name__)
 class BibleEditorView(QWidget):
     """Tabbed editor for world setting and style guide.
 
-    Receives the project directory path via ``load_project_dir()`` and
-    handles its own persistence. Emits ``saved`` after successful writes.
+    Receives project operations through a ``ProjectApplicationContext``.
     """
 
     saved = Signal()
@@ -62,6 +58,7 @@ class BibleEditorView(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._project_dir: Path | None = None
+        self._application: ProjectApplicationContext | None = None
         self._baseline_style: StyleGuide | None = None
         self._world_dirty = False
         self._style_dirty = False
@@ -77,7 +74,12 @@ class BibleEditorView(QWidget):
     def load_project_dir(self, project_dir: Path) -> None:
         """Load project data from disk and populate the editor."""
         self._project_dir = project_dir
-        project = load_project(project_dir)
+        if (
+            self._application is None
+            or self._application.project_dir != Path(project_dir)
+        ):
+            self.bind_application(build_project_application(project_dir))
+        snapshot = self._application.story_bible.load_editor_snapshot()
         layout_path = project_dir / ".novel-agent" / "editor-layout.yaml"
         had_layout = layout_path.exists()
         self._layout_store = EditorLayoutStore(project_dir)
@@ -87,7 +89,7 @@ class BibleEditorView(QWidget):
         try:
             self._world_tab.set_layout_store(self._layout_store)
             self._world_tab.load_project_dir(project_dir)
-            self._populate_style_tab(project.style_guide)
+            self._populate_style_tab(snapshot.style_guide)
             self._character_tab.load_project_dir(project_dir)
             if not had_layout:
                 self._layout_store.layout.style.collapsed_sections = ["advanced"]
@@ -101,6 +103,12 @@ class BibleEditorView(QWidget):
         self._style_dirty = False
         self._update_aggregate_dirty_state()
         self._refresh_overview()
+
+    def bind_application(self, context: ProjectApplicationContext) -> None:
+        self._application = context
+        self._project_dir = context.project_dir
+        self._character_tab.bind_application(context.characters)
+        self._world_tab.bind_application(context.story_bible)
 
     @property
     def is_dirty(self) -> bool:
@@ -501,7 +509,7 @@ class BibleEditorView(QWidget):
         if self._style_dirty:
             style = self._gather_style()
             try:
-                save_style_guide(self._project_dir, style)
+                style = self._application.story_bible.save_style(style)
             except Exception as error:
                 QMessageBox.warning(self, "写作风格保存失败", str(error))
                 return False
@@ -528,7 +536,9 @@ class BibleEditorView(QWidget):
         before_elements = self._world_tab.elements_in_memory()
         before_style = self._gather_style()
         if dialog.merge_mode == TemplateMergeMode.REPLACE and dialog.apply_world:
-            preview = preview_story_template_replace(before_elements, template)
+            preview = self._application.story_bible.preview_template_replace(
+                before_elements, template
+            )
             replaced = preview.elements_replaced
             unaffected = preview.unaffected_elements
             message = (
@@ -556,7 +566,7 @@ class BibleEditorView(QWidget):
         application = None
         if dialog.apply_world:
             try:
-                application = apply_story_template(
+                application = self._application.story_bible.apply_template_to_draft(
                     before_overview,
                     before_elements,
                     before_style,
@@ -569,7 +579,9 @@ class BibleEditorView(QWidget):
         style_after = (
             application.style_guide
             if application is not None
-            else merge_style_guide(before_style, template.style_guide, dialog.merge_mode)
+            else self._application.story_bible.merge_template_style(
+                before_style, template.style_guide, dialog.merge_mode
+            )
         )
         self._populating = True
         try:

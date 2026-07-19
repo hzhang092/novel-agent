@@ -33,9 +33,7 @@ from app.storage.bible_models import (
     TerminologyElement,
     WorldOverview,
 )
-from app.storage.bible_repository import WorldBibleService
-from app.domain.story_usage import StoryUsageKind, StoryUsageService
-from app.storage.character_definition_service import CharacterDefinitionService
+from app.application.story_bible import StoryBibleApplicationService
 from app.storage.editor_layout import EditorLayoutStore
 from app.ui.bible_element_dialog import BibleElementDialog
 from app.ui.bible_element_editor import BibleElementEditor
@@ -59,9 +57,7 @@ class WorldBibleEditorView(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._project_dir: Path | None = None
-        self._service: WorldBibleService | None = None
-        self._character_service: CharacterDefinitionService | None = None
-        self._usage_service: StoryUsageService | None = None
+        self._service: StoryBibleApplicationService | None = None
         self._layout_store: EditorLayoutStore | None = None
         self._elements: list[BibleElement] = []
         self._persisted_ids: set[str] = set()
@@ -94,16 +90,16 @@ class WorldBibleEditorView(QWidget):
             or self._layout_store.project_dir != self._project_dir
         ):
             self._layout_store = EditorLayoutStore(self._project_dir)
-        self._service = WorldBibleService(self._project_dir)
-        self._character_service = CharacterDefinitionService(self._project_dir)
-        self._usage_service = StoryUsageService(self._project_dir)
+        if (
+            self._service is None
+            or self._service.project_dir != self._project_dir
+        ):
+            self._service = StoryBibleApplicationService(self._project_dir)
         try:
-            bible = self._service.load()
+            bible = self._service.load_editor_snapshot().bible
         except Exception as error:
             self._project_dir = None
             self._service = None
-            self._character_service = None
-            self._usage_service = None
             self._layout_store = None
             self._elements = []
             self._persisted_ids = set()
@@ -161,6 +157,10 @@ class WorldBibleEditorView(QWidget):
         self._emit_dirty()
         self._update_suggestion_actions()
 
+    def bind_application(self, service: StoryBibleApplicationService) -> None:
+        self._service = service
+        self._project_dir = service.project_dir
+
     def save_all(self) -> bool:
         if self._snapshot_dirty:
             return self._save_snapshot()
@@ -183,7 +183,9 @@ class WorldBibleEditorView(QWidget):
         self._populate_overview(overview)
         self._overview_dirty = overview != self._baseline_overview
         persisted = (
-            self._service.load().elements if self._service is not None else []
+            self._service.load_editor_snapshot().bible.elements
+            if self._service is not None
+            else []
         )
         self._snapshot_dirty = (
             self._overview_dirty
@@ -251,7 +253,7 @@ class WorldBibleEditorView(QWidget):
                 return False
         previous_ids = set(self._persisted_ids)
         try:
-            saved = self._service.apply_snapshot(
+            saved = self._service.save_snapshot(
                 self._gather_overview(), self._elements
             )
         except Exception as error:
@@ -555,7 +557,7 @@ class WorldBibleEditorView(QWidget):
 
     def _discard_current_changes(self) -> None:
         if self._snapshot_dirty and self._service is not None:
-            bible = self._service.load()
+            bible = self._service.load_editor_snapshot().bible
             self._elements = [element.model_copy(deep=True) for element in bible.elements]
             self._persisted_ids = {element.id for element in bible.elements}
             self._baseline_overview = bible.overview.model_copy(deep=True)
@@ -575,7 +577,7 @@ class WorldBibleEditorView(QWidget):
                 ]
                 self.elements_changed.emit()
             elif self._service is not None:
-                self._replace_element(self._service.repository.load(self._current_id))
+                self._replace_element(self._service.load_element(self._current_id))
             self._refresh_element_list()
         self._emit_dirty()
 
@@ -600,39 +602,18 @@ class WorldBibleEditorView(QWidget):
         if element_id not in self._persisted_ids:
             message = f'Discard unsaved element “{element.name}”?'
         else:
-            inbound = len(self._service.repository.get_inbound_relations(element_id))
-            outgoing = len(element.relationships)
-            character_links = len(
-                self._character_service.characters_referencing_element(element_id)
-            ) if self._character_service is not None else 0
-            usage_scenes = (
-                self._usage_service.element_usage(element_id).scenes
-                if self._usage_service is not None
-                else ()
-            )
-            usage_counts = {
-                kind: sum(kind in scene.usage_kinds for scene in usage_scenes)
-                for kind in (
-                    StoryUsageKind.EXPLICIT_OUTLINE,
-                    StoryUsageKind.GENERATION_CONTEXT,
-                    StoryUsageKind.PROSE_MENTION,
-                )
-            }
-            primary = (
-                self._service.repository.load_manifest().primary_power_system_id
-                == element_id
-            )
+            impact = self._service.inspect_element_deletion(element_id)
             message = (
                 f'Delete “{element.name}”?\n\nReferenced by:\n'
-                f'• {inbound} Story Elements\n'
-                f'• Character connections: {character_links}\n'
-                f'• Scene outlines: {usage_counts[StoryUsageKind.EXPLICIT_OUTLINE]}\n'
+                f'• {impact.inbound_element_count} Story Elements\n'
+                f'• Character connections: {impact.inbound_character_count}\n'
+                f'• Scene outlines: {impact.usage_counts.explicit_outline}\n'
                 f'• Generated scene revisions: '
-                f'{usage_counts[StoryUsageKind.GENERATION_CONTEXT]}\n'
+                f'{impact.usage_counts.generation_context}\n'
                 f'• Detected prose mentions: '
-                f'{usage_counts[StoryUsageKind.PROSE_MENTION]}\n'
-                f'• Outgoing relationships: {outgoing}\n'
-                f'• Primary power system: {"yes" if primary else "no"}\n\n'
+                f'{impact.usage_counts.prose_mention}\n'
+                f'• Outgoing relationships: {impact.outgoing_relationship_count}\n'
+                f'• Primary power system: {"yes" if impact.is_primary_power_system else "no"}\n\n'
                 "Deleting it will remove stored references. "
                 "Detected mentions remain in the prose."
             )
@@ -785,9 +766,9 @@ class WorldBibleEditorView(QWidget):
         ]
 
     def _character_inbound_relations(self, element_id: str):
-        if self._character_service is None:
+        if self._service is None:
             return []
-        return self._character_service.characters_referencing_element(element_id)
+        return self._service.inbound_character_relations(element_id)
 
     def _queue_suggestion_source(self, source: str) -> None:
         text = self._suggestion_source_text(source)
@@ -832,48 +813,28 @@ class WorldBibleEditorView(QWidget):
             if hasattr(widget, "textCursor"):
                 return widget.textCursor().selectedText().strip()
             return ""
-        if self._project_dir is None or self._current_scene_id is None:
+        if self._service is None or self._current_scene_id is None:
             return ""
-        from app.storage.project_files import load_all_volumes, load_scene_prose
-
-        for volume in load_all_volumes(self._project_dir):
-            for chapter in volume.chapters:
-                for scene in chapter.scenes:
-                    if scene.id != self._current_scene_id:
-                        continue
-                    if source == "scene_outline":
-                        return scene.model_dump_json()
-                    if source == "scene_prose":
-                        return load_scene_prose(
-                            self._project_dir, chapter.id, scene.id
-                        )
+        if source == "scene_outline":
+            return self._service.scene_outline_source(self._current_scene_id)
+        if source == "scene_prose":
+            return self._service.scene_prose_source(self._current_scene_id)
         return ""
 
     async def _run_suggestions(self, source_text: str, *, provider=None) -> None:
         if self._service is None or self._project_dir is None:
             return
-        from app.pipeline.agents.bible_assistant import BibleAssistantAgent
-        from app.pipeline.bible_suggestions import apply_bible_suggestions
-        from app.providers.config import get_provider_for_step, load_provider_config
-        from app.storage.project_files import list_character_ids
         from app.ui.bible_suggestion_dialog import BibleSuggestionDialog
 
-        if provider is None:
-            provider = get_provider_for_step("bible_assistant", load_provider_config())
         self._suggest_button.setEnabled(False)
         self._cancel_suggest_button.setVisible(True)
         self._suggest_status.setText("正在提取建议…")
         self._suggest_status.setVisible(True)
         try:
-            characters = [
-                self._character_service.load(character_id)
-                for character_id in list_character_ids(self._project_dir)
-            ] if self._character_service is not None else []
-            proposals = await BibleAssistantAgent().generate(
-                provider,
+            proposals = await self._service.generate_suggestions(
                 source_text,
                 existing_elements=self._elements,
-                characters=characters,
+                provider=provider,
             )
             if not proposals:
                 self._suggest_status.setText("未找到建议")
@@ -884,11 +845,7 @@ class WorldBibleEditorView(QWidget):
                 return
             selected = dialog.selected_proposals()
             if selected:
-                apply_bible_suggestions(
-                    self._service,
-                    selected,
-                    character_service=self._character_service,
-                )
+                self._service.apply_suggestions(selected)
                 project_dir = self._project_dir
                 self.load_project_dir(project_dir)
                 self.elements_changed.emit()
@@ -900,12 +857,9 @@ class WorldBibleEditorView(QWidget):
             self._suggest_status.setText("建议提取失败")
             QMessageBox.warning(self, "Story Bible suggestions failed", str(error))
         finally:
-            try:
-                await provider.close()
-            finally:
-                self._suggest_button.setEnabled(True)
-                self._cancel_suggest_button.setVisible(False)
-                self._suggest_task = None
+            self._suggest_button.setEnabled(True)
+            self._cancel_suggest_button.setVisible(False)
+            self._suggest_task = None
 
     def _cancel_suggestions(self) -> None:
         if self._suggest_task is not None:
@@ -918,14 +872,14 @@ class WorldBibleEditorView(QWidget):
     def _refresh_usage(
         self, element_id: str | None = None, *, refresh: bool = False
     ) -> None:
-        if self._usage_service is None:
+        if self._service is None:
             self._element_list.set_usage_counts({})
             self._usage_panel.clear()
             return
         if refresh:
-            self._usage_service.invalidate()
-        self._element_list.set_usage_counts(self._usage_service.all_element_counts())
+            self._service.invalidate_usage()
+        self._element_list.set_usage_counts(self._service.all_element_usage_counts())
         if element_id in self._persisted_ids:
-            self._usage_panel.set_usage(self._usage_service.element_usage(element_id))
+            self._usage_panel.set_usage(self._service.element_usage(element_id))
         elif element_id is not None:
             self._usage_panel.clear()

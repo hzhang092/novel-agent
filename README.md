@@ -153,6 +153,8 @@ The approval boundaries are intentional: generated prose and continuity updates 
 
 ```text
 app/
+├── application/   # Qt-independent project-editing use cases and composition
+├── domain/        # Pure business rules and model transformations
 ├── pipeline/      # Scene-generation orchestration and context assembly
 ├── providers/     # Ollama and DeepSeek integrations
 ├── storage/       # Project models, repositories, timelines, and persistence

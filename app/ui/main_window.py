@@ -24,6 +24,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.application.project_context import (
+    ProjectApplicationContext,
+    build_project_application,
+)
 from app.storage.models import Project as ProjectModel
 from app.storage.repository import Repository
 import logging
@@ -61,6 +65,7 @@ class MainWindow(QMainWindow):
         self._repo = Repository(Path.home() / "NovelForge")
         self._current_project: ProjectModel | None = None
         self._current_project_dir: Path | None = None
+        self._application: ProjectApplicationContext | None = None
         self._previous_tab_index: int = 0
 
         # Event bus for live UI refresh
@@ -198,6 +203,18 @@ class MainWindow(QMainWindow):
             signal.connect(slot)
         self._project_signal_connections = connections
 
+    def _bind_project_application(self, project_dir: Path) -> None:
+        self._application = build_project_application(
+            project_dir,
+            event_bus=self._domain_bus,
+        )
+        bible = self.views.get("bible")
+        if isinstance(bible, BibleEditorView):
+            bible.bind_application(self._application)
+        outline = self.views.get("outline")
+        if isinstance(outline, OutlineEditorView):
+            outline.bind_application(self._application.outlines)
+
     def _on_nav_changed(self, index: int) -> None:
         if (
             self._previous_tab_index == 1
@@ -326,6 +343,7 @@ class MainWindow(QMainWindow):
 
         self._current_project = project
         self._current_project_dir = proj_dir
+        self._bind_project_application(proj_dir)
         self.setWindowTitle(f"NovelForge — {project.title}")
 
         self._set_nav_items_enabled(True)
@@ -384,6 +402,7 @@ class MainWindow(QMainWindow):
 
         self._current_project = project
         self._current_project_dir = project_dir
+        self._bind_project_application(project_dir)
         from app.storage.timeline_repository import recover_pending_publication
         recover_pending_publication(project_dir)
         self.setWindowTitle(f"NovelForge — {project.title}")
@@ -1156,6 +1175,8 @@ class MainWindow(QMainWindow):
 
     def _find_chapter_for_scene(self, scene_id: str) -> str | None:
         """Find the chapter ID containing a scene by scanning all volumes."""
+        if self._application is not None:
+            return self._application.outlines.chapter_for_scene(scene_id)
         from app.storage.project_files import load_all_volumes
 
         volumes = load_all_volumes(self._current_project_dir)

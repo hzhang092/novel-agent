@@ -24,6 +24,34 @@ def _make_bible_dirty(bible, section):
     assert bible.is_dirty is True
 
 
+def test_main_window_binds_one_shared_project_context(tmp_path, qtbot):
+    first_dir = create_project(
+        tmp_path / "first", Project(title="First", genre="Fantasy")
+    )
+    second_dir = create_project(
+        tmp_path / "second", Project(title="Second", genre="Fantasy")
+    )
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    window._bind_project_application(first_dir)
+
+    first = window._application
+    bible = window.views["bible"]
+    outline = window.views["outline"]
+    assert bible._application is first
+    assert bible._character_tab._application is first.characters
+    assert bible._world_tab._service is first.story_bible
+    assert outline._application is first.outlines
+
+    window._bind_project_application(second_dir)
+
+    assert window._application is not first
+    assert window._application.project_dir == second_dir
+    assert bible._application is window._application
+    assert outline._application is window._application.outlines
+
+
 def test_failed_bible_save_blocks_navigation(tmp_path, qtbot, monkeypatch):
     project_dir = create_project(tmp_path, Project(title="测试项目", genre="玄幻"))
     window = MainWindow()

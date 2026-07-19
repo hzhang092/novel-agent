@@ -390,7 +390,8 @@ def test_failed_definition_save_keeps_dirty_state(tmp_path, qtbot, monkeypatch):
     editor.load_project_dir(_project_with_character(tmp_path))
     editor._core_name.setText("林轩改")
     monkeypatch.setattr(
-        "app.ui.character_editor.save_character_definition",
+        editor._application,
+        "save_definition",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
     )
     monkeypatch.setattr(QMessageBox, "warning", lambda *_args, **_kwargs: None)
@@ -428,7 +429,8 @@ def test_failed_save_prevents_character_switch(tmp_path, qtbot, monkeypatch):
     editor.load_project_dir(proj_dir)
     editor._core_name.setText("未保存名字")
     monkeypatch.setattr(
-        "app.ui.character_editor.save_character_definition",
+        editor._application,
+        "save_definition",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
     )
     monkeypatch.setattr(

@@ -90,7 +90,8 @@ def test_bible_save_all_writes_only_dirty_sections(tmp_path, qtbot, monkeypatch)
     original_world_save = editor._world_tab.save_all
     monkeypatch.setattr(editor._world_tab, "save_all", lambda: calls.append("world") or original_world_save())
     monkeypatch.setattr(
-        "app.ui.bible_editor.save_style_guide",
+        editor._application.story_bible,
+        "save_style",
         lambda *_args, **_kwargs: calls.append("style"),
     )
 
