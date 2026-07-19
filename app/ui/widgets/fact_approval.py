@@ -37,6 +37,11 @@ class FactApprovalPanel(QWidget):
         self._change_editors: list[QLineEdit] = []
         self._setup_ui()
 
+    @property
+    def pending_counts(self) -> tuple[int, int]:
+        """Return pending fact and state-change counts."""
+        return len(self._facts), len(self._state_changes)
+
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)

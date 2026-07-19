@@ -177,6 +177,31 @@ class SceneWorkspaceView(QWidget):
         """Return the active chapter ID."""
         return self._current_chapter_id
 
+    @property
+    def status_text(self) -> str:
+        """Return the user-facing workflow status."""
+        return self._status_label.text()
+
+    @property
+    def continue_review_is_visible(self) -> bool:
+        """Return whether the saved-draft retry action is available."""
+        return not self._continue_review_btn.isHidden()
+
+    @property
+    def review_summary(self) -> str:
+        """Return the current review message."""
+        return self._review_label.text()
+
+    @property
+    def fact_approval_is_visible(self) -> bool:
+        """Return whether a fact approval batch is being shown."""
+        return not self._fact_approval.isHidden()
+
+    @property
+    def pending_approval_counts(self) -> tuple[int, int]:
+        """Return pending fact and state-change counts."""
+        return self._fact_approval.pending_counts
+
     def is_showing_scene(self, scene_id: str, chapter_id: str) -> bool:
         """Return whether the workspace shows the requested scene."""
         return (

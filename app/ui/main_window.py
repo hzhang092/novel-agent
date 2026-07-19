@@ -60,7 +60,7 @@ class MainWindow(QMainWindow):
         self._generation_in_progress: bool = False
         self._current_prose_version: str | None = None
         self._pending_draft: tuple | None = None
-        self._project_signal_connections = []
+        self._plan_decision: asyncio.Future[tuple[bool, dict | None]] | None = None
 
         self._repo = Repository(Path.home() / "NovelForge")
         self._current_project: ProjectModel | None = None
@@ -136,27 +136,19 @@ class MainWindow(QMainWindow):
 
         # Stacked views
         self.stack = QStackedWidget()
-        self.views: dict[str, QWidget] = {
-            "dashboard": DashboardView(),
-            "bible": BibleEditorView(),
-            "outline": OutlineEditorView(),
-            "workspace": SceneWorkspaceView(),
+        self._dashboard_view = DashboardView()
+        self._bible_view = BibleEditorView()
+        self._outline_view = OutlineEditorView()
+        self._workspace_view = SceneWorkspaceView()
+        self._views: dict[str, QWidget] = {
+            "dashboard": self._dashboard_view,
+            "bible": self._bible_view,
+            "outline": self._outline_view,
+            "workspace": self._workspace_view,
         }
         for key in ["dashboard", "bible", "outline", "workspace"]:
-            self.stack.addWidget(self.views[key])
-
-        bible = self.views["bible"]
-        outline = self.views["outline"]
-        if isinstance(bible, BibleEditorView) and isinstance(outline, OutlineEditorView):
-            bible.elements_changed.connect(
-                lambda: outline._refresh_world_elements()
-            )
-            bible.scene_requested.connect(self._open_scene_from_bible)
-
-        workspace = self.views["workspace"]
-        if isinstance(workspace, SceneWorkspaceView):
-            workspace.editor.version_selected.connect(self._on_prose_version_selected)
-            workspace.editor.set_active_requested.connect(self._on_set_active_prose_version)
+            self.stack.addWidget(self._views[key])
+        self._connect_view_signals()
 
         # Layout: sidebar | content
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -177,43 +169,40 @@ class MainWindow(QMainWindow):
         self.sidebar.setCurrentRow(3)
         if self.sidebar.currentRow() != 3:
             return
-        outline = self.views.get("outline")
-        if isinstance(outline, OutlineEditorView):
-            blocker = QSignalBlocker(outline)
-            outline._select_by_id(scene_id)
-            del blocker
-            self._on_scene_selected(scene_id)
+        self._outline_view.activate_scene(scene_id)
 
-    def _wire_project_signals(self) -> None:
-        """Connect project view signals once, regardless of how the project loaded."""
-        for signal, slot in self._project_signal_connections:
-            signal.disconnect(slot)
-        outline = self.views.get("outline")
-        workspace = self.views.get("workspace")
-        connections = []
-        if isinstance(outline, OutlineEditorView):
-            connections.append((outline.scene_selected, self._on_scene_selected))
-        if isinstance(workspace, SceneWorkspaceView):
-            connections.extend((
-                (workspace.generate_requested, self._on_generate_requested),
-                (workspace.retry_requested, self._retry_agent),
-                (workspace.next_scene_requested, self._on_next_scene),
-            ))
-        for signal, slot in connections:
-            signal.connect(slot)
-        self._project_signal_connections = connections
+    def _connect_view_signals(self) -> None:
+        """Connect view signals once during UI construction."""
+        self._bible_view.elements_changed.connect(
+            self._outline_view.refresh_world_elements
+        )
+        self._bible_view.scene_requested.connect(self._open_scene_from_bible)
+        self._outline_view.scene_selected.connect(self._on_scene_selected)
+        self._workspace_view.generate_requested.connect(self._on_generate_requested)
+        self._workspace_view.retry_requested.connect(self._retry_agent)
+        self._workspace_view.next_scene_requested.connect(self._on_next_scene)
+        self._workspace_view.continue_review_requested.connect(
+            self._on_continue_review_requested
+        )
+        self._workspace_view.prose_version_selected.connect(
+            self._on_prose_version_selected
+        )
+        self._workspace_view.publish_version_requested.connect(
+            self._on_set_active_prose_version
+        )
+        self._workspace_view.approval_batch_approved.connect(
+            self._on_approval_batch_approved
+        )
+        self._workspace_view.plan_approved.connect(self._on_plan_approved)
+        self._workspace_view.plan_rejected.connect(self._on_plan_rejected)
 
     def _bind_project_application(self, project_dir: Path) -> None:
         self._application = build_project_application(
             project_dir,
             event_bus=self._domain_bus,
         )
-        bible = self.views.get("bible")
-        if isinstance(bible, BibleEditorView):
-            bible.bind_application(self._application)
-        outline = self.views.get("outline")
-        if isinstance(outline, OutlineEditorView):
-            outline.bind_application(self._application.outlines)
+        self._bible_view.bind_application(self._application)
+        self._outline_view.bind_application(self._application.outlines)
 
     def _on_nav_changed(self, index: int) -> None:
         if (
@@ -227,57 +216,17 @@ class MainWindow(QMainWindow):
             return
 
         # Auto-save Outline editor when navigating away from it
-        if self._previous_tab_index == 2:
-            outline = self.views["outline"]
-            if isinstance(outline, OutlineEditorView) and outline._project_dir is not None:
-                outline._on_save()
+        if self._previous_tab_index == 2 and self._outline_view.is_loaded:
+            self._outline_view.save()
 
         # Wire event bus to Bible Editor's character editor when navigating to Bible
         if index == 1:
-            bible = self.views["bible"]
-            if isinstance(bible, BibleEditorView):
-                bible._character_tab.set_event_bus(self._domain_bus)
-                bible.refresh_usage()
+            self._bible_view.set_event_bus(self._domain_bus)
+            self._bible_view.refresh_usage()
 
         # Load workspace when navigating to it
-        if index == 3:
-            workspace = self.views["workspace"]
-            if isinstance(workspace, SceneWorkspaceView) and self._current_project_dir is not None:
-                workspace.load_project_dir(self._current_project_dir)
-                try:
-                    workspace.generate_requested.disconnect()
-                except TypeError:
-                    pass
-                workspace.generate_requested.connect(self._on_generate_requested)
-                try:
-                    workspace.retry_requested.disconnect()
-                except TypeError:
-                    pass
-                workspace.retry_requested.connect(self._retry_agent)
-                try:
-                    workspace.next_scene_requested.disconnect()
-                except TypeError:
-                    pass
-                workspace.next_scene_requested.connect(self._on_next_scene)
-                try:
-                    workspace.fact_approval.approval_batch_approved.disconnect()
-                except TypeError:
-                    pass
-                workspace.fact_approval.approval_batch_approved.connect(
-                    self._on_approval_batch_approved
-                )
-                try:
-                    workspace.continue_review_requested.disconnect()
-                except TypeError:
-                    pass
-                workspace.continue_review_requested.connect(
-                    self._on_continue_review_requested
-                )
-                try:
-                    workspace.retry_requested.disconnect()
-                except TypeError:
-                    pass
-                workspace.retry_requested.connect(self._retry_agent)
+        if index == 3 and self._current_project_dir is not None:
+            self._workspace_view.load_project_dir(self._current_project_dir)
 
         self._previous_tab_index = index
 
@@ -288,18 +237,13 @@ class MainWindow(QMainWindow):
             self.sidebar.setCurrentRow(0)
             return
         key = item.data(Qt.ItemDataRole.UserRole)
-        if key in self.views:
-            self.stack.setCurrentWidget(self.views[key])
+        if key in self._views:
+            self.stack.setCurrentWidget(self._views[key])
 
     # ── Actions ───────────────────────────────────────────────────────────
 
     def _maybe_close_current_project(self) -> bool:
-        bible = self.views["bible"]
-        if (
-            not isinstance(bible, BibleEditorView)
-            or bible._project_dir is None
-            or not bible.is_dirty
-        ):
+        if not self._bible_view.is_loaded or not self._bible_view.is_dirty:
             return True
 
         reply = QMessageBox.question(
@@ -312,9 +256,9 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Cancel,
         )
         if reply == QMessageBox.StandardButton.Save:
-            return bible.save_all()
+            return self._bible_view.save_all()
         if reply == QMessageBox.StandardButton.Discard:
-            bible.load_project_dir(bible._project_dir)
+            self._bible_view.reload()
             return True
         return False
 
@@ -353,20 +297,10 @@ class MainWindow(QMainWindow):
         TokenTracker.get()
         self._update_status_bar_tokens()
 
-        bible = self.views["bible"]
-        if isinstance(bible, BibleEditorView):
-            bible.load_project_dir(proj_dir)
-        dashboard = self.views["dashboard"]
-        if isinstance(dashboard, DashboardView):
-            dashboard.load_project_dir(proj_dir)
-
-        outline = self.views["outline"]
-        if isinstance(outline, OutlineEditorView):
-            outline.load_project_dir(proj_dir)
-        workspace = self.views["workspace"]
-        if isinstance(workspace, SceneWorkspaceView):
-            workspace.load_project_dir(proj_dir)
-        self._wire_project_signals()
+        self._bible_view.load_project_dir(proj_dir)
+        self._dashboard_view.load_project_dir(proj_dir)
+        self._outline_view.load_project_dir(proj_dir)
+        self._workspace_view.load_project_dir(proj_dir)
 
         QMessageBox.information(
             self, "创建成功", f"项目「{project.title}」已创建\n{proj_dir}"
@@ -414,20 +348,10 @@ class MainWindow(QMainWindow):
         TokenTracker.get()
         self._update_status_bar_tokens()
 
-        bible = self.views["bible"]
-        if isinstance(bible, BibleEditorView):
-            bible.load_project_dir(Path(dir_path))
-        dashboard = self.views["dashboard"]
-        if isinstance(dashboard, DashboardView):
-            dashboard.load_project_dir(Path(dir_path))
-
-        outline = self.views["outline"]
-        if isinstance(outline, OutlineEditorView):
-            outline.load_project_dir(Path(dir_path))
-        workspace = self.views["workspace"]
-        if isinstance(workspace, SceneWorkspaceView):
-            workspace.load_project_dir(Path(dir_path))
-        self._wire_project_signals()
+        self._bible_view.load_project_dir(project_dir)
+        self._dashboard_view.load_project_dir(project_dir)
+        self._outline_view.load_project_dir(project_dir)
+        self._workspace_view.load_project_dir(project_dir)
 
         from PySide6.QtCore import QSettings
         settings = QSettings()
@@ -437,8 +361,7 @@ class MainWindow(QMainWindow):
             chapter_id = self._find_chapter_for_scene(last_scene_id)
             if chapter_id:
                 self.sidebar.setCurrentRow(3)
-                if isinstance(outline, OutlineEditorView):
-                    outline._select_by_id(last_scene_id)
+                self._outline_view.activate_scene(last_scene_id)
             else:
                 self.sidebar.setCurrentRow(0)
 
@@ -525,29 +448,14 @@ class MainWindow(QMainWindow):
         if self._current_project_dir is None:
             return
 
-        bible = self.views.get("bible")
-        if isinstance(bible, BibleEditorView):
-            bible.set_current_scene_id(scene_id)
-            from app.storage.project_files import load_all_volumes
-
-            referenced_ids = next(
-                (
-                    set(scene.world_element_ids)
-                    for volume in load_all_volumes(self._current_project_dir)
-                    for chapter in volume.chapters
-                    for scene in chapter.scenes
-                    if scene.id == scene_id
-                ),
-                set(),
-            )
-            bible._world_tab.set_current_scene_element_ids(referenced_ids)
-
-        workspace = self.views.get("workspace")
-        if not isinstance(workspace, SceneWorkspaceView):
-            return
-
+        referenced_ids = (
+            set(self._application.outlines.scene_element_ids(scene_id))
+            if self._application is not None
+            else set()
+        )
+        self._bible_view.set_current_scene_context(scene_id, referenced_ids)
         chapter_id = self._find_chapter_for_scene(scene_id)
-        workspace.set_scene(scene_id, chapter_id or "")
+        self._workspace_view.set_scene(scene_id, chapter_id or "")
 
         from PySide6.QtCore import QSettings
         settings = QSettings()
@@ -559,13 +467,15 @@ class MainWindow(QMainWindow):
             from app.pipeline.context_builder import RetrievalEngine
             engine = RetrievalEngine()
             context = engine.assemble(self._current_project_dir, scene_id=scene_id)
-            workspace.show_context(context)
+            self._workspace_view.show_context(context)
         except Exception:
-            workspace.clear_context()
+            self._workspace_view.clear_context()
 
         # Load existing prose if available
         if chapter_id:
-            self._load_scene_prose_into_editor(workspace, chapter_id, scene_id)
+            self._load_scene_prose_into_editor(
+                self._workspace_view, chapter_id, scene_id
+            )
 
     def _active_version_fallback_warning(self) -> str:
         """Return export warning text if any active prose version is missing."""
@@ -648,7 +558,7 @@ class MainWindow(QMainWindow):
                 self._refresh_prose_versions(
                     chapter_id, scene_id, f"v{recovered_record.revision_number}"
                 )
-                workspace.editor.setPlainText(recovered_prose)
+                workspace.set_prose_text(recovered_prose)
             if recovered_record is not None:
                 QMessageBox.information(
                     self,
@@ -666,7 +576,7 @@ class MainWindow(QMainWindow):
             prose = load_scene_prose_version(
                 self._current_project_dir, chapter_id, scene_id, version
             )
-        workspace.editor.setPlainText(prose)
+        workspace.set_prose_text(prose)
         if active_missing:
             QMessageBox.warning(
                 self,
@@ -680,39 +590,30 @@ class MainWindow(QMainWindow):
         """Refresh editor version choices for the current scene."""
         if self._current_project_dir is None:
             return []
-        workspace = self.views.get("workspace")
-        if not isinstance(workspace, SceneWorkspaceView):
-            return []
-
         from app.storage.project_files import list_scene_prose_versions
 
         versions = list_scene_prose_versions(
             self._current_project_dir, chapter_id, scene_id
         )
-        if (
-            workspace._current_scene_id != scene_id
-            or workspace._current_chapter_id != chapter_id
-        ):
+        if not self._workspace_view.is_showing_scene(scene_id, chapter_id):
             return versions
         if current is None and versions:
             current = versions[0]
         self._current_prose_version = current
-        workspace.editor.set_versions(versions, current)
+        self._workspace_view.set_prose_versions(versions, current)
         return versions
 
     def _on_prose_version_selected(self, version: str) -> None:
         """Load the selected prose version into the editor."""
         if version == self._current_prose_version or self._current_project_dir is None:
             return
-        workspace = self.views.get("workspace")
-        if not isinstance(workspace, SceneWorkspaceView):
-            return
-        scene_id = workspace._current_scene_id
-        chapter_id = workspace._current_chapter_id
+        workspace = self._workspace_view
+        scene_id = workspace.current_scene_id
+        chapter_id = workspace.current_chapter_id
         if not scene_id or not chapter_id:
             return
 
-        if workspace.editor.is_modified():
+        if workspace.prose_is_modified():
             answer = QMessageBox.question(
                 self,
                 "切换版本",
@@ -726,7 +627,7 @@ class MainWindow(QMainWindow):
 
         from app.storage.project_files import load_scene_prose_version
 
-        workspace.editor.setPlainText(
+        workspace.set_prose_text(
             load_scene_prose_version(self._current_project_dir, chapter_id, scene_id, version)
         )
         self._current_prose_version = version
@@ -735,11 +636,9 @@ class MainWindow(QMainWindow):
         """Offer publication for the selected revision; selection alone is view-only."""
         if self._current_project_dir is None:
             return
-        workspace = self.views.get("workspace")
-        if not isinstance(workspace, SceneWorkspaceView):
-            return
-        scene_id = workspace._current_scene_id
-        chapter_id = workspace._current_chapter_id
+        workspace = self._workspace_view
+        scene_id = workspace.current_scene_id
+        chapter_id = workspace.current_chapter_id
         if not scene_id or not chapter_id or not version:
             return
 
@@ -751,7 +650,7 @@ class MainWindow(QMainWindow):
         if record is None:
             QMessageBox.warning(self, "无法发布", "此旧版本没有生成记录，只能查看。")
             return
-        if workspace.editor.is_modified():
+        if workspace.prose_is_modified():
             self._continue_with_edited_draft(workspace, record)
             return
         if not record.review_overridden and not (record.review or {}).get("overall_pass", False):
@@ -782,7 +681,7 @@ class MainWindow(QMainWindow):
 
         result = GenerationResult(
             scene_id=source_record.scene_id,
-            prose=workspace.editor.toPlainText(),
+            prose=workspace.prose_text(),
             plan=ScenePlan.model_validate(source_record.scene_plan)
             if source_record.scene_plan
             else None,
@@ -800,25 +699,34 @@ class MainWindow(QMainWindow):
         save_scene_generation_record(self._current_project_dir, record)
         self._pending_draft = (pipeline, result, record)
         self._schedule_analysis_with_retry(
-            pipeline, result, record, workspace, workspace.trace_panel.update_trace
+            pipeline, result, record, workspace, workspace.update_trace
         )
+
+    def _on_plan_approved(self, edited_plan: dict) -> None:
+        """Resolve the current planner decision as approved."""
+        if self._plan_decision is None or self._plan_decision.done():
+            return
+        self._plan_decision.set_result((True, edited_plan))
+        self._workspace_view.hide_plan_checkpoint()
+
+    def _on_plan_rejected(self) -> None:
+        """Resolve the current planner decision as rejected."""
+        if self._plan_decision is None or self._plan_decision.done():
+            return
+        self._plan_decision.set_result((False, None))
+        self._workspace_view.hide_plan_checkpoint()
+        self._workspace_view.set_generating(False)
+        self._workspace_view.clear_trace()
+        self._generation_in_progress = False
 
     def _on_next_scene(self) -> None:
         """Navigate to the next scene in the outline sequence."""
-        workspace = self.views.get("workspace")
-        if not isinstance(workspace, SceneWorkspaceView):
+        scene_id = self._workspace_view.current_scene_id
+        if not scene_id:
             return
-        if not workspace._current_scene_id:
-            return
-
-        outline = self.views.get("outline")
-        if not isinstance(outline, OutlineEditorView):
-            return
-
-        next_id = outline.select_next_scene(workspace._current_scene_id)
+        next_id = self._outline_view.select_next_scene(scene_id)
         if next_id is None:
-            workspace._next_scene_btn.setEnabled(False)
-            workspace._status_label.setText("已是最后一场景")
+            self._workspace_view.mark_last_scene()
 
     def _on_generate_requested(self, scene_id: str) -> None:
         """Trigger full pipeline generation for the given scene."""
@@ -826,9 +734,7 @@ class MainWindow(QMainWindow):
         if self._current_project_dir is None:
             return
 
-        workspace = self.views.get("workspace")
-        if not isinstance(workspace, SceneWorkspaceView):
-            return
+        workspace = self._workspace_view
 
         from app.providers.config import get_provider_for_step, load_provider_config
 
@@ -838,64 +744,25 @@ class MainWindow(QMainWindow):
         writer_provider = get_provider_for_step("writer", config)
         reviewer_provider = get_provider_for_step("reviewer", config)
 
-        workspace.set_generating(True)
+        workspace.begin_generation()
         self._generation_in_progress = True
-        workspace.editor.setPlainText("")
-        workspace.trace_panel.clear()
-        workspace.trace_panel.set_waiting("正在组装上下文...")
-        workspace.hide_review_result()
-        workspace.hide_fact_approval()
 
         from app.pipeline.pipeline import ScenePipeline
 
         pipeline = ScenePipeline()
 
-        import asyncio
-
-        plan_loop = asyncio.get_event_loop()
-        plan_decision: asyncio.Future[tuple[bool, dict | None]] | None = None
-
-        def _on_plan_approved(edited_plan: dict):
-            if plan_decision is not None and not plan_decision.done():
-                plan_decision.set_result((True, edited_plan))
-                workspace.planner_checkpoint.hide_plan()
-
-        def _on_plan_rejected():
-            if plan_decision is not None and not plan_decision.done():
-                plan_decision.set_result((False, None))
-                workspace.planner_checkpoint.hide_plan()
-                workspace.set_generating(False)
-                self._generation_in_progress = False
-                workspace.trace_panel.clear()
-
-        try:
-            workspace.planner_checkpoint.approved.disconnect()
-        except TypeError:
-            pass
-        workspace.planner_checkpoint.approved.connect(_on_plan_approved)
-
-        try:
-            workspace.planner_checkpoint.rejected.disconnect()
-        except TypeError:
-            pass
-        workspace.planner_checkpoint.rejected.connect(_on_plan_rejected)
-
         async def on_plan_ready(plan) -> bool:
-            nonlocal plan_decision
-            plan_decision = plan_loop.create_future()
-            workspace.planner_checkpoint.show_plan(plan.model_dump(mode="json"))
+            self._plan_decision = asyncio.get_event_loop().create_future()
+            workspace.show_plan_checkpoint(plan.model_dump(mode="json"))
             try:
-                approved, edited_plan = await plan_decision
+                approved, edited_plan = await self._plan_decision
                 if approved and edited_plan is not None:
                     validated = type(plan).model_validate(edited_plan)
                     for field, value in validated.model_dump().items():
                         setattr(plan, field, value)
                 return approved
             finally:
-                plan_decision = None
-
-        def on_trace(trace):
-            workspace.trace_panel.update_trace(trace)
+                self._plan_decision = None
 
         async def _run():
             providers = [planner_provider, char_provider, writer_provider, reviewer_provider]
@@ -907,16 +774,16 @@ class MainWindow(QMainWindow):
                     char_provider,
                     writer_provider,
                     reviewer_provider,
-                    on_trace=on_trace,
+                    on_trace=workspace.update_trace,
                     on_plan_ready=on_plan_ready,
                 ):
                     if token is not None:
-                        workspace.editor.append(token)
+                        workspace.append_prose(token)
                     if result is not None:
                         workspace.set_generating(False)
                         self._generation_in_progress = False
                         if result.prose:
-                            workspace._status_label.setText("已生成")
+                            workspace.set_status("已生成")
                             self._update_status_bar_tokens()
                             if result.review is not None:
                                 workspace.show_review_result(
@@ -933,20 +800,24 @@ class MainWindow(QMainWindow):
                             self._pending_draft = (pipeline, result, record)
                             if result.review is not None and result.review.overall_pass:
                                 await self._analyze_and_offer_publication(
-                                    pipeline, result, record, workspace, on_trace
+                                    pipeline,
+                                    result,
+                                    record,
+                                    workspace,
+                                    workspace.update_trace,
                                 )
                             else:
-                                workspace._status_label.setText("草稿已保存")
+                                workspace.set_status("草稿已保存")
                         elif result.plan is not None:
                             pass
                         else:
-                            workspace._status_label.setText("生成失败")
+                            workspace.set_status("生成失败")
                         return
             except Exception:
-                workspace.trace_panel.clear()
+                workspace.clear_trace()
                 workspace.set_generating(False)
                 self._generation_in_progress = False
-                workspace._status_label.setText("生成失败")
+                workspace.set_status("生成失败")
             finally:
                 for p in providers:
                     try:
@@ -1027,9 +898,7 @@ class MainWindow(QMainWindow):
         )
         save_scene_generation_record(self._current_project_dir, record)
         discard_scene_writer_draft(self._current_project_dir, result.scene_id)
-        workspace = self.views.get("workspace")
-        if isinstance(workspace, SceneWorkspaceView):
-            workspace.editor.setPlainText(result.prose)
+        self._workspace_view.set_prose_text(result.prose)
         return record
 
     async def _analyze_and_offer_publication(
@@ -1070,7 +939,7 @@ class MainWindow(QMainWindow):
             result.extracted_facts,
             result.state_changes,
         )
-        workspace._status_label.setText("等待发布")
+        workspace.set_status("等待发布")
 
     def _schedule_analysis_with_retry(
         self, pipeline, result, record, workspace, on_trace
@@ -1083,7 +952,7 @@ class MainWindow(QMainWindow):
                     pipeline, result, record, workspace, on_trace
                 )
             except Exception:
-                workspace._status_label.setText("记忆分析失败")
+                workspace.set_status("记忆分析失败")
                 workspace.show_review_result(
                     False, "记忆分析失败；草稿已保存，可重试"
                 )
@@ -1094,16 +963,14 @@ class MainWindow(QMainWindow):
         if self._pending_draft is None or self._current_project_dir is None:
             return
         pipeline, result, record = self._pending_draft
-        workspace = self.views.get("workspace")
-        if not isinstance(workspace, SceneWorkspaceView):
-            return
+        workspace = self._workspace_view
         from app.storage.project_files import save_scene_generation_record
 
         record.review_overridden = True
         save_scene_generation_record(self._current_project_dir, record)
-        workspace._continue_review_btn.hide()
+        workspace.hide_continue_review()
         self._schedule_analysis_with_retry(
-            pipeline, result, record, workspace, workspace.trace_panel.update_trace
+            pipeline, result, record, workspace, workspace.update_trace
         )
 
     def _on_approval_batch_approved(
@@ -1116,8 +983,8 @@ class MainWindow(QMainWindow):
         """Publish the exact draft revision and its approved memory."""
         if self._current_project_dir is None:
             return
-        workspace = self.views.get("workspace")
-        if isinstance(workspace, SceneWorkspaceView) and workspace.editor.is_modified():
+        workspace = self._workspace_view
+        if workspace.prose_is_modified():
             from app.storage.project_files import load_scene_generation_record
 
             source_record = load_scene_generation_record(
@@ -1141,8 +1008,7 @@ class MainWindow(QMainWindow):
             logger.exception("Could not publish scene revision %s", revision_id)
             QMessageBox.critical(self, "发布失败", str(exc))
             return
-        if isinstance(workspace, SceneWorkspaceView):
-            workspace.hide_fact_approval()
+        workspace.hide_fact_approval()
         chapter_id = self._find_chapter_for_scene(scene_id)
         record = None
         if chapter_id:
@@ -1152,8 +1018,7 @@ class MainWindow(QMainWindow):
             )
             if record is not None:
                 self._refresh_prose_versions(chapter_id, scene_id, f"v{record.revision_number}")
-        if isinstance(workspace, SceneWorkspaceView):
-            workspace._status_label.setText("已发布")
+        workspace.set_status("已发布")
         self._pending_draft = None
 
 
@@ -1239,11 +1104,8 @@ class MainWindow(QMainWindow):
             f"已迁移 {migrated} 个角色。\n备份存储在: {backup_dir}"
         )
 
-        # Reload the Bible Editor's character tab to pick up migrated characters
         if migrated > 0:
-            bible = self.views.get("bible")
-            if isinstance(bible, BibleEditorView):
-                bible._character_tab.load_project_dir(project_dir)
+            self._bible_view.reload_characters()
 
     def _set_nav_items_enabled(self, enabled: bool) -> None:
         """Enable or disable all non-dashboard sidebar items."""

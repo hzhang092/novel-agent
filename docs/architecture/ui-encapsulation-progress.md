@@ -128,3 +128,34 @@ Status: complete
 ### Remaining violations
 
 - 11 unique private-access baseline entries and four raw workspace child names.
+
+## Checkpoint 5 — MainWindow orchestration
+
+Status: complete
+
+### Contracts added
+
+- Typed dashboard, Bible, outline, and workspace view fields replace the public
+  string-keyed view dictionary.
+- MainWindow uses Bible, outline, and workspace semantic methods for navigation,
+  save/reload, generation, recovery, version selection, and publication.
+- Workspace plan, version, publication, and approval signals are forwarded once
+  during construction and handled by MainWindow.
+- Read-only workspace workflow state supports integration assertions without
+  exposing controls or embedded panels.
+
+### Private accesses removed
+
+- MainWindow no longer reads another component's private fields or calls private
+  event handlers.
+- MainWindow no longer accesses raw SceneWorkspaceView children.
+- Project creation and opening no longer reconnect or broadly disconnect signals.
+
+### Verification
+
+- Architecture, workspace, MainWindow navigation, and scene-save tests — 38 passed.
+- Required focused editor and MainWindow suite — 161 passed.
+
+### Remaining violations
+
+- None. The strict AST guard has no migration allowlist.

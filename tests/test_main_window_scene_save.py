@@ -140,30 +140,28 @@ def test_writer_recovery_is_promoted_and_visible_after_restart(
     window = MainWindow()
     qtbot.addWidget(window)
     window._current_project_dir = proj_dir
-    workspace = window.views["workspace"]
-    workspace._current_chapter_id = "ch-1"
-    workspace._current_scene_id = "scene-1"
+    workspace = window._workspace_view
+    workspace.set_scene("scene-1", "ch-1")
     window._load_scene_prose_into_editor(workspace, "ch-1", "scene-1")
 
     recovered = load_scene_generation_record(proj_dir, "scene-1")
     assert recovered.status == "draft"
     assert recovered.draft_text == "崩溃前完成的正文"
     assert load_scene_writer_draft(proj_dir, "scene-1") == ""
-    assert workspace.editor.toPlainText() == "崩溃前完成的正文"
+    assert workspace.prose_text() == "崩溃前完成的正文"
     assert notices
 
     reopened = MainWindow()
     qtbot.addWidget(reopened)
     reopened._current_project_dir = proj_dir
-    reopened_workspace = reopened.views["workspace"]
-    reopened_workspace._current_chapter_id = "ch-1"
-    reopened_workspace._current_scene_id = "scene-1"
+    reopened_workspace = reopened._workspace_view
+    reopened_workspace.set_scene("scene-1", "ch-1")
     reopened._load_scene_prose_into_editor(
         reopened_workspace, "ch-1", "scene-1"
     )
 
-    assert reopened_workspace.editor.toPlainText() == "崩溃前完成的正文"
-    assert reopened_workspace.editor.current_version() == "v1"
+    assert reopened_workspace.prose_text() == "崩溃前完成的正文"
+    assert reopened_workspace.current_prose_version() == "v1"
 
 
 def test_writer_recovery_does_not_duplicate_an_already_saved_draft(
@@ -213,14 +211,13 @@ def test_writer_recovery_does_not_duplicate_an_already_saved_draft(
     window = MainWindow()
     qtbot.addWidget(window)
     window._current_project_dir = proj_dir
-    workspace = window.views["workspace"]
-    workspace._current_chapter_id = "ch-1"
-    workspace._current_scene_id = "scene-1"
+    workspace = window._workspace_view
+    workspace.set_scene("scene-1", "ch-1")
     window._load_scene_prose_into_editor(workspace, "ch-1", "scene-1")
 
     assert list_scene_prose_versions(proj_dir, "ch-1", "scene-1") == ["v2", "v1"]
-    assert workspace.editor.current_version() == "v2"
-    assert workspace.editor.toPlainText() == "已保存的恢复正文"
+    assert workspace.current_prose_version() == "v2"
+    assert workspace.prose_text() == "已保存的恢复正文"
     assert load_scene_writer_draft(proj_dir, "scene-1") == ""
 
 
@@ -262,17 +259,16 @@ def test_writer_recovery_reuses_a_version_written_before_its_record(
     window = MainWindow()
     qtbot.addWidget(window)
     window._current_project_dir = proj_dir
-    workspace = window.views["workspace"]
-    workspace._current_chapter_id = "ch-1"
-    workspace._current_scene_id = "scene-1"
+    workspace = window._workspace_view
+    workspace.set_scene("scene-1", "ch-1")
     window._load_scene_prose_into_editor(workspace, "ch-1", "scene-1")
 
     recovered = load_scene_generation_record(proj_dir, "scene-1", version="v2")
     assert recovered.status == "draft"
     assert recovered.draft_text == "记录前中断的正文"
     assert list_scene_prose_versions(proj_dir, "ch-1", "scene-1") == ["v2", "v1"]
-    assert workspace.editor.current_version() == "v2"
-    assert workspace.editor.toPlainText() == "记录前中断的正文"
+    assert workspace.current_prose_version() == "v2"
+    assert workspace.prose_text() == "记录前中断的正文"
     assert load_scene_writer_draft(proj_dir, "scene-1") == ""
 
 
@@ -306,16 +302,15 @@ def test_writer_recovery_repairs_a_truncated_generation_record(
     window = MainWindow()
     qtbot.addWidget(window)
     window._current_project_dir = proj_dir
-    workspace = window.views["workspace"]
-    workspace._current_chapter_id = "ch-1"
-    workspace._current_scene_id = "scene-1"
+    workspace = window._workspace_view
+    workspace.set_scene("scene-1", "ch-1")
     window._load_scene_prose_into_editor(workspace, "ch-1", "scene-1")
 
     recovered = load_scene_generation_record(proj_dir, "scene-1", version="v1")
     assert recovered.status == "draft"
     assert recovered.draft_text == "记录写入时中断的正文"
     assert list_scene_prose_versions(proj_dir, "ch-1", "scene-1") == ["v1"]
-    assert workspace.editor.toPlainText() == "记录写入时中断的正文"
+    assert workspace.prose_text() == "记录写入时中断的正文"
     assert load_scene_writer_draft(proj_dir, "scene-1") == ""
 
 
@@ -360,15 +355,14 @@ def test_writer_recovery_ignores_an_unrelated_truncated_record(
     window = MainWindow()
     qtbot.addWidget(window)
     window._current_project_dir = proj_dir
-    workspace = window.views["workspace"]
-    workspace._current_chapter_id = "ch-1"
-    workspace._current_scene_id = "scene-1"
+    workspace = window._workspace_view
+    workspace.set_scene("scene-1", "ch-1")
     window._load_scene_prose_into_editor(workspace, "ch-1", "scene-1")
 
     recovered = load_scene_generation_record(proj_dir, "scene-1", version="v2")
     assert recovered.scene_plan == {"purpose": "保留的计划"}
     assert list_scene_prose_versions(proj_dir, "ch-1", "scene-1") == ["v2", "v1"]
-    assert workspace.editor.current_version() == "v2"
+    assert workspace.current_prose_version() == "v2"
     assert load_scene_writer_draft(proj_dir, "scene-1") == ""
 
 
@@ -455,9 +449,9 @@ def test_fact_approval_keeps_corrupt_canon_file_unchanged(qtbot, tmp_path, monke
     qtbot.addWidget(window)
     window._current_project_dir = proj_dir
     monkeypatch.setattr("app.ui.main_window.QMessageBox.critical", lambda *args: None)
-    workspace = window.views["workspace"]
+    workspace = window._workspace_view
     fact = {"description": "新事实", "category": "world"}
-    workspace.fact_approval.show_items("scene-1", "rev-1", [fact], [])
+    workspace.show_fact_approval("scene-1", "rev-1", [fact], [])
 
     window._on_approval_batch_approved(
         "scene-1",
@@ -467,8 +461,8 @@ def test_fact_approval_keeps_corrupt_canon_file_unchanged(qtbot, tmp_path, monke
     )
 
     assert facts_path.read_bytes() == original
-    assert not workspace.fact_approval.isHidden()
-    assert workspace.fact_approval._facts == [fact]
+    assert workspace.fact_approval_is_visible
+    assert workspace.pending_approval_counts == (1, 0)
 
 
 @pytest.mark.asyncio
@@ -500,7 +494,7 @@ async def test_analysis_saves_scene_summary_on_draft_record(qtbot, tmp_path, mon
     window = MainWindow()
     qtbot.addWidget(window)
     window._current_project_dir = proj_dir
-    workspace = window.views["workspace"]
+    workspace = window._workspace_view
     result = SimpleNamespace(
         scene_id="scene-1",
         extracted_facts=[],
@@ -538,8 +532,8 @@ async def test_detached_analysis_failure_restores_visible_retry(qtbot, monkeypat
 
     window = MainWindow()
     qtbot.addWidget(window)
-    workspace = window.views["workspace"]
-    workspace._continue_review_btn.hide()
+    workspace = window._workspace_view
+    workspace.hide_continue_review()
 
     async def fail_analysis(*args, **kwargs):
         raise RuntimeError("summary extraction failed")
@@ -551,9 +545,9 @@ async def test_detached_analysis_failure_restores_visible_retry(qtbot, monkeypat
     await asyncio.sleep(0)
     await asyncio.sleep(0)
 
-    assert workspace._status_label.text() == "记忆分析失败"
-    assert not workspace._continue_review_btn.isHidden()
-    assert "草稿已保存，可重试" in workspace._review_label.text()
+    assert workspace.status_text == "记忆分析失败"
+    assert workspace.continue_review_is_visible
+    assert "草稿已保存，可重试" in workspace.review_summary
 
 
 def test_successful_fact_approval_clears_panel(qtbot, tmp_path, monkeypatch):
@@ -562,9 +556,9 @@ def test_successful_fact_approval_clears_panel(qtbot, tmp_path, monkeypatch):
     window = MainWindow()
     qtbot.addWidget(window)
     window._current_project_dir = tmp_path
-    workspace = window.views["workspace"]
+    workspace = window._workspace_view
     fact = {"description": "新事实", "category": "world"}
-    workspace.fact_approval.show_items("scene-1", "rev-1", [fact], [])
+    workspace.show_fact_approval("scene-1", "rev-1", [fact], [])
     monkeypatch.setattr(
         "app.storage.timeline_repository.publish_scene_revision",
         lambda *args: None,
@@ -573,5 +567,5 @@ def test_successful_fact_approval_clears_panel(qtbot, tmp_path, monkeypatch):
 
     window._on_approval_batch_approved("scene-1", "rev-1", [fact], [])
 
-    assert workspace.fact_approval.isHidden()
-    assert workspace.fact_approval._facts == []
+    assert not workspace.fact_approval_is_visible
+    assert workspace.pending_approval_counts == (0, 0)
