@@ -86,3 +86,24 @@ Status: complete
 ### Remaining violations
 
 - 11 unique private-access baseline entries and four raw workspace child names.
+
+## Checkpoint 3 — Outline facade
+
+Status: complete
+
+### Contracts added
+
+- Outline load state, save, Story Bible refresh, and scene activation.
+- Scene activation validates node type and emits exactly once, including reselection.
+
+### Private accesses removed
+
+- None yet; `MainWindow` migration to these contracts is checkpoint 5.
+
+### Verification
+
+- Outline, MainWindow Bible navigation, and architecture tests — 45 passed.
+
+### Remaining violations
+
+- 11 unique private-access baseline entries and four raw workspace child names.

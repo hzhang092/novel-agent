@@ -80,6 +80,38 @@ class OutlineEditorView(QWidget):
         self._application = service
         self._project_dir = service.project_dir
 
+    @property
+    def is_loaded(self) -> bool:
+        """Return whether a project is bound to the editor."""
+        return self._project_dir is not None
+
+    def save(self) -> bool:
+        """Gather the current form and persist the outline."""
+        if self._project_dir is None:
+            return False
+        self._gather_current_form()
+        self._volumes = list(self._application.save_outline(self._volumes))
+        self.saved.emit()
+        return True
+
+    def refresh_world_elements(self) -> None:
+        """Reload Story Bible elements used by scene forms."""
+        if self._application is not None:
+            self._scene_elements.set_elements(
+                self._application.load_editor_snapshot().bible_elements
+            )
+
+    def activate_scene(self, scene_id: str) -> bool:
+        """Select a scene and emit scene_selected exactly once."""
+        item = self._find_tree_item(scene_id)
+        if item is None or item.data(0, ROLE_NODE_TYPE) != "scene":
+            return False
+        if self._tree.currentItem() is item:
+            self.scene_selected.emit(scene_id)
+        else:
+            self._tree.setCurrentItem(item)
+        return True
+
     # ── UI Setup ───────────────────────────────────────────────────────────
 
     def _setup_ui(self) -> None:
@@ -328,11 +360,7 @@ class OutlineEditorView(QWidget):
         self._scene_elements.set_selected_ids(sc.world_element_ids)
 
     def _refresh_world_elements(self) -> None:
-        if self._application is None:
-            return
-        self._scene_elements.set_elements(
-            self._application.load_editor_snapshot().bible_elements
-        )
+        self.refresh_world_elements()
 
     def _refresh_character_dropdowns(self) -> None:
         if self._application is None:
@@ -537,8 +565,7 @@ class OutlineEditorView(QWidget):
         next_scene = find_next_scene(self._volumes, current_scene_id)
         if next_scene is None:
             return None
-        self._select_by_id(next_scene.id)
-        return next_scene.id
+        return next_scene.id if self.activate_scene(next_scene.id) else None
 
     def _find_volume(self, volume_id: str):
         return find_volume(self._volumes, volume_id)
@@ -551,23 +578,29 @@ class OutlineEditorView(QWidget):
             current = current.parent()
         return None
 
-    def _select_by_id(self, node_id: str) -> None:
+    def _find_tree_item(self, node_id: str) -> QTreeWidgetItem | None:
         def find_in_item(parent_item):
             if parent_item.data(0, ROLE_NODE_ID) == node_id:
-                self._tree.setCurrentItem(parent_item)
-                return True
-            for i in range(parent_item.childCount()):
-                if find_in_item(parent_item.child(i)):
-                    return True
-            return False
+                return parent_item
+            for index in range(parent_item.childCount()):
+                found = find_in_item(parent_item.child(index))
+                if found is not None:
+                    return found
+            return None
 
         for i in range(self._tree.topLevelItemCount()):
             item = self._tree.topLevelItem(i)
-            if item.data(0, ROLE_NODE_ID) == node_id:
-                self._tree.setCurrentItem(item)
-                return
-            if find_in_item(item):
-                return
+            found = find_in_item(item)
+            if found is not None:
+                return found
+        return None
+
+    def _select_by_id(self, node_id: str) -> bool:
+        item = self._find_tree_item(node_id)
+        if item is None:
+            return False
+        self._tree.setCurrentItem(item)
+        return True
 
     # ── Heatmap ────────────────────────────────────────────────────────────
 
@@ -646,12 +679,4 @@ class OutlineEditorView(QWidget):
                             break
 
     def _on_save(self) -> None:
-        """Persist all volumes to disk."""
-        if self._project_dir is None:
-            return
-
-        self._gather_current_form()
-
-        self._volumes = list(self._application.save_outline(self._volumes))
-
-        self.saved.emit()
+        self.save()

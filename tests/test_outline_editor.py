@@ -33,6 +33,90 @@ def test_initial_state_empty(editor):
     assert not widget._delete_btn.isEnabled()
 
 
+def test_outline_public_save_refresh_and_activation_contracts(
+    editor, qtbot, monkeypatch
+):
+    from app.ui.outline_editor import OutlineEditorView
+
+    widget, project_dir = editor
+    assert widget.is_loaded is True
+    widget._on_add_volume()
+    volume = widget._tree.topLevelItem(0)
+    widget._tree.setCurrentItem(volume)
+    widget._on_add_chapter()
+    volume = widget._tree.topLevelItem(0)
+    chapter = volume.child(0)
+    widget._tree.setCurrentItem(chapter)
+    widget._on_add_scene()
+    volume = widget._tree.topLevelItem(0)
+    chapter = volume.child(0)
+    scene = chapter.child(0)
+    scene_id = scene.data(0, Qt.ItemDataRole.UserRole + 1)
+    volume_id = volume.data(0, Qt.ItemDataRole.UserRole + 1)
+    selected = []
+    widget.scene_selected.connect(selected.append)
+
+    assert widget.activate_scene(volume_id) is False
+    assert widget.activate_scene("missing") is False
+    assert widget.activate_scene(scene_id) is True
+    assert selected == [scene_id]
+    assert widget.activate_scene(scene_id) is True
+    assert selected == [scene_id, scene_id]
+    assert widget.save() is True
+
+    refreshed = []
+    monkeypatch.setattr(
+        widget._scene_elements,
+        "set_elements",
+        lambda elements: refreshed.append(elements),
+    )
+    widget.refresh_world_elements()
+    assert len(refreshed) == 1
+
+    reopened = OutlineEditorView()
+    qtbot.addWidget(reopened)
+    reopened.load_project_dir(project_dir)
+    reopened_selected = []
+    reopened.scene_selected.connect(reopened_selected.append)
+    assert reopened.activate_scene(scene_id) is True
+    assert reopened_selected == [scene_id]
+
+
+def test_next_scene_crosses_chapter_and_volume_boundaries(tmp_path, qtbot):
+    from app.storage.models import ChapterOutline, SceneOutline, VolumeOutline
+    from app.storage.project_files import save_volume_outline
+    from app.ui.outline_editor import OutlineEditorView
+
+    project_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_volume_outline(
+        project_dir,
+        VolumeOutline(
+            id="v1",
+            chapters=[
+                ChapterOutline(id="c1", scenes=[SceneOutline(id="s1")]),
+                ChapterOutline(id="c2", scenes=[SceneOutline(id="s2")]),
+            ],
+        ),
+    )
+    save_volume_outline(
+        project_dir,
+        VolumeOutline(
+            id="v2",
+            chapters=[ChapterOutline(id="c3", scenes=[SceneOutline(id="s3")])],
+        ),
+    )
+    widget = OutlineEditorView()
+    qtbot.addWidget(widget)
+    widget.load_project_dir(project_dir)
+    selected = []
+    widget.scene_selected.connect(selected.append)
+
+    assert widget.select_next_scene("s1") == "s2"
+    assert widget.select_next_scene("s2") == "s3"
+    assert widget.select_next_scene("s3") is None
+    assert selected == ["s2", "s3"]
+
+
 def test_add_volume(editor):
     """Adding a volume creates a top-level tree item."""
     widget, proj_dir = editor
