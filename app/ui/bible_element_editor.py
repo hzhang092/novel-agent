@@ -338,14 +338,11 @@ class BibleElementEditor(QWidget):
             }
         if isinstance(element, PowerSystemElement):
             realms = []
-            for row in range(self._power_realms.rowCount()):
-                name = read_table_cell(self._power_realms._table, row, 0)
+            for name, abilities_text in self._power_realms.rows():
                 if name:
                     abilities = [
                         value.strip()
-                        for value in read_table_cell(
-                            self._power_realms._table, row, 1
-                        ).splitlines()
+                        for value in abilities_text.splitlines()
                         if value.strip()
                     ]
                     realms.append(PowerRealm(name=name, abilities=abilities))

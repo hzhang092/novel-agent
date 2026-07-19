@@ -61,13 +61,42 @@ def test_element_list_selects_by_id_and_marks_unsaved(qtbot):
     widget.element_selected.connect(selected.append)
 
     widget.set_unsaved_ids({"same-2"})
-    widget.select_element("same-2")
+    assert widget.select_element("same-2") is True
 
     assert widget.selected_element_id() == "same-2"
     assert selected[-1] == "same-2"
     item = widget._tree.currentItem()
     assert item.text(0).startswith("* ")
     assert "地点" in item.text(0)
+
+
+def test_element_list_selection_contracts_emit_or_restore_silently(qtbot):
+    widget = BibleElementList()
+    qtbot.addWidget(widget)
+    widget.set_elements(
+        [
+            FactionElement(id="first", name="First"),
+            FactionElement(id="second", name="Second"),
+        ]
+    )
+    selected = []
+    widget.element_selected.connect(selected.append)
+
+    assert widget.select_element("first") is True
+    assert selected == ["first"]
+    assert widget.restore_selection("second") is True
+    assert selected == ["first"]
+    assert widget.selected_element_id() == "second"
+    assert widget.select_element("missing") is False
+    assert widget.restore_selection("missing") is False
+
+    widget.set_elements(
+        [
+            FactionElement(id="first", name="First"),
+            FactionElement(id="second", name="Second renamed"),
+        ]
+    )
+    assert widget.selected_element_id() == "second"
 
 
 def test_element_list_filters_unused_elements_and_shows_usage_counts(qtbot):

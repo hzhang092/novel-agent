@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.storage.models import CharacterState
-from app.ui.widgets import KeyValueTable, StringListEditor, read_table_cell
+from app.ui.widgets import KeyValueTable, StringListEditor
 
 
 class CharacterStateEditDialog(QDialog):
@@ -68,11 +68,11 @@ class CharacterStateEditDialog(QDialog):
         return editor
 
     def gathered_state(self) -> CharacterState:
-        relationships = {}
-        for row in range(self._relationships.rowCount()):
-            key = read_table_cell(self._relationships._table, row, 0)
-            if key:
-                relationships[key] = read_table_cell(self._relationships._table, row, 1)
+        relationships = {
+            key: description
+            for key, description in self._relationships.rows()
+            if key
+        }
         return CharacterState(
             character_id=self._original.character_id,
             current_goal=self._goal.text().strip(),

@@ -17,9 +17,6 @@ PRIVATE_BASELINE = {
     ("app/ui/bible_editor.py", "_current_id"): (2, "selected_character_id"),
     ("app/ui/bible_editor.py", "_gather_core"): (2, "character_cores_in_memory"),
     ("app/ui/bible_editor.py", "_resolve_dirty_before_switch"): (2, "prepare_for_navigation"),
-    ("app/ui/bible_element_editor.py", "_table"): (1, "KeyValueTable.rows"),
-    ("app/ui/character_editor.py", "_table"): (1, "KeyValueTable.rows"),
-    ("app/ui/character_state_edit_dialog.py", "_table"): (1, "KeyValueTable.rows"),
     ("app/ui/main_window.py", "_select_by_id"): (5, "OutlineEditorView.activate_scene"),
     ("app/ui/main_window.py", "_refresh_world_elements"): (5, "OutlineEditorView.refresh_world_elements"),
     ("app/ui/main_window.py", "_project_dir"): (5, "view is_loaded and MainWindow project state"),
@@ -31,8 +28,6 @@ PRIVATE_BASELINE = {
     ("app/ui/main_window.py", "_status_label"): (5, "SceneWorkspaceView.set_status"),
     ("app/ui/main_window.py", "_next_scene_btn"): (5, "SceneWorkspaceView.mark_last_scene"),
     ("app/ui/main_window.py", "_continue_review_btn"): (5, "SceneWorkspaceView facade"),
-    ("app/ui/world_bible_editor.py", "_find_item"): (1, "BibleElementList.restore_selection"),
-    ("app/ui/world_bible_editor.py", "_tree"): (1, "BibleElementList.restore_selection"),
 }
 
 WORKSPACE_RAW_CHILD_BASELINE = {

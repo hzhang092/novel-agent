@@ -6,7 +6,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QSignalBlocker, Qt, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QApplication,
@@ -723,14 +723,9 @@ class WorldBibleEditorView(QWidget):
             self._element_list.select_element(selected_id)
 
     def _restore_selection(self, item_id: str) -> None:
-        item = self._element_list._find_item(item_id)
-        if item is None:
-            return
         self._selection_change_in_progress = True
         try:
-            blocker = QSignalBlocker(self._element_list._tree)
-            self._element_list._tree.setCurrentItem(item)
-            del blocker
+            self._element_list.restore_selection(item_id)
         finally:
             self._selection_change_in_progress = False
 

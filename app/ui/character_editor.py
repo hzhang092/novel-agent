@@ -49,7 +49,6 @@ from app.ui.widgets import (
     KeyValueTable,
     SearchableAddMenu,
     StringListEditor,
-    read_table_cell,
 )
 from app.ui.widgets.character_element_relation_editor import CharacterElementRelationEditor
 from app.ui.widgets.custom_character_field_editor import CustomCharacterFieldEditor
@@ -1020,12 +1019,11 @@ class CharacterEditorView(QWidget):
                 return
 
     def _gather_state(self, char_id: str) -> CharacterState:
-        relationships: dict[str, str] = {}
-        for row in range(self._state_relationships.rowCount()):
-            name = read_table_cell(self._state_relationships._table, row, 0)
-            desc = read_table_cell(self._state_relationships._table, row, 1)
-            if name:
-                relationships[name] = desc
+        relationships = {
+            name: description
+            for name, description in self._state_relationships.rows()
+            if name
+        }
 
         return CharacterState(
             character_id=char_id,

@@ -125,10 +125,28 @@ class BibleElementList(QWidget):
         del blocker
         self._rebuild()
 
-    def select_element(self, element_id: str) -> None:
+    def select_element(self, element_id: str) -> bool:
+        """Select an element and emit the normal selection signal."""
         item = self._find_item(element_id)
-        if item is not None:
+        if item is None:
+            return False
+        if self._tree.currentItem() is item:
+            self._selected_id = element_id
+            self.element_selected.emit(element_id)
+        else:
             self._tree.setCurrentItem(item)
+        return True
+
+    def restore_selection(self, element_id: str) -> bool:
+        """Restore selection without emitting a new selection request."""
+        item = self._find_item(element_id)
+        if item is None:
+            return False
+        blocker = QSignalBlocker(self._tree)
+        self._tree.setCurrentItem(item)
+        self._selected_id = element_id
+        del blocker
+        return True
 
     def selected_element_id(self) -> str | None:
         item = self._tree.currentItem()

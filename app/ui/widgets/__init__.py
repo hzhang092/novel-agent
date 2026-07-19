@@ -160,6 +160,22 @@ class KeyValueTable(QWidget):
         finally:
             self._populating = False
 
+    def rows(self) -> list[list[str]]:
+        """Return trimmed table values without exposing QTableWidget."""
+        return [
+            [
+                self._table.item(row, col).text().strip()
+                if self._table.item(row, col) is not None
+                else ""
+                for col in range(self._table.columnCount())
+            ]
+            for row in range(self._table.rowCount())
+        ]
+
+    def row_count(self) -> int:
+        """Return the number of displayed rows."""
+        return self._table.rowCount()
+
     def rowCount(self) -> int:
         return self._table.rowCount()
 

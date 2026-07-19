@@ -40,3 +40,26 @@ Status: complete
 ### Remaining violations
 
 - 22 unique private-access baseline entries and four raw workspace child names.
+
+## Checkpoint 1 — Reusable widget contracts
+
+Status: complete
+
+### Contracts added
+
+- `KeyValueTable.rows()` and `row_count()`.
+- `BibleElementList.select_element()` with a success result.
+- `BibleElementList.restore_selection()` with silent signal handling.
+
+### Private accesses removed
+
+- Editors no longer read `KeyValueTable._table`.
+- `WorldBibleEditorView` no longer reads `BibleElementList._find_item` or `_tree`.
+
+### Verification
+
+- Focused reusable-widget, element-list, World Bible, character, and architecture tests — 63 passed.
+
+### Remaining violations
+
+- 17 unique private-access baseline entries and four raw workspace child names.
