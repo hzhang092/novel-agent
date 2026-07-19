@@ -83,9 +83,6 @@ class AgentTracePanel(QWidget):
     def clear(self) -> None:
         """Remove all trace entries."""
         self._tree.clear()
-        self._tree.itemClicked.connect(self._on_item_clicked)
-        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._tree.customContextMenuRequested.connect(self._on_context_menu)
         self._tree.setVisible(False)
         self._empty_label.setVisible(True)
         self._token_label.setText("Tokens: —")
@@ -110,9 +107,6 @@ class AgentTracePanel(QWidget):
     def set_waiting(self, message: str) -> None:
         """Show a waiting state with a message."""
         self._tree.clear()
-        self._tree.itemClicked.connect(self._on_item_clicked)
-        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._tree.customContextMenuRequested.connect(self._on_context_menu)
         self._tree.setVisible(False)
         self._empty_label.setVisible(True)
         self._token_label.setText(message)

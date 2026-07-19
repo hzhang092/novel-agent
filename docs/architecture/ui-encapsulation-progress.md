@@ -159,3 +159,37 @@ Status: complete
 ### Remaining violations
 
 - None. The strict AST guard has no migration allowlist.
+
+## Checkpoint 6 — Cleanup and enforcement
+
+Status: complete
+
+### Final policy
+
+- Production UI code has no foreign single-underscore access.
+- MainWindow has no raw SceneWorkspace child access.
+- Integration tests use semantic component contracts instead of the removed view
+  dictionary or grandchild controls.
+- The architecture guard is strict and contains no migration allowlist.
+
+### Remaining private state
+
+Private fields remain inside the component that owns them: Qt controls, loaded
+project/service references, dirty flags, selection IDs, generation workflow state,
+and embedded child widgets. This is deliberate own-state encapsulation, not
+cross-component coupling.
+
+### Deferrals
+
+- None for the requested encapsulation scope.
+
+### Verification
+
+- `python -m compileall app tests` — passed.
+- `python -m pytest tests/test_ui_encapsulation_architecture.py -q` — 3 passed.
+- Required focused editor and MainWindow suite — 164 passed.
+- `python -m pytest -q` — 702 passed.
+- Foreign-private search results were all direct own-state `self._member` access;
+  the AST guard reported no violations.
+- Raw workspace-child search under `app` — no results.
+- MainWindow broad-disconnect search — no results.

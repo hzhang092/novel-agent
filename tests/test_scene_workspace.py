@@ -120,3 +120,16 @@ def test_workspace_does_not_expose_raw_embedded_widgets(qtbot):
         "context_preview",
     ):
         assert not hasattr(workspace, name)
+
+
+def test_trace_reset_does_not_duplicate_internal_signal_connections(qtbot):
+    trace = AgentTracePanel()
+    qtbot.addWidget(trace)
+    tree = trace._tree
+
+    trace.clear()
+    trace.set_waiting("waiting")
+    trace.clear()
+
+    assert tree.receivers("2itemClicked(QTreeWidgetItem*,int)") == 1
+    assert tree.receivers("2customContextMenuRequested(QPoint)") == 1

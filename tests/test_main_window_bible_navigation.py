@@ -11,8 +11,10 @@ from app.storage.character_definition_service import CharacterDefinitionService
 from app.storage.models import CharacterCore, CharacterElementRelation, Project
 from app.storage.project_files import create_project
 from app.ui.bible_editor import BibleEditorView
+from app.ui.character_editor import CharacterEditorView
 from app.ui.main_window import MainWindow
 from app.ui.outline_editor import OutlineEditorView
+from app.ui.world_bible_editor import WorldBibleEditorView
 
 
 def _make_bible_dirty(bible, _section, monkeypatch):
@@ -248,28 +250,31 @@ def test_connected_character_navigation_switches_bible_tab(tmp_path, qtbot):
     bible = BibleEditorView()
     qtbot.addWidget(bible)
     bible.load_project_dir(project_dir)
-    bible._tabs.setCurrentWidget(bible._world_tab)
+    world = bible.findChild(WorldBibleEditorView)
+    character = bible.findChild(CharacterEditorView)
 
-    bible._world_tab.character_requested.emit("hero")
+    world.character_requested.emit("hero")
 
-    assert bible._tabs.currentWidget() is bible._character_tab
-    assert bible._character_tab._current_id == "hero"
+    assert character.selected_character_id == "hero"
 
 
 def test_connected_character_navigation_keeps_world_open_when_cancelled(
     tmp_path, qtbot, monkeypatch
 ):
     project_dir = create_project(tmp_path, Project(title="Story", genre="Fantasy"))
+    CharacterDefinitionService(project_dir).save(CharacterCore(id="other", name="Mei"))
     CharacterDefinitionService(project_dir).save(CharacterCore(id="hero", name="Lin"))
     bible = BibleEditorView()
     qtbot.addWidget(bible)
     bible.load_project_dir(project_dir)
-    bible._tabs.setCurrentWidget(bible._world_tab)
-    monkeypatch.setattr(bible._world_tab, "_resolve_dirty_before_switch", lambda: False)
+    world = bible.findChild(WorldBibleEditorView)
+    character = bible.findChild(CharacterEditorView)
+    assert character.select_character("other") is True
+    monkeypatch.setattr(world, "prepare_for_navigation", lambda: False)
 
-    bible._world_tab.character_requested.emit("hero")
+    world.character_requested.emit("hero")
 
-    assert bible._tabs.currentWidget() is bible._world_tab
+    assert character.selected_character_id == "other"
 
 
 def test_usage_scene_navigation_opens_requested_scene(qtbot, monkeypatch):
@@ -397,3 +402,42 @@ async def test_plan_decision_signals_resolve_once(qtbot):
     window._workspace_view.plan_rejected.emit()
     window._workspace_view.plan_rejected.emit()
     assert rejected.result() == (False, None)
+
+
+def test_repeated_navigation_does_not_duplicate_generation_signal(qtbot, monkeypatch):
+    requested = []
+    monkeypatch.setattr(
+        MainWindow,
+        "_on_generate_requested",
+        lambda _self, scene_id: requested.append(scene_id),
+    )
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    window._on_nav_changed(3)
+    window._on_nav_changed(1)
+    window._on_nav_changed(3)
+    window._workspace_view.generate_requested.emit("scene-1")
+
+    assert requested == ["scene-1"]
+
+
+def test_next_scene_exhaustion_uses_workspace_facade(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._workspace_view.set_scene("last-scene", "chapter-1")
+    monkeypatch.setattr(
+        window._outline_view,
+        "select_next_scene",
+        lambda _scene_id: None,
+    )
+    exhausted = []
+    monkeypatch.setattr(
+        window._workspace_view,
+        "mark_last_scene",
+        lambda: exhausted.append(True),
+    )
+
+    window._on_next_scene()
+
+    assert exhausted == [True]
