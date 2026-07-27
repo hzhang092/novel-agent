@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Annotated, Literal, Optional, Union
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 # ── Character ──────────────────────────────────────────────────────────────
@@ -27,6 +27,7 @@ class AgentStepId(str, Enum):
     FACT_EXTRACTOR = "fact_extractor"
     STATE_UPDATER = "state_updater"
     BIBLE_ASSISTANT = "bible_assistant"
+    STORY_DESIGNER = "story_designer"
 
 
 class CharacterCustomFieldType(str, Enum):
@@ -314,7 +315,7 @@ class ContinuityState(BaseModel):
 class Project(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     title: str
-    genre: str
+    genre: str | None = None
     language: str = "zh-CN"
     llm_provider: str = "ollama"
     created_at: datetime = Field(default_factory=datetime.now)
@@ -340,6 +341,7 @@ class ProviderConfig(BaseModel):
         "fact_extractor": "ollama",
         "state_updater": "ollama",
         "bible_assistant": "ollama",
+        "story_designer": "ollama",
     })
 
     @model_validator(mode="after")
@@ -352,7 +354,89 @@ class ProviderConfig(BaseModel):
             "bible_assistant",
             self.routing.get("fact_extractor", "ollama"),
         )
+        self.routing.setdefault("story_designer", "ollama")
         return self
+
+
+# ── Guided planning ───────────────────────────────────────────────────────
+
+def _normalized_text(value: str) -> str:
+    return " ".join(value.split())
+
+
+class StoryBrief(BaseModel):
+    """Author-controlled direction for guided planning."""
+
+    model_config = ConfigDict(extra="forbid")
+    revision: int = Field(default=1, ge=1)
+    choices: dict[str, list[str]] = Field(default_factory=dict)
+    premise: str = ""
+    target_length: str = ""
+    romance_emphasis: str = ""
+    protagonist_structure: str = ""
+    chapter_length_default: str = ""
+
+    @field_validator(
+        "premise", "target_length", "romance_emphasis", "protagonist_structure",
+        "chapter_length_default", mode="before",
+    )
+    @classmethod
+    def normalize_text(cls, value: str) -> str:
+        return _normalized_text(value)
+
+    @field_validator("choices")
+    @classmethod
+    def normalize_choices(cls, choices: dict[str, list[str]]) -> dict[str, list[str]]:
+        normalized: dict[str, list[str]] = {}
+        for category, values in choices.items():
+            category = _normalized_text(category)
+            if not category:
+                continue
+            result: list[str] = []
+            for value in values:
+                value = _normalized_text(value)
+                if value and value not in result:
+                    result.append(value)
+            if result:
+                normalized.setdefault(category, [])
+                normalized[category].extend(
+                    value for value in result if value not in normalized[category]
+                )
+        return normalized
+
+
+class StoryProposal(BaseModel):
+    """The bounded, reviewable output of Story Designer."""
+
+    model_config = ConfigDict(extra="forbid")
+    title: str
+    logline: str
+    main_characters: list[str] = Field(min_length=2, max_length=4)
+    core_conflict: str
+    story_promises: list[str] = Field(min_length=3, max_length=5)
+    ending_direction: str
+
+
+class ApprovedStoryProposal(StoryProposal):
+    model_config = ConfigDict(extra="forbid")
+    revision: int = Field(ge=1)
+    based_on_brief_revision: int = Field(ge=1)
+
+
+class ActiveProposalDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["proposal"] = "proposal"
+    revision: int = Field(default=1, ge=1)
+    based_on_brief_revision: int = Field(ge=1)
+    proposal: StoryProposal
+
+
+class PlanningData(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    schema_version: Literal[1] = 1
+    story_brief: StoryBrief | None = None
+    approved_proposal: ApprovedStoryProposal | None = None
+    active_draft: ActiveProposalDraft | None = None
 
 
 # ── Agent Output Schemas ───────────────────────────────────────────────────

@@ -7,11 +7,13 @@ from app.application.project_context import (
     build_project_application,
 )
 from app.application.story_bible import StoryBibleApplicationService
+from app.application.story_designer import StoryDesignerService
 
 __all__ = [
     "CharacterApplicationService",
     "OutlineApplicationService",
     "ProjectApplicationContext",
     "StoryBibleApplicationService",
+    "StoryDesignerService",
     "build_project_application",
 ]

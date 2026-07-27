@@ -17,6 +17,7 @@ from app.storage.models import (
     CharacterCore,
     CharacterState,
     Project,
+    PlanningData,
     StyleGuide,
     VolumeOutline,
     WorldSetting,
@@ -26,6 +27,7 @@ from app.storage.models import (
 PROJECT_YAML = "project.yaml"
 WORLD_MD = "world.md"
 STYLE_YAML = "style.yaml"
+PLANNING_YAML = "planning.yaml"
 
 SUBDIRS = ["characters", "outline", "scenes", "canon", "exports"]
 
@@ -67,6 +69,44 @@ def _write_project_yaml(proj_path: Path, project: Project) -> None:
     data = project.model_dump(mode="json")
     with open(proj_path / PROJECT_YAML, "w", encoding="utf-8") as f:
         yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+
+
+def load_planning(project_dir: Path) -> PlanningData:
+    """Load guided-planning state; projects without it start empty."""
+    path = Path(project_dir) / PLANNING_YAML
+    if not path.exists():
+        return PlanningData()
+    with open(path, "r", encoding="utf-8") as handle:
+        raw = yaml.safe_load(handle)
+    return PlanningData.model_validate(raw or {})
+
+
+def save_planning(project_dir: Path, planning: PlanningData) -> None:
+    """Atomically replace the root guided-planning file."""
+    path = Path(project_dir) / PLANNING_YAML
+    _write_yaml_atomically(path, planning.model_dump(mode="json"))
+
+
+def save_project(project_dir: Path, project: Project) -> None:
+    """Persist metadata without changing the project folder."""
+    _write_project_yaml(Path(project_dir), project)
+
+
+def _write_yaml_atomically(path: Path, data: object) -> None:
+    serialized = yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, delete=False
+        ) as handle:
+            temporary = Path(handle.name)
+            handle.write(serialized)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def _write_world_md(proj_path: Path, world: WorldSetting) -> None:

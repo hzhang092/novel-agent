@@ -27,7 +27,8 @@ class TestProviderConfig:
         assert cfg.routing["writer"] == "ollama"
         assert cfg.routing["state_updater"] == "ollama"
         assert cfg.routing["bible_assistant"] == "ollama"
-        assert len(cfg.routing) == 7
+        assert cfg.routing["story_designer"] == "ollama"
+        assert len(cfg.routing) == 8
 
     def test_custom_routing(self):
         cfg = ProviderConfig(
@@ -83,6 +84,7 @@ class TestGetProviderForStep:
             "fact_extractor",
             "state_updater",
             "bible_assistant",
+            "story_designer",
         ]:
             provider = get_provider_for_step(step, cfg)
             assert isinstance(provider, OllamaProvider)

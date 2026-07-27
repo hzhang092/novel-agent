@@ -325,9 +325,8 @@ def test_project_title_required():
         Project(genre="玄幻")
 
 
-def test_project_genre_required():
-    with pytest.raises(ValidationError):
-        Project(title="test")
+def test_project_genre_is_optional_legacy_metadata():
+    assert Project(title="test").genre is None
 
 # ── State Change discriminated union tests ──────────────────────────────────
 
