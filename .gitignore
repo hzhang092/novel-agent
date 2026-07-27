@@ -16,6 +16,19 @@ PRD.md
 skills-lock.json
 notes.md
 
+# Versioned product-design documents
+!BACKLOG.md
+!CONTEXT.md
+!PRD.md
+!docs/adr/
+docs/adr/*
+!docs/adr/*.md
+!docs/superpowers/
+docs/superpowers/*
+!docs/superpowers/specs/
+docs/superpowers/specs/*
+!docs/superpowers/specs/*.md
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

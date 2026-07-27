@@ -8,6 +8,38 @@ A local-first desktop application for writing Chinese web novels through a multi
 The directory that contains one novel project's `project.yaml` and standard subfolders for characters, outline, scenes, canon, and exports.
 _Avoid_: Project file folder, workspace folder.
 
+**Quick Creation (快速创作)**:
+The complete, outcome-oriented NovelForge experience for guided story planning and chapter writing. It presents compact projections of the same canonical story data and pipeline used by Deep Creation.
+_Avoid_: Simple mode, beginner mode, lightweight project.
+
+**Deep Creation (深度创作)**:
+The complete NovelForge experience that exposes detailed Story Bible, outline, context, agent trace, review, and continuity controls.
+_Avoid_: Professional mode, advanced project, separate engine.
+
+**Story Brief (故事意向)**:
+The author-controlled structured direction for a story: categorized creative choices, premise, target length, romance emphasis, protagonist structure, and chapter-length preference.
+_Avoid_: Story seed, genre, generated proposal.
+
+**Story Proposal (故事提案)**:
+An approved planning baseline containing a working title, logline, main characters, conflict, story promises, and ending direction. It guides planning but is not canonical story truth.
+_Avoid_: Story Brief, outline, canon.
+
+**Story Bootstrap (故事初始化方案)**:
+A reviewable generated bundle that initializes an empty project's minimal Story Bible, main characters, Writing Style, Story Arcs, and first-arc chapters after explicit approval.
+_Avoid_: Project template, automatic onboarding, bootstrap merge.
+
+**Story Arc (故事阶段)**:
+The Quick Creation presentation of one canonical Volume Outline, summarizing a major stage of the story and containing its Chapter Cards.
+_Avoid_: Volume copy, act, generated outline file.
+
+**Chapter Card (章节卡片)**:
+The Quick Creation projection of a Chapter Outline title and summary plus its single Scene Outline ending hook. It is a view of canonical outline data, not a separate stored chapter model.
+_Avoid_: Quick Chapter, scene card, simplified outline.
+
+**Story Designer (故事设计器)**:
+The guided-planning capability that creates Story Proposals, Story Bootstraps, and reviewable planning patches. Unlike the Story Bible Assistant, it intentionally invents story direction.
+_Avoid_: Story Bible Assistant, outline agent swarm, autonomous author.
+
 **Story Bible (故事设定集)**:
 The project's author-controlled story knowledge, organized into Overview, World, Characters, and Writing Style. It grows as the story develops; project creation does not require choosing a complete schema.
 _Avoid_: Novel Bible, lore database, setup wizard.
@@ -64,6 +96,10 @@ _Avoid_: Direct state edit, snapshot edit, definition change.
 A previewable pack of Story Elements and Writing Style values. Applying it uses an explicit merge choice, such as keeping existing values, filling empty values, or replacing selected sections; it does not silently replace the Story Bible.
 _Avoid_: Project preset, full-project replacement, mandatory schema.
 
+**Generation Guide (生成指南)**:
+Prompt-only requirements that help Story Designer create original genre-appropriate content. A Generation Guide shapes generation but never supplies or becomes canonical story data.
+_Avoid_: Story Template, Story Pack, hidden lore.
+
 **Character Definition (角色基本设定)**:
 Immutable or slowly-changing character traits set by the author: name, personality, background, appearance, skills, weaknesses, speech style.
 _Avoid_: Character card, character core, static traits.
@@ -113,6 +149,10 @@ _Avoid_: Latest revision, generated revision.
 The single operation that makes a Draft Scene Revision canonical. It commits approved memory for that revision, atomically switches the active marker, rebuilds derived state, and marks downstream scenes stale.
 _Avoid_: Save, activate, approve facts.
 
+**Scene Workflow (场景工作流)**:
+The project-scoped lifecycle shared by both creation experiences for one active generation run, its checkpoints, artifacts, Draft Scene Revision, memory review, and Scene Publication.
+_Avoid_: UI generation state, second pipeline, generic workflow engine.
+
 **Scene Checkpoint (场景检查点)**:
 A character state snapshot written immediately after a scene is approved. Used during context assembly so Scene N always sees state as of the end of Scene N-1, preserving temporal consistency even when scenes are generated out of order.
 _Avoid_: Scene snapshot, state checkpoint.
@@ -131,6 +171,10 @@ _Avoid_: Deletion, removal, tombstone.
 
 ## Relationships
 
+- **Quick Creation ↔ Deep Creation**: Both present the same canonical project and Scene Workflow. Switching changes visibility and navigation context, never story data or generation identity.
+- **Story Brief → Story Proposal → Story Bootstrap**: Author direction produces a reviewable proposal, then a separately approved initialization bundle. Only bootstrap approval creates canonical Story Bible, character, style, and outline data.
+- **Story Arc → Chapter Card → Chapter/Scene Outline**: A Story Arc presents a Volume Outline; each Chapter Card presents existing Chapter Outline fields and the ending hook of its single Scene Outline.
+- **Story Designer ↔ Story Bible Assistant**: Story Designer invents guided planning; the Assistant extracts proposals from supplied source text. They share structured generation seams but have different authority.
 - **Story Bible → Progressive Disclosure → Story Elements / Detail Fields**: World knowledge grows through distinct Story Elements; Character Definitions grow through optional Detail Fields. Writing Style keeps compact core controls with expandable advanced sections.
 - **Bible Element ↔ Canon Fact**: Bible Elements are reusable knowledge authored in the Story Bible. Canon Facts are scene-derived memory from a Published Scene Revision; neither is migrated into the other.
 - **Explicit Scene Element / Relevance / Element Relationship → Selected Story Element**: Context assembly includes explicit and always-included elements, deterministically selects textual matches, then expands no more than one eligible relationship hop.
@@ -141,10 +185,12 @@ _Avoid_: Deletion, removal, tombstone.
 - **Character Definition ↔ Character State**: Definition is author-controlled profile data. State is an evolving continuity snapshot shown read-only by default, with History as its event record.
 - **Manual State Override → State Event → Character State**: A manual override is recorded as a user-sourced event, then replayed into Character State and its snapshots.
 - **Story Template → Preview → Merge**: Applying a template previews its changes and uses the chosen merge behavior instead of silently replacing existing story data.
+- **Generation Guide → Story Designer**: A Generation Guide influences prompts for original planning output and never enters the Story Bible.
 - **State Updater → State Change Proposal → Fact Approval Panel**: The State Updater produces proposals; the author approves them in the panel; approved proposals are committed as State Events.
 - **State Event → State Snapshot**: Snapshots are derived by replaying valid (non-invalidated) events from the event log.
 - **Scene Checkpoint → Context Assembly**: When generating Scene N, the context assembler reads the checkpoint from Scene N-1 to determine what characters knew at that point.
 - **Scene Revision → Read Point → Stale Scene**: A scene revision records the read points used in its prompt; when those read points are superseded, downstream revisions become stale.
 - **Scene Publication → Active Revision Selection → Stale Scene Detection**: Publishing a replacement makes older revision-scoped memory inactive and marks downstream scenes that used the previous timeline stale.
 - **Draft Scene Revision → Scene Publication → Published Scene Revision**: Saving generation output creates a draft only; publication is the only operation allowed to change canonical prose or timeline memory.
+- **Quick Creation / Deep Creation → Scene Workflow → Scene Publication**: Both experiences command and observe the same run; neither owns a separate publication path.
 - **Published Scene Revision → Canon Facts / State Events / Checkpoints**: Revision-scoped memory is visible only when its revision matches the active marker. Legacy records without a revision remain readable.
