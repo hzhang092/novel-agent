@@ -8,6 +8,7 @@ from app.application.project_context import (
 )
 from app.application.story_bible import StoryBibleApplicationService
 from app.application.story_designer import StoryDesignerService
+from app.application.scene_workflow import SceneWorkflow
 
 __all__ = [
     "CharacterApplicationService",
@@ -15,5 +16,6 @@ __all__ = [
     "ProjectApplicationContext",
     "StoryBibleApplicationService",
     "StoryDesignerService",
+    "SceneWorkflow",
     "build_project_application",
 ]

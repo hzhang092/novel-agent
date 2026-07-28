@@ -14,3 +14,4 @@ def test_project_context_shares_services_and_event_bus(tmp_path):
     assert context.characters._event_bus is event_bus
     assert context.outlines._characters is context.characters
     assert context.outlines._story_bible is context.story_bible
+    assert context.story_designer.run_guard is context.scene_workflow.run_guard

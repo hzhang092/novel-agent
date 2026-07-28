@@ -9,6 +9,8 @@ from pathlib import Path
 from app.application.characters import CharacterApplicationService
 from app.application.outlines import OutlineApplicationService
 from app.application.story_bible import StoryBibleApplicationService
+from app.application.scene_workflow import SceneWorkflow
+from app.application.story_designer import StoryDesignerService
 
 
 @dataclass
@@ -17,6 +19,8 @@ class ProjectApplicationContext:
     characters: CharacterApplicationService
     story_bible: StoryBibleApplicationService
     outlines: OutlineApplicationService
+    story_designer: StoryDesignerService
+    scene_workflow: SceneWorkflow
 
 
 def build_project_application(
@@ -30,6 +34,7 @@ def build_project_application(
     story_bible = StoryBibleApplicationService(
         project_dir, provider_factory=provider_factory
     )
+    workflow = SceneWorkflow(project_dir, event_bus=event_bus)
     return ProjectApplicationContext(
         project_dir=project_dir,
         characters=characters,
@@ -39,4 +44,6 @@ def build_project_application(
             characters=characters,
             story_bible=story_bible,
         ),
+        story_designer=StoryDesignerService(project_dir, run_guard=workflow.run_guard),
+        scene_workflow=workflow,
     )

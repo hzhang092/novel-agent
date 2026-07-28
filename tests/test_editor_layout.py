@@ -11,6 +11,21 @@ def test_missing_file_returns_default_layout(tmp_path):
     assert not (tmp_path / ".novel-agent").exists()
 
 
+def test_experience_preferences_default_to_deep_and_round_trip(tmp_path):
+    store = EditorLayoutStore(tmp_path)
+
+    assert store.layout.experience_mode == "deep"
+    assert store.layout.deep_destination == "dashboard"
+    assert store.layout.quick_destination == "story"
+
+    store.layout.experience_mode = "quick"
+    store.layout.deep_destination = "workspace"
+    store.layout.quick_destination = "writing"
+    store.save()
+
+    assert EditorLayoutStore(tmp_path).layout == store.layout
+
+
 def test_layout_round_trip_preserves_settings(tmp_path):
     store = EditorLayoutStore(tmp_path)
     store.layout.selected_tab = "characters"
@@ -174,7 +189,7 @@ def test_schema_v1_world_layout_is_explicitly_migrated_to_overview(tmp_path):
 
     layout = EditorLayoutStore(tmp_path).layout
 
-    assert layout.schema_version == 3
+    assert layout.schema_version == 4
     assert layout.selected_tab == "world"
     assert layout.world.selected_item_id == "overview"
     assert layout.world.overview_visible_sections == [
@@ -198,6 +213,6 @@ def test_schema_v2_adds_custom_character_presentation_defaults(tmp_path):
 
     layout = EditorLayoutStore(tmp_path).layout
 
-    assert layout.schema_version == 3
+    assert layout.schema_version == 4
     assert layout.characters["char-1"].custom_section_collapsed is False
     assert layout.characters["char-1"].hidden_custom_field_ids == []

@@ -54,7 +54,10 @@ class StyleEditorLayout(BaseModel):
 
 
 class BibleEditorLayout(BaseModel):
-    schema_version: int = 3
+    schema_version: int = 4
+    experience_mode: str = "deep"
+    deep_destination: str = "dashboard"
+    quick_destination: str = "story"
     selected_tab: str = "overview"
     world: WorldEditorLayout = Field(default_factory=WorldEditorLayout)
     style: StyleEditorLayout = Field(default_factory=StyleEditorLayout)
@@ -145,6 +148,8 @@ class EditorLayoutStore:
                 raw = _migrate_v1(raw)
             if raw.get("schema_version") == 2:
                 raw = _migrate_v2(raw)
+            if raw.get("schema_version") == 3:
+                raw = _migrate_v3(raw)
         return BibleEditorLayout.model_validate(raw)
 
 
@@ -183,4 +188,13 @@ def _migrate_v2(raw: dict) -> dict:
             for character_id, layout in characters.items()
             if isinstance(layout, dict)
         }
+    return migrated
+
+
+def _migrate_v3(raw: dict) -> dict:
+    migrated = dict(raw)
+    migrated["schema_version"] = 4
+    migrated.setdefault("experience_mode", "deep")
+    migrated.setdefault("deep_destination", "dashboard")
+    migrated.setdefault("quick_destination", "story")
     return migrated

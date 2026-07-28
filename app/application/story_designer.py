@@ -7,6 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from app.application.errors import ConcurrentModificationError, OperationBlockedError
+from app.application.scene_workflow import ProjectRunGuard
 from app.providers.base import LLMProvider, ProviderResponse
 from app.storage.bible_repository import rollback_files
 from app.storage.models import (
@@ -33,9 +34,11 @@ class StoryDesignerService:
         project_dir: Path,
         *,
         provider_factory: Callable[[], LLMProvider] | None = None,
+        run_guard: ProjectRunGuard | None = None,
     ) -> None:
         self.project_dir = Path(project_dir)
         self._provider_factory = provider_factory or self._default_provider
+        self.run_guard = run_guard or ProjectRunGuard()
 
     def save_brief(self, brief: StoryBrief) -> StoryBrief:
         planning = load_planning(self.project_dir)
@@ -84,6 +87,18 @@ class StoryDesignerService:
         return approved
 
     async def _replace_draft(
+        self, *, base_revision: int | None, instruction: str
+    ) -> ActiveProposalDraft:
+        if not self.run_guard.acquire("story_designer"):
+            raise OperationBlockedError("Another project generation is already active")
+        try:
+            return await self._replace_draft_while_active(
+                base_revision=base_revision, instruction=instruction
+            )
+        finally:
+            self.run_guard.release("story_designer")
+
+    async def _replace_draft_while_active(
         self, *, base_revision: int | None, instruction: str
     ) -> ActiveProposalDraft:
         planning = load_planning(self.project_dir)

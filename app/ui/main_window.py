@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QLabel,
     QHBoxLayout,
+    QComboBox,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -30,6 +31,7 @@ from app.application.project_context import (
 )
 from app.storage.models import Project as ProjectModel
 from app.storage.repository import Repository
+from app.storage.editor_layout import EditorLayoutStore
 import logging
 
 from app.events.bus import EventBus
@@ -50,6 +52,12 @@ NAV_ITEMS = [
     ("写作台", "workspace"),
 ]
 
+QUICK_NAV_ITEMS = [
+    ("故事", "story"),
+    ("大纲", "outline"),
+    ("写章节", "workspace"),
+]
+
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
@@ -67,6 +75,9 @@ class MainWindow(QMainWindow):
         self._current_project_dir: Path | None = None
         self._application: ProjectApplicationContext | None = None
         self._previous_tab_index: int = 0
+        self._previous_destination = "dashboard"
+        self._experience_mode = "deep"
+        self._editor_layout_store: EditorLayoutStore | None = None
 
         # Event bus for live UI refresh
         self._domain_bus = EventBus()
@@ -126,6 +137,11 @@ class MainWindow(QMainWindow):
         layout.setSpacing(0)
 
         # Sidebar
+        self._experience_switch = QComboBox()
+        self._experience_switch.addItem("快速创作", "quick")
+        self._experience_switch.addItem("深度创作", "deep")
+        self._experience_switch.currentIndexChanged.connect(self._on_experience_changed)
+        layout.addWidget(self._experience_switch)
         self.sidebar = QListWidget()
         self.sidebar.setFixedWidth(180)
         self.sidebar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -137,16 +153,19 @@ class MainWindow(QMainWindow):
         # Stacked views
         self.stack = QStackedWidget()
         self._dashboard_view = DashboardView()
+        self._quick_story_view = QLabel("故事")
+        self._quick_story_view.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._bible_view = BibleEditorView()
         self._outline_view = OutlineEditorView()
         self._workspace_view = SceneWorkspaceView()
         self._views: dict[str, QWidget] = {
             "dashboard": self._dashboard_view,
+            "story": self._quick_story_view,
             "bible": self._bible_view,
             "outline": self._outline_view,
             "workspace": self._workspace_view,
         }
-        for key in ["dashboard", "bible", "outline", "workspace"]:
+        for key in ["dashboard", "bible", "outline", "workspace", "story"]:
             self.stack.addWidget(self._views[key])
         self._connect_view_signals()
 
@@ -203,11 +222,68 @@ class MainWindow(QMainWindow):
         )
         self._bible_view.bind_application(self._application)
         self._outline_view.bind_application(self._application.outlines)
+        self._editor_layout_store = EditorLayoutStore(project_dir)
+        self._set_experience_mode(self._editor_layout_store.layout.experience_mode)
+
+    def _set_experience_mode(self, mode: str) -> None:
+        """Swap presentation navigation while preserving shared editor widgets."""
+        self._experience_mode = mode if mode == "quick" else "deep"
+        index = self._experience_switch.findData(self._experience_mode)
+        blocker = QSignalBlocker(self._experience_switch)
+        self._experience_switch.setCurrentIndex(index)
+        del blocker
+        self._populate_navigation()
+
+    def _populate_navigation(self) -> None:
+        destinations = QUICK_NAV_ITEMS if self._experience_mode == "quick" else NAV_ITEMS
+        previous_key = self.sidebar.currentItem().data(Qt.ItemDataRole.UserRole) if self.sidebar.currentItem() else None
+        self.sidebar.clear()
+        for label, key in destinations:
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, key)
+            self.sidebar.addItem(item)
+        layout = self._editor_layout_store.layout if self._editor_layout_store else None
+        desired = (
+            layout.quick_destination if self._experience_mode == "quick" else layout.deep_destination
+        ) if layout else None
+        if self._experience_mode == "deep" and previous_key == "story":
+            key = "bible"
+        elif self._experience_mode == "quick" and previous_key == "bible":
+            key = "story"
+        else:
+            key = previous_key if previous_key in {item[1] for item in destinations} else desired
+        row = next((i for i, item in enumerate(destinations) if item[1] == key), 0)
+        self.sidebar.setCurrentRow(row)
+
+    def _on_experience_changed(self, _index: int) -> None:
+        mode = self._experience_switch.currentData()
+        if mode not in {"quick", "deep"} or mode == self._experience_mode:
+            return
+        if not self._maybe_close_current_project():
+            blocker = QSignalBlocker(self._experience_switch)
+            self._experience_switch.setCurrentIndex(
+                self._experience_switch.findData(self._experience_mode)
+            )
+            del blocker
+            return
+        self._experience_mode = mode
+        if self._editor_layout_store is not None:
+            self._editor_layout_store.layout.experience_mode = mode
+            self._editor_layout_store.save()
+        self._populate_navigation()
 
     def _on_nav_changed(self, index: int) -> None:
+        item = self.sidebar.item(index)
+        if item is None:
+            return
+        key = item.data(Qt.ItemDataRole.UserRole)
+        previous_key = self._previous_destination
+        if self.sidebar.currentRow() != index or previous_key not in self._views:
+            previous_items = QUICK_NAV_ITEMS if self._experience_mode == "quick" else NAV_ITEMS
+            previous_key = previous_items[self._previous_tab_index][1]
         if (
-            self._previous_tab_index == 1
-            and index != 1
+            previous_key == "bible"
+            and key != "bible"
             and not self._maybe_close_current_project()
         ):
             blocker = QSignalBlocker(self.sidebar)
@@ -216,27 +292,29 @@ class MainWindow(QMainWindow):
             return
 
         # Auto-save Outline editor when navigating away from it
-        if self._previous_tab_index == 2 and self._outline_view.is_loaded:
+        if previous_key == "outline" and key != "outline" and self._outline_view.is_loaded:
             self._outline_view.save()
 
         # Wire event bus to Bible Editor's character editor when navigating to Bible
-        if index == 1:
+        if key == "bible":
             self._bible_view.set_event_bus(self._domain_bus)
             self._bible_view.refresh_usage()
 
         # Load workspace when navigating to it
-        if index == 3 and self._current_project_dir is not None:
+        if key == "workspace" and self._current_project_dir is not None:
             self._workspace_view.load_project_dir(self._current_project_dir)
 
         self._previous_tab_index = index
-
-        item = self.sidebar.item(index)
-        if item is None:
-            return
+        self._previous_destination = key
         if not (item.flags() & Qt.ItemFlag.ItemIsEnabled):
             self.sidebar.setCurrentRow(0)
             return
-        key = item.data(Qt.ItemDataRole.UserRole)
+        if self._editor_layout_store is not None:
+            if self._experience_mode == "quick":
+                self._editor_layout_store.layout.quick_destination = key
+            else:
+                self._editor_layout_store.layout.deep_destination = key
+            self._editor_layout_store.schedule_save()
         if key in self._views:
             self.stack.setCurrentWidget(self._views[key])
 
@@ -631,6 +709,8 @@ class MainWindow(QMainWindow):
             load_scene_prose_version(self._current_project_dir, chapter_id, scene_id, version)
         )
         self._current_prose_version = version
+        if self._application is not None:
+            self._application.scene_workflow.select_revision(version)
 
     def _on_set_active_prose_version(self, version: str) -> None:
         """Offer publication for the selected revision; selection alone is view-only."""
@@ -707,6 +787,8 @@ class MainWindow(QMainWindow):
         if self._plan_decision is None or self._plan_decision.done():
             return
         self._plan_decision.set_result((True, edited_plan))
+        if self._application is not None:
+            self._application.scene_workflow.receive_plan(edited_plan)
         self._workspace_view.hide_plan_checkpoint()
 
     def _on_plan_rejected(self) -> None:
@@ -718,6 +800,8 @@ class MainWindow(QMainWindow):
         self._workspace_view.set_generating(False)
         self._workspace_view.clear_trace()
         self._generation_in_progress = False
+        if self._application is not None:
+            self._application.scene_workflow.cancel()
 
     def _on_next_scene(self) -> None:
         """Navigate to the next scene in the outline sequence."""
@@ -735,6 +819,16 @@ class MainWindow(QMainWindow):
             return
 
         workspace = self._workspace_view
+        if self._application is not None:
+            from app.application.errors import OperationBlockedError
+
+            try:
+                self._application.scene_workflow.start(
+                    scene_id, self._find_chapter_for_scene(scene_id)
+                )
+            except OperationBlockedError:
+                QMessageBox.warning(self, "正在生成", "此项目已有一个生成任务正在运行。")
+                return
 
         from app.providers.config import get_provider_for_step, load_provider_config
 
@@ -779,6 +873,8 @@ class MainWindow(QMainWindow):
                 ):
                     if token is not None:
                         workspace.append_prose(token)
+                        if self._application is not None:
+                            self._application.scene_workflow.append_prose(token)
                     if result is not None:
                         workspace.set_generating(False)
                         self._generation_in_progress = False
@@ -812,11 +908,15 @@ class MainWindow(QMainWindow):
                             pass
                         else:
                             workspace.set_status("生成失败")
+                            if self._application is not None:
+                                self._application.scene_workflow.finish()
                         return
             except Exception:
                 workspace.clear_trace()
                 workspace.set_generating(False)
                 self._generation_in_progress = False
+                if self._application is not None:
+                    self._application.scene_workflow.finish()
                 workspace.set_status("生成失败")
             finally:
                 for p in providers:
@@ -899,6 +999,8 @@ class MainWindow(QMainWindow):
         save_scene_generation_record(self._current_project_dir, record)
         discard_scene_writer_draft(self._current_project_dir, result.scene_id)
         self._workspace_view.set_prose_text(result.prose)
+        if self._application is not None:
+            self._application.scene_workflow.save_draft(record)
         return record
 
     async def _analyze_and_offer_publication(
@@ -940,6 +1042,10 @@ class MainWindow(QMainWindow):
             result.state_changes,
         )
         workspace.set_status("等待发布")
+        if self._application is not None:
+            self._application.scene_workflow.set_memory_selections(
+                result.extracted_facts, result.state_changes
+            )
 
     def _schedule_analysis_with_retry(
         self, pipeline, result, record, workspace, on_trace
@@ -957,7 +1063,9 @@ class MainWindow(QMainWindow):
                     False, "记忆分析失败；草稿已保存，可重试"
                 )
 
-        asyncio.ensure_future(_run())
+        task = asyncio.ensure_future(_run())
+        if self._application is not None:
+            self._application.scene_workflow.set_task(task)
 
     def _on_continue_review_requested(self) -> None:
         if self._pending_draft is None or self._current_project_dir is None:
@@ -993,17 +1101,22 @@ class MainWindow(QMainWindow):
             if source_record is not None:
                 self._continue_with_edited_draft(workspace, source_record)
             return
-        from app.storage.timeline_repository import publish_scene_revision
-
         try:
-            publish_scene_revision(
-                self._current_project_dir,
-                scene_id,
-                revision_id,
-                approved_facts,
-                approved_changes,
-                self._domain_bus,
-            )
+            if self._application is not None:
+                self._application.scene_workflow.publish(
+                    scene_id, revision_id, approved_facts, approved_changes
+                )
+            else:
+                from app.storage.timeline_repository import publish_scene_revision
+
+                publish_scene_revision(
+                    self._current_project_dir,
+                    scene_id,
+                    revision_id,
+                    approved_facts,
+                    approved_changes,
+                    self._domain_bus,
+                )
         except Exception as exc:
             logger.exception("Could not publish scene revision %s", revision_id)
             QMessageBox.critical(self, "发布失败", str(exc))
@@ -1020,6 +1133,8 @@ class MainWindow(QMainWindow):
                 self._refresh_prose_versions(chapter_id, scene_id, f"v{record.revision_number}")
         workspace.set_status("已发布")
         self._pending_draft = None
+        if self._application is not None:
+            self._application.scene_workflow.finish()
 
 
     def _retry_agent(self, agent_name: str) -> None:
