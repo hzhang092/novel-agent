@@ -364,7 +364,7 @@ def test_quick_reopen_last_scene_selects_workspace_destination(tmp_path, qtbot, 
         def setValue(self, _key, _value):
             pass
 
-    window = MainWindow()
+    window = MainWindow(quick_creation_enabled=True)
     qtbot.addWidget(window)
     monkeypatch.setattr(
         "app.ui.main_window.QFileDialog.getExistingDirectory", lambda *_args: str(project_dir)
