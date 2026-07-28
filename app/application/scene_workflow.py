@@ -175,9 +175,39 @@ class SceneWorkflow:
         await self._analyze_draft()
         return record
 
-    def recover_partial(self, scene_id: str, chapter_id: str, prose: str) -> Any:
+    def recover_writer_draft(self, scene_id: str, chapter_id: str, prose: str) -> Any:
+        """Promote a crash-recovery buffer through the normal draft store."""
         from app.pipeline.pipeline import GenerationResult
+        from app.storage.project_files import (
+            discard_scene_writer_draft,
+            list_scene_prose_versions,
+            load_scene_generation_record,
+            load_scene_prose_version,
+        )
+
         self.state.scene_id, self.state.chapter_id = scene_id, chapter_id
+        for version_name in list_scene_prose_versions(self.project_dir, chapter_id, scene_id):
+            if not version_name.startswith("v"):
+                continue
+            try:
+                record = load_scene_generation_record(
+                    self.project_dir, scene_id, version=version_name
+                )
+            except ValueError:
+                record = None
+            if record is not None and record.status == "draft" and record.draft_text == prose:
+                discard_scene_writer_draft(self.project_dir, scene_id)
+                self.save_draft(record)
+                return record
+            if record is None and load_scene_prose_version(
+                self.project_dir, chapter_id, scene_id, version_name
+            ) == prose:
+                record = self._save_draft(
+                    GenerationResult(scene_id=scene_id, prose=prose),
+                    version=int(version_name[1:]),
+                )
+                self.save_draft(record)
+                return record
         record = self._save_draft(GenerationResult(scene_id=scene_id, prose=prose))
         self.save_draft(record)
         return record
@@ -300,7 +330,7 @@ class SceneWorkflow:
                 except Exception:
                     pass
 
-    def _save_draft(self, result: Any) -> Any:
+    def _save_draft(self, result: Any, version: int | None = None) -> Any:
         from app.storage.models import SceneGenerationRecord, parse_generation_read_points
         from app.storage.project_files import discard_scene_writer_draft, save_scene_generation_record
         from app.storage.timeline_repository import find_scene_position
@@ -308,7 +338,7 @@ class SceneWorkflow:
         chapter_id = self.state.chapter_id
         if not chapter_id:
             raise OperationBlockedError("The scene has no chapter")
-        version = _next_version(self.project_dir, chapter_id, result.scene_id)
+        version = version or _next_version(self.project_dir, chapter_id, result.scene_id)
         _save_versioned_prose(self.project_dir, chapter_id, result.scene_id, result.prose, version)
         points = parse_generation_read_points(getattr(result, "generated_with", {})).characters
         checkpoint = next((point.get("checkpoint_id", "") for point in points.values() if point.get("checkpoint_id")), "")

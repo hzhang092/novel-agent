@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import gc
-import os
 from pathlib import Path
-import tempfile
 
 from PySide6.QtCore import QSignalBlocker, Qt, QUrl
 from PySide6.QtGui import QAction, QDesktopServices
@@ -201,6 +198,7 @@ class MainWindow(QMainWindow):
         self._workspace_view.plan_rejected.connect(self._on_plan_rejected)
 
     def _bind_project_application(self, project_dir: Path) -> None:
+        self._current_project_dir = project_dir
         self._application = build_project_application(
             project_dir,
             event_bus=self._domain_bus,
@@ -276,7 +274,17 @@ class MainWindow(QMainWindow):
         if mode not in {"quick", "deep"} or mode == self._experience_mode:
             return
         current = self._previous_destination
-        target = "bible" if mode == "deep" and current == "story" else "story" if mode == "quick" and current == "bible" else current
+        if mode == "deep" and current == "story":
+            remembered = (
+                self._editor_layout_store.layout.deep_destination
+                if self._editor_layout_store is not None
+                else None
+            )
+            target = remembered or "bible"
+        elif mode == "quick" and current == "bible":
+            target = "story"
+        else:
+            target = current
         leaving_bible = current == "bible" and target != "bible"
         if leaving_bible and not self._maybe_close_current_project():
             blocker = QSignalBlocker(self._experience_switch)
@@ -285,6 +293,8 @@ class MainWindow(QMainWindow):
             )
             del blocker
             return
+        if leaving_bible:
+            self._previous_destination = target
         self._experience_mode = mode
         if self._editor_layout_store is not None:
             self._editor_layout_store.layout.experience_mode = mode
@@ -603,57 +613,21 @@ class MainWindow(QMainWindow):
     ) -> None:
         """Load active scene prose and update the version selector."""
         from app.storage.project_files import (
-            discard_scene_writer_draft,
-            load_scene_generation_record,
             load_scene_prose_status,
             load_scene_prose_version,
             load_scene_writer_draft,
-            list_scene_prose_versions,
         )
 
         recovered_prose = load_scene_writer_draft(self._current_project_dir, scene_id)
-        if recovered_prose:
-            recovered_record = None
-            partial_version = None
-            for candidate_version in list_scene_prose_versions(
-                self._current_project_dir, chapter_id, scene_id
-            ):
-                if candidate_version == "legacy":
-                    continue
-                try:
-                    candidate_record = load_scene_generation_record(
-                        self._current_project_dir,
-                        scene_id,
-                        version=candidate_version,
-                    )
-                except ValueError:
-                    candidate_record = None
-                if (
-                    candidate_record is not None
-                    and candidate_record.status == "draft"
-                    and candidate_record.draft_text == recovered_prose
-                ):
-                    recovered_record = candidate_record
-                    break
-                if candidate_record is None and load_scene_prose_version(
-                    self._current_project_dir,
-                    chapter_id,
-                    scene_id,
-                    candidate_version,
-                ) == recovered_prose:
-                    partial_version = int(candidate_version[1:])
-                    break
-            if recovered_record is None:
-                recovered_record = self._application.scene_workflow.recover_partial(
-                    scene_id, chapter_id, recovered_prose
-                ) if self._application is not None else None
-            else:
-                discard_scene_writer_draft(self._current_project_dir, scene_id)
+        if recovered_prose and self._application is not None:
+            recovered_record = self._application.scene_workflow.recover_writer_draft(
+                scene_id, chapter_id, recovered_prose
+            )
+            if recovered_record is not None:
                 self._refresh_prose_versions(
                     chapter_id, scene_id, f"v{recovered_record.revision_number}"
                 )
                 workspace.set_prose_text(recovered_prose)
-            if recovered_record is not None:
                 QMessageBox.information(
                     self,
                     "已恢复未完成草稿",
@@ -784,9 +758,6 @@ class MainWindow(QMainWindow):
             self._application.scene_workflow.approve_plan(edited_plan)
             self._workspace_view.hide_plan_checkpoint()
             return
-        decision = getattr(self, "_plan_decision", None)
-        if decision is not None and not decision.done():
-            decision.set_result((True, edited_plan))
 
     def _on_plan_rejected(self) -> None:
         """Resolve the current planner decision as rejected."""
@@ -794,9 +765,6 @@ class MainWindow(QMainWindow):
             self._application.scene_workflow.reject_plan()
             self._workspace_view.hide_plan_checkpoint()
             return
-        decision = getattr(self, "_plan_decision", None)
-        if decision is not None and not decision.done():
-            decision.set_result((False, None))
 
     def _on_next_scene(self) -> None:
         """Navigate to the next scene in the outline sequence."""
@@ -838,142 +806,6 @@ class MainWindow(QMainWindow):
             self._refresh_prose_versions(chapter_id, record.scene_id, f"v{record.revision_number}")
         self._workspace_view.set_prose_text(record.draft_text)
         self._update_status_bar_tokens()
-
-    def _legacy_scene_lifecycle_removed(self, result, version: int | None = None):
-        """Save generated prose and artifacts as a non-canonical draft."""
-        if self._current_project_dir is None:
-            return None
-
-        chapter_id = self._find_chapter_for_scene(result.scene_id)
-        if not chapter_id:
-            return None
-
-        from app.storage.project_files import (
-            discard_scene_writer_draft,
-            save_scene_generation_record,
-        )
-        from app.storage.models import SceneGenerationRecord
-        from app.storage.timeline_repository import (
-            find_scene_position,
-        )
-
-        if version is None:
-            version = _get_next_version(
-                self._current_project_dir, chapter_id, result.scene_id
-            )
-        _save_versioned_prose(
-            self._current_project_dir, chapter_id, result.scene_id, result.prose, version
-        )
-        self._refresh_prose_versions(chapter_id, result.scene_id, f"v{version}")
-
-        plan_dict = result.plan.model_dump(mode="json") if result.plan else {}
-        intents_dict = {
-            k: v.model_dump(mode="json")
-            for k, v in result.character_intents.items()
-        }
-        review_dict = result.review.model_dump(mode="json") if result.review else None
-        generated_with = getattr(result, "generated_with", {})
-        from app.storage.models import parse_generation_read_points
-
-        character_read_points = parse_generation_read_points(
-            generated_with
-        ).characters
-        generated_from_checkpoint_id = next(
-            (
-                read_point.get("checkpoint_id", "")
-                for read_point in character_read_points.values()
-                if read_point.get("checkpoint_id")
-            ),
-            "",
-        )
-        position = find_scene_position(self._current_project_dir, result.scene_id)
-
-        record = SceneGenerationRecord(
-            scene_id=result.scene_id,
-            revision_number=version,
-            scene_order=position.scene_order if position else 0,
-            generated_from_checkpoint_id=generated_from_checkpoint_id,
-            generated_with=generated_with,
-            status="draft",
-            generation_mode="standard",
-            scene_plan=plan_dict,
-            character_intents=intents_dict,
-            draft_text=result.prose,
-            review=review_dict,
-            final_text="",
-            extracted_facts_raw=getattr(result, 'extracted_facts', []),
-            state_changes_raw=getattr(result, 'state_changes', []),
-        )
-        save_scene_generation_record(self._current_project_dir, record)
-        discard_scene_writer_draft(self._current_project_dir, result.scene_id)
-        self._workspace_view.set_prose_text(result.prose)
-        if self._application is not None:
-            self._application.scene_workflow.save_draft(record)
-        return record
-
-    async def _analyze_and_offer_publication(
-        self, pipeline, result, record, workspace, on_trace
-    ) -> None:
-        from app.providers.config import get_provider_for_step, load_provider_config
-
-        providers = []
-        try:
-            config = load_provider_config()
-            fact_provider = get_provider_for_step("fact_extractor", config)
-            providers.append(fact_provider)
-            state_provider = get_provider_for_step("state_updater", config)
-            providers.append(state_provider)
-            await pipeline.analyze_draft(
-                self._current_project_dir,
-                result,
-                fact_provider=fact_provider,
-                state_provider=state_provider,
-                review_overridden=record.review_overridden,
-                on_trace=on_trace,
-            )
-        finally:
-            for provider in providers:
-                try:
-                    await provider.close()
-                except Exception:
-                    pass
-        from app.storage.project_files import save_scene_generation_record
-
-        record.extracted_facts_raw = result.extracted_facts
-        record.state_changes_raw = result.state_changes
-        record.scene_summary_raw = result.scene_summary
-        save_scene_generation_record(self._current_project_dir, record)
-        workspace.show_fact_approval(
-            result.scene_id,
-            record.revision_id,
-            result.extracted_facts,
-            result.state_changes,
-        )
-        workspace.set_status("等待发布")
-        if self._application is not None:
-            self._application.scene_workflow.set_memory_selections(
-                result.extracted_facts, result.state_changes
-            )
-
-    def _schedule_analysis_with_retry(
-        self, pipeline, result, record, workspace, on_trace
-    ) -> None:
-        """Run detached memory analysis and restore its retry control on failure."""
-
-        async def _run() -> None:
-            try:
-                await self._analyze_and_offer_publication(
-                    pipeline, result, record, workspace, on_trace
-                )
-            except Exception:
-                workspace.set_status("记忆分析失败")
-                workspace.show_review_result(
-                    False, "记忆分析失败；草稿已保存，可重试"
-                )
-
-        task = asyncio.ensure_future(_run())
-        if self._application is not None:
-            self._application.scene_workflow.set_task(task)
 
     def _on_continue_review_requested(self) -> None:
         if self._application is None:
@@ -1126,50 +958,3 @@ class MainWindow(QMainWindow):
                     flags &= ~Qt.ItemFlag.ItemIsEnabled
                     flags &= ~Qt.ItemFlag.ItemIsSelectable
                 item.setFlags(flags)
-
-
-def _get_next_version(project_dir: Path, chapter_id: str, scene_id: str) -> int:
-    """Determine the next version number for a scene by scanning existing files."""
-    chapter_dir = project_dir / "scenes" / chapter_id
-    if not chapter_dir.exists():
-        return 1
-    existing = list(chapter_dir.glob(f"{scene_id}.v*.md"))
-    if not existing:
-        return 1
-    versions = []
-    for f in existing:
-        stem = f.stem
-        parts = stem.rsplit(".v", 1)
-        if len(parts) == 2:
-            try:
-                versions.append(int(parts[1]))
-            except ValueError:
-                continue
-    return max(versions, default=0) + 1
-
-
-def _save_versioned_prose(
-    project_dir: Path, chapter_id: str, scene_id: str, prose: str, version: int
-) -> None:
-    """Atomically write scene prose to its versioned Markdown file."""
-    chapter_dir = project_dir / "scenes" / chapter_id
-    chapter_dir.mkdir(parents=True, exist_ok=True)
-    filepath = chapter_dir / f"{scene_id}.v{version}.md"
-    temp_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=chapter_dir,
-            prefix=f".{scene_id}.v{version}.",
-            suffix=".tmp",
-            delete=False,
-        ) as fh:
-            temp_path = Path(fh.name)
-            fh.write(prose)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(temp_path, filepath)
-    finally:
-        if temp_path is not None:
-            temp_path.unlink(missing_ok=True)
