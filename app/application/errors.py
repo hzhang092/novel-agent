@@ -19,3 +19,9 @@ class OperationBlockedError(ApplicationError):
 
 class ConcurrentModificationError(ApplicationError):
     pass
+
+
+class StoryDesignerProviderError(RuntimeError):
+    """The configured Story Designer provider could not produce a proposal."""
+
+    pass

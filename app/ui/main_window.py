@@ -206,6 +206,8 @@ class MainWindow(QMainWindow):
 
     def _set_experience_mode(self, mode: str) -> None:
         """Swap presentation navigation while preserving shared editor widgets."""
+        if mode == "quick" and not self._quick_creation_enabled:
+            mode = "deep"
         self._experience_mode = mode if mode == "quick" else "deep"
         index = self._experience_switch.findData(self._experience_mode)
         blocker = QSignalBlocker(self._experience_switch)
@@ -245,6 +247,11 @@ class MainWindow(QMainWindow):
 
     def _on_experience_changed(self, _index: int) -> None:
         mode = self._experience_switch.currentData()
+        if mode == "quick" and not self._quick_creation_enabled:
+            blocker = QSignalBlocker(self._experience_switch)
+            self._experience_switch.setCurrentIndex(self._experience_switch.findData("deep"))
+            del blocker
+            return
         if mode not in {"quick", "deep"} or mode == self._experience_mode:
             return
         current = self._previous_destination

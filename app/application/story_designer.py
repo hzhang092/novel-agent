@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 from pathlib import Path
 
-from app.application.errors import ConcurrentModificationError, OperationBlockedError
+from app.application.errors import (
+    ConcurrentModificationError,
+    OperationBlockedError,
+    StoryDesignerProviderError,
+)
 from app.application.scene_workflow import ProjectRunGuard
 from app.providers.base import LLMProvider, ProviderResponse
 from app.storage.bible_repository import rollback_files
@@ -120,13 +125,17 @@ class StoryDesignerService:
             response: ProviderResponse = await provider.generate_structured(
                 _proposal_messages(brief, planning.active_draft, instruction), StoryProposal
             )
+            proposal = (
+                response.model
+                if isinstance(response.model, StoryProposal)
+                else StoryProposal.model_validate(response.parsed or {})
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            raise StoryDesignerProviderError(str(error)) from error
         finally:
             await provider.close()
-        proposal = (
-            response.model
-            if isinstance(response.model, StoryProposal)
-            else StoryProposal.model_validate(response.parsed or {})
-        )
         current = load_planning(self.project_dir)
         if (
             current.story_brief is None

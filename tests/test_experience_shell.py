@@ -8,7 +8,7 @@ from app.ui.main_window import MainWindow
 
 def _window(tmp_path, qtbot):
     project_dir = create_project(tmp_path, Project(title="Story"))
-    window = MainWindow()
+    window = MainWindow(quick_creation_enabled=True)
     qtbot.addWidget(window)
     window._bind_project_application(project_dir)
     return window
@@ -35,6 +35,22 @@ def test_quick_affordance_is_hidden_without_the_development_flag(qtbot):
     qtbot.addWidget(window)
 
     assert window._experience_switch.isHidden()
+
+
+def test_disabled_flag_forces_a_quick_preference_back_to_deep(tmp_path, qtbot):
+    project_dir = create_project(tmp_path, Project(title="Story"))
+    from app.storage.editor_layout import EditorLayoutStore
+
+    layout = EditorLayoutStore(project_dir)
+    layout.layout.experience_mode = "quick"
+    layout.save()
+    window = MainWindow(quick_creation_enabled=False)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    _switch(window, "quick")
+
+    assert window._experience_mode == "deep"
+    assert window._presentation_stack.currentWidget() is window._deep_presentation
 
 
 def test_switching_preserves_shared_writing_and_outline_state(tmp_path, qtbot):

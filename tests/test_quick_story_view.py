@@ -2,13 +2,14 @@ import asyncio
 
 import pytest
 
+from app.application.errors import StoryDesignerProviderError
 from app.application.project_context import build_project_application
+from app.application.story_designer import StoryDesignerService
 from app.providers.base import MockProvider
-from app.storage.models import Project, StoryProposal
+from app.storage.models import Project, ProviderConfig, StoryBrief, StoryProposal
 from app.storage.project_files import create_project, create_quick_project, load_planning, load_project
 from app.ui.quick_story_view import QuickStoryView
 from app.providers.config import ProviderConfigurationError, get_configured_provider_for_step
-from app.storage.models import ProviderConfig
 
 
 def _proposal() -> StoryProposal:
@@ -66,6 +67,42 @@ def test_story_view_proposal_actions_keep_project_folder_and_adopt_title(tmp_pat
     assert project_dir.name == "固定目录"
 
 
+@pytest.mark.asyncio
+async def test_adjusting_or_replacing_an_unchanged_brief_keeps_the_draft_current(tmp_path, qtbot):
+    project_dir = create_project(tmp_path, Project(title="调整"))
+    application = build_project_application(project_dir)
+    application.story_designer._provider_factory = lambda: MockProvider(structured_response=_proposal())
+    view = QuickStoryView()
+    qtbot.addWidget(view)
+    view.bind_application(application)
+
+    await view._generate_proposal()
+    first = load_planning(project_dir).active_draft
+    assert first is not None
+    view.adjust_edit.setText("更黑暗")
+    await view._adjust_proposal()
+    second = load_planning(project_dir).active_draft
+    assert second is not None and second.revision == first.revision + 1
+    await view._generate_proposal()
+    assert load_planning(project_dir).active_draft.revision == second.revision + 1
+
+
+def test_custom_tags_round_trip_after_reopen(tmp_path, qtbot):
+    project_dir = create_project(tmp_path, Project(title="标签"))
+    view = QuickStoryView()
+    qtbot.addWidget(view)
+    view.bind_application(build_project_application(project_dir))
+    view._custom["tone_tags"].setText("第一、第二，第三,第四")
+    view._save_brief()
+
+    reopened = QuickStoryView()
+    qtbot.addWidget(reopened)
+    reopened.bind_application(build_project_application(project_dir))
+    reopened._save_brief()
+
+    assert load_planning(project_dir).story_brief.tone_tags == ["第一", "第二", "第三", "第四"]
+
+
 def test_story_designer_route_never_falls_back_when_missing():
     config = ProviderConfig()
     config.routing.pop("story_designer")
@@ -97,3 +134,26 @@ async def test_cancelled_quick_proposal_keeps_the_resumable_project_folder(tmp_p
 
     assert project_dir.is_dir()
     assert load_planning(project_dir).story_brief is not None
+
+
+@pytest.mark.asyncio
+async def test_story_designer_wraps_non_runtime_provider_errors_and_closes(tmp_path):
+    class BrokenProvider(MockProvider):
+        def __init__(self):
+            super().__init__()
+            self.closed = False
+
+        async def generate_structured(self, *args, **kwargs):
+            raise ValueError("bad response")
+
+        async def close(self):
+            self.closed = True
+
+    project_dir = create_project(tmp_path, Project(title="错误"))
+    provider = BrokenProvider()
+    service = StoryDesignerService(project_dir, provider_factory=lambda: provider)
+    service.save_brief(StoryBrief())
+
+    with pytest.raises(StoryDesignerProviderError, match="bad response"):
+        await service.generate_proposal()
+    assert provider.closed

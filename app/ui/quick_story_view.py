@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import re
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFormLayout, QHBoxLayout, QLabel,
     QLineEdit, QMessageBox, QPushButton, QSpinBox, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from app.providers.config import ProviderConfigurationError
-from app.application.errors import ConcurrentModificationError, OperationBlockedError
+from app.application.errors import (
+    ConcurrentModificationError,
+    OperationBlockedError,
+    StoryDesignerProviderError,
+)
 from app.storage.models import ChapterLength, StoryBrief
 from app.storage.project_files import load_planning
 
@@ -165,7 +170,9 @@ class QuickStoryView(QWidget):
         values: dict[str, list[str]] = {}
         for field, chips in self._chips.items():
             selected = [name for name, chip in chips.items() if chip.isChecked()]
-            selected.extend(value.strip() for value in self._custom[field].text().replace("，", ",").split(","))
+            selected.extend(
+                value.strip() for value in re.split(r"[、，,]", self._custom[field].text())
+            )
             values[field] = selected
         if self.romance_combo.currentData() == "none":
             values["relationship_tags"] = [
@@ -194,10 +201,29 @@ class QuickStoryView(QWidget):
                 ),
             )
 
-    async def _generate_proposal(self) -> None:
+    def _prepare_brief(self) -> None:
+        """Persist changed brief inputs without invalidating a current draft."""
         if self._application is None:
             return
-        self._save_brief()
+        planning = load_planning(self._application.project_dir)
+        brief = self._brief()
+        if planning.story_brief is not None:
+            brief.revision = planning.story_brief.revision
+        destination = self.ending_edit.text() if self.target_combo.currentData() == "ongoing" else ""
+        if (
+            planning.story_brief == brief
+            and planning.provisional_destination == " ".join(destination.split())
+        ):
+            return
+        self._application.story_designer.save_brief(
+            brief, provisional_destination=destination
+        )
+
+    async def _generate_proposal(self, *, prepared: bool = False) -> None:
+        if self._application is None:
+            return
+        if not prepared:
+            self._prepare_brief()
         instruction = self.ending_edit.text().strip()
         if self.target_combo.currentData() == "ongoing" and instruction:
             instruction = f"长篇连载的暂定去向：{instruction}"
@@ -206,7 +232,7 @@ class QuickStoryView(QWidget):
         except ProviderConfigurationError as error:
             self._provider_error(str(error), self._generate_proposal)
             return
-        except (RuntimeError, ConcurrentModificationError, OperationBlockedError) as error:
+        except (StoryDesignerProviderError, ConcurrentModificationError, OperationBlockedError) as error:
             self._provider_error(f"生成失败：{error}", self._generate_proposal)
             return
         self._show_proposal(draft)
@@ -214,10 +240,10 @@ class QuickStoryView(QWidget):
     async def _adjust_proposal(self) -> None:
         if self._application is None:
             return
-        self._save_brief()
+        self._prepare_brief()
         planning = load_planning(self._application.project_dir)
         if planning.active_draft is None:
-            return await self._generate_proposal()
+            return await self._generate_proposal(prepared=True)
         try:
             draft = await self._application.story_designer.adjust_proposal(
                 self.adjust_edit.text().strip(), base_revision=planning.active_draft.revision
@@ -225,7 +251,7 @@ class QuickStoryView(QWidget):
         except ProviderConfigurationError as error:
             self._provider_error(str(error), self._adjust_proposal)
             return
-        except (RuntimeError, ConcurrentModificationError, OperationBlockedError) as error:
+        except (StoryDesignerProviderError, ConcurrentModificationError, OperationBlockedError) as error:
             self._provider_error(f"调整失败：{error}", self._adjust_proposal)
             return
         self._show_proposal(draft)
@@ -275,4 +301,4 @@ class QuickStoryView(QWidget):
         if box.clickedButton() is settings_button:
             self.settings_requested.emit()
         elif retry_button is not None and box.clickedButton() is retry_button:
-            asyncio.ensure_future(retry())
+            QTimer.singleShot(0, lambda: self._start_task(retry()))
