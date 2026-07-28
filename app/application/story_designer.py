@@ -14,20 +14,32 @@ from app.application.errors import (
 )
 from app.application.scene_workflow import ProjectRunGuard
 from app.providers.base import LLMProvider, ProviderResponse
-from app.storage.bible_repository import rollback_files
+from app.storage.bible_repository import WorldBibleService, rollback_files
 from app.storage.models import (
     ActiveProposalDraft,
+    ActiveBootstrapDraft,
     ApprovedStoryProposal,
+    BootstrapPatchPreview,
+    Character,
+    StoryBootstrap,
     StoryBrief,
     StoryProposal,
+    StyleGuide,
+    WorldSetting,
 )
 from app.storage.project_files import (
     PLANNING_YAML,
     PROJECT_YAML,
     load_planning,
     load_project,
+    load_all_volumes,
+    load_canon_facts,
+    list_character_ids,
+    save_character,
     save_planning,
     save_project,
+    save_style_guide,
+    save_volume_outline,
 )
 
 
@@ -95,6 +107,154 @@ class StoryDesignerService:
                 save_project(self.project_dir, project)
         return approved
 
+    async def generate_bootstrap(self) -> ActiveBootstrapDraft:
+        """Generate one initial canonical bundle, but retain it as a draft."""
+        if not self.run_guard.acquire("story_designer"):
+            raise OperationBlockedError("Another project generation is already active")
+        try:
+            planning = load_planning(self.project_dir)
+            if planning.approved_proposal is None:
+                raise OperationBlockedError("An approved Story Proposal is required before bootstrap")
+            if not self._is_empty_project():
+                raise OperationBlockedError("Bootstrap is only available for an empty project")
+            proposal = planning.approved_proposal
+            provider = self._provider_factory()
+            try:
+                response: ProviderResponse = await provider.generate_structured(
+                    _bootstrap_messages(proposal, planning.story_brief), StoryBootstrap
+                )
+                bootstrap = (
+                    response.model
+                    if isinstance(response.model, StoryBootstrap)
+                    else StoryBootstrap.model_validate(response.parsed or {})
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                raise StoryDesignerProviderError(str(error)) from error
+            finally:
+                await provider.close()
+            current = load_planning(self.project_dir)
+            if current.approved_proposal is None or current.approved_proposal.revision != proposal.revision:
+                raise ConcurrentModificationError("The approved proposal has changed; regenerate bootstrap")
+            if not self._is_empty_project():
+                raise OperationBlockedError("Bootstrap is only available for an empty project")
+            draft = ActiveBootstrapDraft(
+                revision=(current.active_draft.revision + 1 if current.active_draft else proposal.revision + 1),
+                based_on_proposal_revision=proposal.revision,
+                bootstrap=bootstrap,
+            )
+            current.active_draft = draft
+            save_planning(self.project_dir, current)
+            return draft
+        finally:
+            self.run_guard.release("story_designer")
+
+    def save_bootstrap(
+        self, bootstrap: StoryBootstrap, *, base_revision: int
+    ) -> ActiveBootstrapDraft:
+        planning = load_planning(self.project_dir)
+        draft = self._bootstrap_draft(planning, base_revision)
+        saved = draft.model_copy(update={"revision": draft.revision + 1, "bootstrap": bootstrap})
+        planning.active_draft = saved
+        save_planning(self.project_dir, planning)
+        return saved
+
+    async def adjust_bootstrap(
+        self, instruction: str, *, base_revision: int
+    ) -> BootstrapPatchPreview:
+        if not self.run_guard.acquire("story_designer"):
+            raise OperationBlockedError("Another project generation is already active")
+        try:
+            planning = load_planning(self.project_dir)
+            draft = self._bootstrap_draft(planning, base_revision)
+            provider = self._provider_factory()
+            try:
+                response: ProviderResponse = await provider.generate_structured(
+                    _bootstrap_patch_messages(draft, instruction), BootstrapPatchPreview
+                )
+                preview = (
+                    response.model
+                    if isinstance(response.model, BootstrapPatchPreview)
+                    else BootstrapPatchPreview.model_validate(response.parsed or {})
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                raise StoryDesignerProviderError(str(error)) from error
+            finally:
+                await provider.close()
+            self._bootstrap_draft(load_planning(self.project_dir), base_revision)
+            return preview.model_copy(update={"base_revision": base_revision})
+        finally:
+            self.run_guard.release("story_designer")
+
+    def apply_bootstrap_patch(self, preview: BootstrapPatchPreview) -> ActiveBootstrapDraft:
+        planning = load_planning(self.project_dir)
+        draft = self._bootstrap_draft(planning, preview.base_revision)
+        document = draft.bootstrap.model_dump(mode="json")
+        for operation in preview.operations:
+            _replace_bootstrap_value(document, operation.path, operation.value)
+        return self.save_bootstrap(StoryBootstrap.model_validate(document), base_revision=draft.revision)
+
+    def approve_bootstrap(self, *, base_revision: int) -> None:
+        planning = load_planning(self.project_dir)
+        draft = self._bootstrap_draft(planning, base_revision)
+        if not self._is_empty_project():
+            raise OperationBlockedError("Bootstrap is only available for an empty project")
+        bootstrap = draft.bootstrap
+        bible = WorldBibleService(self.project_dir)
+        paths = [
+            self.project_dir / PROJECT_YAML,
+            self.project_dir / "world.md",
+            self.project_dir / "style.yaml",
+            self.project_dir / PLANNING_YAML,
+            bible.repository.manifest_path,
+            *(bible.repository.element_path(item.id) for item in bootstrap.elements),
+            *(self.project_dir / "outline" / f"{arc.id}.yaml" for arc in bootstrap.arcs),
+            *(
+                path
+                for character in bootstrap.characters
+                for path in (
+                    self.project_dir / "characters" / character.core.id / "definition.yaml",
+                    self.project_dir / "characters" / character.core.id / "events.jsonl",
+                    self.project_dir / "characters" / character.core.id / "state.yaml",
+                )
+            ),
+        ]
+        with rollback_files(paths):
+            bible.apply_snapshot(bootstrap.overview, bootstrap.elements)
+            for character in bootstrap.characters:
+                save_character(self.project_dir, character)
+            save_style_guide(self.project_dir, bootstrap.style)
+            for arc in bootstrap.arcs:
+                save_volume_outline(self.project_dir, arc)
+            planning.active_draft = None  # clear only after every canonical save succeeded
+            save_planning(self.project_dir, planning)
+
+    @staticmethod
+    def _bootstrap_draft(planning, base_revision: int) -> ActiveBootstrapDraft:
+        draft = planning.active_draft
+        if not isinstance(draft, ActiveBootstrapDraft) or draft.revision != base_revision:
+            raise ConcurrentModificationError("The bootstrap draft has changed; regenerate it")
+        if planning.approved_proposal is None or (
+            draft.based_on_proposal_revision != planning.approved_proposal.revision
+        ):
+            raise ConcurrentModificationError("The approved proposal has changed; regenerate bootstrap")
+        return draft
+
+    def _is_empty_project(self) -> bool:
+        project = load_project(self.project_dir)
+        bible = WorldBibleService(self.project_dir).load()
+        return (
+            not bible.elements
+            and not list_character_ids(self.project_dir)
+            and not load_all_volumes(self.project_dir)
+            and not load_canon_facts(self.project_dir)
+            and project.world_setting == WorldSetting()
+            and project.style_guide == StyleGuide()
+        )
+
     async def _replace_draft(
         self, *, base_revision: int | None, instruction: str
     ) -> ActiveProposalDraft:
@@ -111,6 +271,8 @@ class StoryDesignerService:
         self, *, base_revision: int | None, instruction: str
     ) -> ActiveProposalDraft:
         planning = load_planning(self.project_dir)
+        if isinstance(planning.active_draft, ActiveBootstrapDraft):
+            raise OperationBlockedError("Resolve the bootstrap draft before changing the proposal")
         brief = planning.story_brief
         if brief is None:
             raise OperationBlockedError("A Story Brief is required before a proposal")
@@ -184,6 +346,96 @@ def _proposal_messages(
             ),
         },
     ]
+
+
+def _bootstrap_messages(
+    proposal: ApprovedStoryProposal, brief: StoryBrief | None
+) -> list[dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are Story Designer. Return only a StoryBootstrap using the supplied "
+                "canonical shapes: Bible overview/elements, 2-4 Character core/state pairs, "
+                "StyleGuide, and VolumeOutline arcs. Build a finite planning horizon (roughly "
+                "the first three arcs for an ongoing story), never the entire series. Give only "
+                "the first arc detailed chapters; every first-arc chapter has exactly one scene, "
+                "and later arcs have summaries with no chapters. Three to six arcs and eight to "
+                "fifteen first-arc chapters are guidance, not schema limits. Do not output Canon "
+                "Facts. Invent original names and rules. Never apply the Xianxia Story Template. "
+                "Generation Guides are prompt-only, not story content."
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(
+                {"approved_proposal": proposal.model_dump(), "story_brief": brief.model_dump() if brief else None},
+                ensure_ascii=False,
+            ),
+        },
+    ]
+
+
+def _bootstrap_patch_messages(
+    draft: ActiveBootstrapDraft, instruction: str
+) -> list[dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "Return a BootstrapPatchPreview only. Use replace operations only, with JSON Pointer "
+                "paths under /overview, /elements, /characters, /style, or /arcs. Address only the "
+                "requested fields; do not replace whole objects or arrays. Include short human-readable "
+                "changes and consequences."
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(
+                {"base_revision": draft.revision, "bootstrap": draft.bootstrap.model_dump(mode="json"), "adjustment": instruction},
+                ensure_ascii=False,
+            ),
+        },
+    ]
+
+
+_PATCH_ROOTS = {"overview", "elements", "characters", "style", "arcs"}
+
+
+def _replace_bootstrap_value(document: dict, path: str, value: object) -> None:
+    """Apply only a safe, existing JSON-pointer leaf replacement."""
+    if not path.startswith("/"):
+        raise ValueError("Bootstrap patch path must be a JSON Pointer")
+    parts = [part.replace("~1", "/").replace("~0", "~") for part in path[1:].split("/")]
+    if (
+        len(parts) < 2
+        or parts[0] not in _PATCH_ROOTS
+        or (parts[0] in {"elements", "characters", "arcs"} and len(parts) < 3)
+    ):
+        raise ValueError("Bootstrap patch may only replace an existing nested field")
+    target: object = document
+    for part in parts[:-1]:
+        if isinstance(target, dict):
+            if part not in target:
+                raise ValueError("Bootstrap patch path does not exist")
+            target = target[part]
+        elif isinstance(target, list) and part.isdigit() and int(part) < len(target):
+            target = target[int(part)]
+        else:
+            raise ValueError("Bootstrap patch path does not exist")
+    final = parts[-1]
+    if isinstance(target, dict):
+        if final not in target:
+            raise ValueError("Bootstrap patch path does not exist")
+        if isinstance(target[final], (dict, list)):
+            raise ValueError("Bootstrap patch may only replace scalar fields")
+        target[final] = value
+    elif isinstance(target, list) and final.isdigit() and int(final) < len(target):
+        if isinstance(target[int(final)], (dict, list)):
+            raise ValueError("Bootstrap patch may only replace scalar fields")
+        target[int(final)] = value
+    else:
+        raise ValueError("Bootstrap patch path does not exist")
 
 
 def _draft_revision(planning) -> int | None:

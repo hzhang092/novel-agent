@@ -9,6 +9,8 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.storage.bible_models import BibleElement, WorldOverview
+
 
 # ── Character ──────────────────────────────────────────────────────────────
 
@@ -434,13 +436,74 @@ class ActiveProposalDraft(BaseModel):
     proposal: StoryProposal
 
 
+class StoryBootstrap(BaseModel):
+    """The small, reviewable initial canonical bundle made by Story Designer."""
+
+    model_config = ConfigDict(extra="forbid")
+    overview: "WorldOverview"
+    elements: list["BibleElement"] = Field(default_factory=list)
+    characters: list[Character] = Field(min_length=2, max_length=4)
+    style: StyleGuide
+    arcs: list[VolumeOutline]
+
+    @model_validator(mode="after")
+    def validate_first_arc_only(self) -> "StoryBootstrap":
+        if not self.arcs:
+            raise ValueError("Bootstrap needs a first story arc")
+        if not self.arcs[0].chapters:
+            raise ValueError("Bootstrap first arc needs chapters")
+        if any(len(chapter.scenes) != 1 for chapter in self.arcs[0].chapters):
+            raise ValueError("Every bootstrap chapter needs exactly one scene")
+        if any(arc.chapters for arc in self.arcs[1:]):
+            raise ValueError("Only the first bootstrap arc may contain chapters")
+        arc_ids = [arc.id for arc in self.arcs]
+        if len(arc_ids) != len(set(arc_ids)):
+            raise ValueError("Bootstrap arc IDs must be unique")
+        character_ids = {character.core.id for character in self.characters}
+        if len(character_ids) != len(self.characters) or any(
+            character.state.character_id != character.core.id for character in self.characters
+        ):
+            raise ValueError("Bootstrap character states must match their character")
+        return self
+
+
+class ActiveBootstrapDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["bootstrap"] = "bootstrap"
+    revision: int = Field(default=1, ge=1)
+    based_on_proposal_revision: int = Field(ge=1)
+    bootstrap: StoryBootstrap
+
+
+class BootstrapPatchOperation(BaseModel):
+    """A deliberately small RFC6902 subset for reviewable draft edits."""
+
+    model_config = ConfigDict(extra="forbid")
+    op: Literal["replace"] = "replace"
+    path: str
+    value: object
+
+
+class BootstrapPatchPreview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    base_revision: int = Field(ge=1)
+    operations: list[BootstrapPatchOperation] = Field(min_length=1)
+    changes: list[str] = Field(default_factory=list)
+    consequences: list[str] = Field(default_factory=list)
+
+
+ActivePlanningDraft = Annotated[
+    Union[ActiveProposalDraft, ActiveBootstrapDraft], Field(discriminator="kind")
+]
+
+
 class PlanningData(BaseModel):
     model_config = ConfigDict(extra="forbid")
     schema_version: Literal[1] = 1
     story_brief: StoryBrief | None = None
     provisional_destination: str = ""
     approved_proposal: ApprovedStoryProposal | None = None
-    active_draft: ActiveProposalDraft | None = None
+    active_draft: ActivePlanningDraft | None = None
 
 
 # ── Agent Output Schemas ───────────────────────────────────────────────────

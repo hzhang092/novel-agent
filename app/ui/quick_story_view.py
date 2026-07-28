@@ -17,7 +17,7 @@ from app.application.errors import (
     OperationBlockedError,
     StoryDesignerProviderError,
 )
-from app.storage.models import ChapterLength, StoryBrief
+from app.storage.models import ActiveBootstrapDraft, ChapterLength, StoryBootstrap, StoryBrief
 from app.storage.project_files import load_planning
 
 
@@ -115,6 +115,43 @@ class QuickStoryView(QWidget):
         for button in (self.adopt_button, self.adjust_button, self.another_button):
             actions.addWidget(button)
         layout.addLayout(actions)
+        layout.addWidget(QLabel("故事启动包"))
+        self.bootstrap_label = QLabel("采用故事后可生成")
+        self.bootstrap_label.setWordWrap(True)
+        layout.addWidget(self.bootstrap_label)
+        self.bootstrap_button = QPushButton("生成故事启动包")
+        self.bootstrap_button.clicked.connect(lambda: self._start_task(self._generate_bootstrap()))
+        layout.addWidget(self.bootstrap_button)
+        self.bootstrap_cards = QVBoxLayout()
+        layout.addLayout(self.bootstrap_cards)
+        self.bootstrap_advanced = QTextEdit()
+        self.bootstrap_advanced.setReadOnly(True)
+        self.bootstrap_advanced.setPlaceholderText("高级生成字段（只读）")
+        self.bootstrap_advanced.setFixedHeight(70)
+        layout.addWidget(self.bootstrap_advanced)
+        self.bootstrap_adjust_edit = QLineEdit()
+        self.bootstrap_adjust_edit.setPlaceholderText("告诉 AI 如何调整启动包")
+        layout.addWidget(self.bootstrap_adjust_edit)
+        self.bootstrap_patch_label = QLabel("")
+        self.bootstrap_patch_label.setWordWrap(True)
+        layout.addWidget(self.bootstrap_patch_label)
+        bootstrap_actions = QHBoxLayout()
+        self.save_bootstrap_button = QPushButton("保存修改")
+        self.adjust_bootstrap_button = QPushButton("调整")
+        self.apply_bootstrap_patch_button = QPushButton("应用调整")
+        self.cancel_bootstrap_patch_button = QPushButton("取消调整")
+        self.approve_bootstrap_button = QPushButton("采用启动包")
+        self.save_bootstrap_button.clicked.connect(self._save_bootstrap)
+        self.adjust_bootstrap_button.clicked.connect(lambda: self._start_task(self._adjust_bootstrap()))
+        self.apply_bootstrap_patch_button.clicked.connect(self._apply_bootstrap_patch)
+        self.cancel_bootstrap_patch_button.clicked.connect(self._cancel_bootstrap_patch)
+        self.approve_bootstrap_button.clicked.connect(self._approve_bootstrap)
+        for button in (self.save_bootstrap_button, self.adjust_bootstrap_button, self.apply_bootstrap_patch_button, self.cancel_bootstrap_patch_button, self.approve_bootstrap_button):
+            bootstrap_actions.addWidget(button)
+        layout.addLayout(bootstrap_actions)
+        self._bootstrap_draft = None
+        self._bootstrap_preview = None
+        self._bootstrap_fields = []
         layout.addStretch()
 
     def bind_application(self, application) -> None:
@@ -125,7 +162,9 @@ class QuickStoryView(QWidget):
         self._set_brief(planning.story_brief or StoryBrief())
         self.ending_edit.setText(planning.provisional_destination)
         self.adjust_edit.clear()
-        self._show_proposal(planning.active_draft or planning.approved_proposal)
+        proposal = planning.active_draft if hasattr(planning.active_draft, "proposal") else planning.approved_proposal
+        self._show_proposal(proposal)
+        self._show_bootstrap(planning.active_draft if isinstance(planning.active_draft, ActiveBootstrapDraft) else None)
 
     def _start_task(self, coroutine) -> None:
         if self._proposal_task is None or self._proposal_task.done():
@@ -279,6 +318,139 @@ class QuickStoryView(QWidget):
             self._provider_error(f"采用失败：{error}")
             return
         self._show_proposal(approved)
+        self._show_bootstrap(None)
+
+    async def _generate_bootstrap(self) -> None:
+        application = self._application
+        if application is None:
+            return
+        try:
+            draft = await application.story_designer.generate_bootstrap()
+        except ProviderConfigurationError as error:
+            if self._application is application:
+                self._provider_error(str(error), self._generate_bootstrap)
+            return
+        except (StoryDesignerProviderError, ConcurrentModificationError, OperationBlockedError) as error:
+            if self._application is application:
+                self._provider_error(f"生成失败：{error}", self._generate_bootstrap)
+            return
+        if self._application is application:
+            self._show_bootstrap(draft)
+
+    def _show_bootstrap(self, draft) -> None:
+        self._bootstrap_draft = draft
+        self._bootstrap_preview = None
+        self.bootstrap_patch_label.clear()
+        while self.bootstrap_cards.count():
+            item = self.bootstrap_cards.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._bootstrap_fields = []
+        editable = draft is not None
+        approved = self._application is not None and load_planning(self._application.project_dir).approved_proposal is not None
+        self.bootstrap_button.setVisible(approved and not editable)
+        self.another_button.setVisible(not editable and self.proposal_label.text() != "尚未生成")
+        self.save_bootstrap_button.setEnabled(editable)
+        self.adjust_bootstrap_button.setEnabled(editable)
+        self.approve_bootstrap_button.setEnabled(editable)
+        self.apply_bootstrap_patch_button.setEnabled(False)
+        self.cancel_bootstrap_patch_button.setEnabled(False)
+        if not editable:
+            self.bootstrap_label.setText("采用故事后可生成" if not approved else "尚未生成")
+            self.bootstrap_advanced.clear()
+            return
+        bootstrap = draft.bootstrap
+        self.bootstrap_label.setText(f"v{draft.revision}：可编辑简要卡片；高级字段只读。")
+        self._add_bootstrap_field("世界概览", bootstrap.overview.geography, ("overview", "geography"))
+        for index, character in enumerate(bootstrap.characters):
+            self._add_bootstrap_field(f"角色 {index + 1} 名称", character.core.name, ("characters", index, "core", "name"))
+            self._add_bootstrap_field(f"角色 {index + 1} 身份", character.core.identity, ("characters", index, "core", "identity"))
+            self._add_bootstrap_field(f"角色 {index + 1} 性格", character.core.personality, ("characters", index, "core", "personality"))
+        for index, arc in enumerate(bootstrap.arcs):
+            self._add_bootstrap_field(f"故事弧 {index + 1}", arc.title, ("arcs", index, "title"))
+            self._add_bootstrap_field(f"故事弧 {index + 1} 概要", arc.summary, ("arcs", index, "summary"))
+        for index, chapter in enumerate(bootstrap.arcs[0].chapters):
+            self._add_bootstrap_field(f"第 {index + 1} 章标题", chapter.title, ("arcs", 0, "chapters", index, "title"))
+            self._add_bootstrap_field(f"第 {index + 1} 章概要", chapter.summary, ("arcs", 0, "chapters", index, "summary"))
+            self._add_bootstrap_field(f"第 {index + 1} 章钩子", chapter.scenes[0].ending_hook, ("arcs", 0, "chapters", index, "scenes", 0, "ending_hook"))
+        self.bootstrap_advanced.setPlainText(bootstrap.model_dump_json(indent=2))
+
+    def _add_bootstrap_field(self, label: str, value: str, path: tuple) -> None:
+        row = QHBoxLayout()
+        row.addWidget(QLabel(label))
+        field = QLineEdit(value)
+        row.addWidget(field)
+        self.bootstrap_cards.addLayout(row)
+        self._bootstrap_fields.append((field, path))
+
+    def _edited_bootstrap(self) -> StoryBootstrap | None:
+        if self._bootstrap_draft is None:
+            return None
+        data = self._bootstrap_draft.bootstrap.model_dump(mode="json")
+        for field, path in self._bootstrap_fields:
+            target = data
+            for part in path[:-1]:
+                target = target[part]
+            target[path[-1]] = field.text()
+        return StoryBootstrap.model_validate(data)
+
+    def _save_bootstrap(self) -> None:
+        if self._application is None or self._bootstrap_draft is None:
+            return
+        try:
+            self._show_bootstrap(self._application.story_designer.save_bootstrap(
+                self._edited_bootstrap(), base_revision=self._bootstrap_draft.revision
+            ))
+        except (ConcurrentModificationError, ValueError) as error:
+            self._provider_error(f"保存失败：{error}")
+
+    async def _adjust_bootstrap(self) -> None:
+        if self._application is None or self._bootstrap_draft is None:
+            return
+        self._save_bootstrap()
+        if self._bootstrap_draft is None:
+            return
+        application = self._application
+        try:
+            preview = await application.story_designer.adjust_bootstrap(
+                self.bootstrap_adjust_edit.text(), base_revision=self._bootstrap_draft.revision
+            )
+        except (ProviderConfigurationError, StoryDesignerProviderError, ConcurrentModificationError, OperationBlockedError) as error:
+            if self._application is application:
+                self._provider_error(f"调整失败：{error}", self._adjust_bootstrap)
+            return
+        if self._application is application:
+            self._bootstrap_preview = preview
+            self.bootstrap_patch_label.setText("变更：" + "；".join(preview.changes) + "\n影响：" + "；".join(preview.consequences))
+            self.apply_bootstrap_patch_button.setEnabled(True)
+            self.cancel_bootstrap_patch_button.setEnabled(True)
+
+    def _apply_bootstrap_patch(self) -> None:
+        if self._application is None or self._bootstrap_preview is None:
+            return
+        try:
+            self._show_bootstrap(self._application.story_designer.apply_bootstrap_patch(self._bootstrap_preview))
+        except (ConcurrentModificationError, ValueError) as error:
+            self._provider_error(f"应用失败：{error}")
+
+    def _cancel_bootstrap_patch(self) -> None:
+        self._bootstrap_preview = None
+        self.bootstrap_patch_label.clear()
+        self.apply_bootstrap_patch_button.setEnabled(False)
+        self.cancel_bootstrap_patch_button.setEnabled(False)
+
+    def _approve_bootstrap(self) -> None:
+        if self._application is None or self._bootstrap_draft is None:
+            return
+        self._save_bootstrap()
+        if self._bootstrap_draft is None:
+            return
+        try:
+            self._application.story_designer.approve_bootstrap(base_revision=self._bootstrap_draft.revision)
+        except (ConcurrentModificationError, OperationBlockedError, ValueError) as error:
+            self._provider_error(f"采用失败：{error}")
+            return
+        self._show_bootstrap(None)
 
     def _show_proposal(self, value) -> None:
         if value is None:

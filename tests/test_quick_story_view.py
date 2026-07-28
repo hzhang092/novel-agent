@@ -7,7 +7,21 @@ from app.application.errors import StoryDesignerProviderError
 from app.application.project_context import build_project_application
 from app.application.story_designer import StoryDesignerService
 from app.providers.base import MockProvider
-from app.storage.models import Project, ProviderConfig, StoryBrief, StoryProposal
+from app.storage.bible_models import WorldOverview
+from app.storage.models import (
+    Character,
+    CharacterCore,
+    CharacterState,
+    ChapterOutline,
+    Project,
+    ProviderConfig,
+    SceneOutline,
+    StoryBootstrap,
+    StoryBrief,
+    StoryProposal,
+    StyleGuide,
+    VolumeOutline,
+)
 from app.storage.project_files import create_project, create_quick_project, load_planning, load_project
 from app.ui.quick_story_view import QuickStoryView
 from app.providers.config import ProviderConfigurationError, get_configured_provider_for_step
@@ -21,6 +35,17 @@ def _proposal() -> StoryProposal:
         core_conflict="冲突",
         story_promises=["看点一", "看点二", "看点三"],
         ending_direction="暂定远方",
+    )
+
+
+def _bootstrap() -> StoryBootstrap:
+    characters = [
+        Character(core=CharacterCore(id=f"quick-{index}", name=f"角色{index}"), state=CharacterState(character_id=f"quick-{index}"))
+        for index in range(2)
+    ]
+    return StoryBootstrap(
+        overview=WorldOverview(geography="城市"), characters=characters, style=StyleGuide(),
+        arcs=[VolumeOutline(id="quick-arc", title="第一弧", chapters=[ChapterOutline(id="quick-chapter", scenes=[SceneOutline(id="quick-scene")])])],
     )
 
 
@@ -252,3 +277,24 @@ async def test_story_designer_wraps_non_runtime_provider_errors_and_closes(tmp_p
     with pytest.raises(StoryDesignerProviderError, match="bad response"):
         await service.generate_proposal()
     assert provider.closed
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_cards_are_editable_while_advanced_output_is_read_only(tmp_path, qtbot):
+    project_dir = create_project(tmp_path, Project(title="启动包"))
+    application = build_project_application(project_dir)
+    application.story_designer._provider_factory = lambda: MockProvider(structured_response=_proposal())
+    view = QuickStoryView()
+    qtbot.addWidget(view)
+    view.bind_application(application)
+    view._save_brief()
+    await view._generate_proposal()
+    await view._adopt_proposal()
+    application.story_designer._provider_factory = lambda: MockProvider(structured_response=_bootstrap())
+
+    await view._generate_bootstrap()
+
+    assert view.bootstrap_advanced.isReadOnly()
+    assert view._bootstrap_fields and view._bootstrap_fields[0][0].isEnabled()
+    assert view.approve_bootstrap_button.isEnabled()
+    assert view.another_button.isHidden()
