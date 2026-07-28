@@ -45,6 +45,7 @@ from app.ui.settings_dialog import SettingsDialog
 from app.ui.dashboard import DashboardView
 from app.ui.outline_editor import OutlineEditorView
 from app.ui.scene_workspace import SceneWorkspaceView
+from app.ui.experience_presentations import DeepCreationPresentation, QuickCreationPresentation
 
 NAV_ITEMS = [
     ("总览", "dashboard"),
@@ -65,11 +66,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("NovelForge")
         self.resize(1200, 800)
-        self._last_generated_scene_id: str | None = None
-        self._generation_in_progress: bool = False
         self._current_prose_version: str | None = None
-        self._pending_draft: tuple | None = None
-        self._plan_decision: asyncio.Future[tuple[bool, dict | None]] | None = None
 
         self._repo = Repository(Path.home() / "NovelForge")
         self._current_project: ProjectModel | None = None
@@ -137,22 +134,18 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Sidebar
         self._experience_switch = QComboBox()
         self._experience_switch.addItem("快速创作", "quick")
         self._experience_switch.addItem("深度创作", "deep")
         self._experience_switch.currentIndexChanged.connect(self._on_experience_changed)
         layout.addWidget(self._experience_switch)
-        self.sidebar = QListWidget()
-        self.sidebar.setFixedWidth(180)
-        self.sidebar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        for label, key in NAV_ITEMS:
-            item = QListWidgetItem(label)
-            item.setData(Qt.ItemDataRole.UserRole, key)
-            self.sidebar.addItem(item)
-
-        # Stacked views
-        self.stack = QStackedWidget()
+        self._presentation_stack = QStackedWidget()
+        self._deep_presentation = DeepCreationPresentation()
+        self._quick_presentation = QuickCreationPresentation()
+        self._presentation_stack.addWidget(self._deep_presentation)
+        self._presentation_stack.addWidget(self._quick_presentation)
+        self.sidebar = self._deep_presentation.sidebar
+        self.stack = self._deep_presentation.stack
         self._dashboard_view = DashboardView()
         self._quick_story_view = QLabel("故事")
         self._quick_story_view.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -166,29 +159,20 @@ class MainWindow(QMainWindow):
             "outline": self._outline_view,
             "workspace": self._workspace_view,
         }
-        for key in ["dashboard", "bible", "outline", "workspace", "story"]:
-            self.stack.addWidget(self._views[key])
+        self._deep_presentation.stack.addWidget(self._dashboard_view)
+        self._deep_presentation.stack.addWidget(self._bible_view)
+        self._quick_presentation.stack.addWidget(self._quick_story_view)
+        self._deep_presentation.destination_changed.connect(self._on_destination_changed)
+        self._quick_presentation.destination_changed.connect(self._on_destination_changed)
         self._connect_view_signals()
-
-        # Layout: sidebar | content
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self.sidebar)
-        splitter.addWidget(self.stack)
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        layout.addWidget(splitter)
-
-        # Connect navigation
-        self.sidebar.currentRowChanged.connect(self._on_nav_changed)
-        self.sidebar.setCurrentRow(0)
+        layout.addWidget(self._presentation_stack)
+        self._activate_presentation("deep", "dashboard")
 
         # Disable non-dashboard sidebar items until a project is loaded
         self._set_nav_items_enabled(False)
 
     def _open_scene_from_bible(self, scene_id: str) -> None:
-        self.sidebar.setCurrentRow(3)
-        if self.sidebar.currentRow() != 3:
-            return
+        self._select_destination("workspace")
         self._outline_view.activate_scene(scene_id)
 
     def _connect_view_signals(self) -> None:
@@ -224,6 +208,7 @@ class MainWindow(QMainWindow):
         self._bible_view.bind_application(self._application)
         self._outline_view.bind_application(self._application.outlines)
         self._editor_layout_store = EditorLayoutStore(project_dir)
+        self._set_nav_items_enabled(True)
         self._set_experience_mode(self._editor_layout_store.layout.experience_mode)
 
     def _set_experience_mode(self, mode: str) -> None:
@@ -233,7 +218,7 @@ class MainWindow(QMainWindow):
         blocker = QSignalBlocker(self._experience_switch)
         self._experience_switch.setCurrentIndex(index)
         del blocker
-        self._populate_navigation()
+        self._activate_presentation(self._experience_mode, None)
 
     def _populate_navigation(self) -> None:
         destinations = QUICK_NAV_ITEMS if self._experience_mode == "quick" else NAV_ITEMS
@@ -256,11 +241,44 @@ class MainWindow(QMainWindow):
         row = next((i for i, item in enumerate(destinations) if item[1] == key), 0)
         self.sidebar.setCurrentRow(row)
 
+    def _activate_presentation(self, mode: str, destination: str | None) -> None:
+        target = self._quick_presentation if mode == "quick" else self._deep_presentation
+        source = self._deep_presentation if target is self._quick_presentation else self._quick_presentation
+        for view in (self._outline_view, self._workspace_view):
+            if source.stack.indexOf(view) >= 0:
+                source.stack.removeWidget(view)
+                target.stack.addWidget(view)
+            elif target.stack.indexOf(view) < 0:
+                target.stack.addWidget(view)
+        self._presentation_stack.setCurrentWidget(target)
+        self.sidebar, self.stack = target.sidebar, target.stack
+        destinations = target.destinations
+        if destination is None:
+            layout = self._editor_layout_store.layout if self._editor_layout_store else None
+            destination = (
+                layout.quick_destination if mode == "quick" else layout.deep_destination
+            ) if layout else None
+        if destination not in {key for _, key in destinations}:
+            destination = "story" if mode == "quick" else "dashboard"
+        self._select_destination(destination)
+
+    def _select_destination(self, key: str) -> None:
+        for row in range(self.sidebar.count()):
+            if self.sidebar.item(row).data(Qt.ItemDataRole.UserRole) == key:
+                self.sidebar.setCurrentRow(row)
+                return
+
+    def _on_destination_changed(self, key: str) -> None:
+        self._on_nav_changed(self.sidebar.currentRow())
+
     def _on_experience_changed(self, _index: int) -> None:
         mode = self._experience_switch.currentData()
         if mode not in {"quick", "deep"} or mode == self._experience_mode:
             return
-        if not self._maybe_close_current_project():
+        current = self._previous_destination
+        target = "bible" if mode == "deep" and current == "story" else "story" if mode == "quick" and current == "bible" else current
+        leaving_bible = current == "bible" and target != "bible"
+        if leaving_bible and not self._maybe_close_current_project():
             blocker = QSignalBlocker(self._experience_switch)
             self._experience_switch.setCurrentIndex(
                 self._experience_switch.findData(self._experience_mode)
@@ -271,7 +289,7 @@ class MainWindow(QMainWindow):
         if self._editor_layout_store is not None:
             self._editor_layout_store.layout.experience_mode = mode
             self._editor_layout_store.save()
-        self._populate_navigation()
+        self._activate_presentation(mode, target)
 
     def _on_nav_changed(self, index: int) -> None:
         item = self.sidebar.item(index)
@@ -789,12 +807,9 @@ class MainWindow(QMainWindow):
             self._application.scene_workflow.approve_plan(edited_plan)
             self._workspace_view.hide_plan_checkpoint()
             return
-        if self._plan_decision is None or self._plan_decision.done():
-            return
-        self._plan_decision.set_result((True, edited_plan))
-        if self._application is not None:
-            self._application.scene_workflow.receive_plan(edited_plan)
-        self._workspace_view.hide_plan_checkpoint()
+        decision = getattr(self, "_plan_decision", None)
+        if decision is not None and not decision.done():
+            decision.set_result((True, edited_plan))
 
     def _on_plan_rejected(self) -> None:
         """Resolve the current planner decision as rejected."""
@@ -802,15 +817,9 @@ class MainWindow(QMainWindow):
             self._application.scene_workflow.reject_plan()
             self._workspace_view.hide_plan_checkpoint()
             return
-        if self._plan_decision is None or self._plan_decision.done():
-            return
-        self._plan_decision.set_result((False, None))
-        self._workspace_view.hide_plan_checkpoint()
-        self._workspace_view.set_generating(False)
-        self._workspace_view.clear_trace()
-        self._generation_in_progress = False
-        if self._application is not None:
-            self._application.scene_workflow.cancel()
+        decision = getattr(self, "_plan_decision", None)
+        if decision is not None and not decision.done():
+            decision.set_result((False, None))
 
     def _on_next_scene(self) -> None:
         """Navigate to the next scene in the outline sequence."""
@@ -990,18 +999,10 @@ class MainWindow(QMainWindow):
             self._application.scene_workflow.set_task(task)
 
     def _on_continue_review_requested(self) -> None:
-        if self._pending_draft is None or self._current_project_dir is None:
+        if self._application is None:
             return
-        pipeline, result, record = self._pending_draft
-        workspace = self._workspace_view
-        from app.storage.project_files import save_scene_generation_record
-
-        record.review_overridden = True
-        save_scene_generation_record(self._current_project_dir, record)
-        workspace.hide_continue_review()
-        self._schedule_analysis_with_retry(
-            pipeline, result, record, workspace, workspace.update_trace
-        )
+        self._workspace_view.hide_continue_review()
+        asyncio.ensure_future(self._application.scene_workflow.continue_review())
 
     def _on_approval_batch_approved(
         self,
@@ -1054,15 +1055,15 @@ class MainWindow(QMainWindow):
             if record is not None:
                 self._refresh_prose_versions(chapter_id, scene_id, f"v{record.revision_number}")
         workspace.set_status("已发布")
-        self._pending_draft = None
-        if self._application is not None:
-            self._application.scene_workflow.finish()
 
 
     def _retry_agent(self, agent_name: str) -> None:
         """Retry generation from the current scene (re-runs full pipeline)."""
-        if self._last_generated_scene_id and not self._generation_in_progress:
-            self._on_generate_requested(self._last_generated_scene_id)
+        if self._application is not None:
+            try:
+                self._application.scene_workflow.retry()
+            except Exception:
+                return
 
     def _update_status_bar_tokens(self) -> None:
         """Update the status bar with session token totals and cost."""
