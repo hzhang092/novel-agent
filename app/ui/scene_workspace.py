@@ -19,6 +19,7 @@ from app.ui.widgets.agent_trace import AgentTracePanel
 from app.ui.widgets.planner_checkpoint import PlannerCheckpointWidget
 from app.ui.widgets.prose_editor import ProseEditorWidget
 from app.ui.widgets.fact_approval import FactApprovalPanel
+from app.ui.quick_chapter_view import QuickChapterView
 
 
 class SceneWorkspaceView(QWidget):
@@ -40,6 +41,18 @@ class SceneWorkspaceView(QWidget):
     plan_approved = Signal(dict)
     plan_rejected = Signal()
     approval_batch_approved = Signal(str, str, list, list)
+    quick_start_requested = Signal(str, str)
+    quick_adjust_requested = Signal(str)
+    quick_save_requested = Signal()
+    quick_regenerate_requested = Signal()
+    quick_revision_instruction_requested = Signal(str)
+    quick_length_changed = Signal(str, int)
+    quick_ai_fix_requested = Signal()
+    quick_details_requested = Signal()
+    quick_override_requested = Signal()
+    quick_approve_requested = Signal()
+    quick_approve_next_requested = Signal()
+    deep_control_requested = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -48,6 +61,10 @@ class SceneWorkspaceView(QWidget):
         self._current_chapter_id: str | None = None
         self._generating = False
         self._next_scene_available = False
+        self._experience_mode = "deep"
+        self._has_review = False
+        self._has_memory = False
+        self._quick_memory_source = ("", "")
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -92,6 +109,38 @@ class SceneWorkspaceView(QWidget):
         toolbar.addStretch()
         layout.addLayout(toolbar)
 
+        self._quick_chapter = QuickChapterView()
+        for source, target in (
+            (self._quick_chapter.start_requested, self.quick_start_requested),
+            (self._quick_chapter.adjust_requested, self.quick_adjust_requested),
+            (self._quick_chapter.save_requested, self.quick_save_requested),
+            (self._quick_chapter.regenerate_requested, self.quick_regenerate_requested),
+            (
+                self._quick_chapter.revision_instruction_requested,
+                self.quick_revision_instruction_requested,
+            ),
+            (self._quick_chapter.length_changed, self.quick_length_changed),
+            (self._quick_chapter.ai_fix_requested, self.quick_ai_fix_requested),
+            (self._quick_chapter.details_requested, self.quick_details_requested),
+            (self._quick_chapter.override_requested, self.quick_override_requested),
+            (self._quick_chapter.approve_requested, self.quick_approve_requested),
+            (
+                self._quick_chapter.approve_next_requested,
+                self.quick_approve_next_requested,
+            ),
+            (
+                self._quick_chapter.deep_control_requested,
+                self.deep_control_requested,
+            ),
+            (
+                self._quick_chapter.revision_selected,
+                self.prose_version_selected,
+            ),
+        ):
+            source.connect(target.emit)
+        self._quick_chapter.hide()
+        layout.addWidget(self._quick_chapter)
+
         # Planner Checkpoint (shown during plan approval)
         self._planner_checkpoint = PlannerCheckpointWidget()
         self._planner_checkpoint.approved.connect(self.plan_approved.emit)
@@ -101,9 +150,11 @@ class SceneWorkspaceView(QWidget):
 
         # ── Three-pane splitter ──
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter = splitter
 
         # Left: Context Preview
         left_pane = QWidget()
+        self._left_pane = left_pane
         left_layout = QVBoxLayout(left_pane)
         left_layout.setContentsMargins(0, 0, 4, 0)
         left_layout.addWidget(QLabel("<b>上下文预览</b>"))
@@ -125,6 +176,7 @@ class SceneWorkspaceView(QWidget):
 
         # Right: Agent Trace
         right_pane = QWidget()
+        self._right_pane = right_pane
         right_layout = QVBoxLayout(right_pane)
         right_layout.setContentsMargins(4, 0, 0, 0)
         self._trace_panel = AgentTracePanel()
@@ -166,6 +218,19 @@ class SceneWorkspaceView(QWidget):
     def load_project_dir(self, project_dir: Path) -> None:
         """Store project directory reference."""
         self._project_dir = project_dir
+
+    def set_experience_mode(self, mode: str) -> None:
+        """Switch presentation while preserving the shared editor and run state."""
+        self._experience_mode = "quick" if mode == "quick" else "deep"
+        quick = self._experience_mode == "quick"
+        self._quick_chapter.setVisible(quick)
+        self._left_pane.setVisible(not quick)
+        self._right_pane.setVisible(not quick)
+        self._planner_checkpoint.setVisible(
+            not quick and self._planner_checkpoint.has_plan
+        )
+        self._review_bar.setVisible(not quick and self._has_review)
+        self._fact_approval.setVisible(not quick and self._has_memory)
 
     @property
     def current_scene_id(self) -> str | None:
@@ -229,9 +294,26 @@ class SceneWorkspaceView(QWidget):
         self,
         versions: list[str],
         current: str | None = None,
+        published: str | None = None,
     ) -> None:
         """Set available prose versions."""
         self._editor.set_versions(versions, current)
+        self._quick_chapter.set_revisions(versions, current or "", published or "")
+
+    def set_quick_length(self, mode: str, target: int, warning: str = "") -> None:
+        """Project the active chapter length into Quick Creation."""
+        self._quick_chapter.set_length(mode, target, warning)
+
+    def focus_deep_control(self, control: str) -> None:
+        """Move focus to the Deep control linked from Quick."""
+        target = {
+            "context": self._context_preview,
+            "review": self._review_bar,
+            "memory": self._fact_approval,
+            "status": self._status_label,
+        }.get(control)
+        if target is not None:
+            target.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def current_prose_version(self) -> str:
         """Return the selected prose version."""
@@ -252,6 +334,9 @@ class SceneWorkspaceView(QWidget):
     def show_plan_checkpoint(self, plan: dict) -> None:
         """Show a plan for user approval."""
         self._planner_checkpoint.show_plan(plan)
+        self._quick_chapter.show_plan(plan)
+        if self._experience_mode == "quick":
+            self._planner_checkpoint.hide()
 
     def hide_plan_checkpoint(self) -> None:
         """Hide the plan approval checkpoint."""
@@ -264,6 +349,7 @@ class SceneWorkspaceView(QWidget):
     def set_status(self, text: str) -> None:
         """Set the workspace status message."""
         self._status_label.setText(text)
+        self._quick_chapter.set_status(text)
 
     def set_next_scene_available(self, available: bool) -> None:
         """Set whether next-scene navigation is available."""
@@ -294,6 +380,7 @@ class SceneWorkspaceView(QWidget):
         """Called when a scene is selected in the outline."""
         self._current_scene_id = scene_id
         self._current_chapter_id = chapter_id
+        self._quick_chapter.set_chapter(chapter_id, scene_id)
         self._generate_btn.setEnabled(True)
         self._regenerate_btn.setEnabled(True)
         self._status_label.setText("就绪")
@@ -303,6 +390,7 @@ class SceneWorkspaceView(QWidget):
         """Called when no scene is selected."""
         self._current_scene_id = None
         self._current_chapter_id = None
+        self._quick_chapter.set_chapter("", "")
         self._generate_btn.setEnabled(False)
         self._regenerate_btn.setEnabled(False)
         self.hide_fact_approval()
@@ -311,10 +399,12 @@ class SceneWorkspaceView(QWidget):
     def show_context(self, context: dict) -> None:
         """Display assembled context in the preview panel."""
         self._context_preview.set_context(context)
+        self._quick_chapter.set_context_summary(f"{len(context)} 个上下文分区")
 
     def clear_context(self) -> None:
         """Clear the context preview."""
         self._context_preview.clear()
+        self._quick_chapter.set_context_summary("")
 
     def set_generating(self, generating: bool) -> None:
         """Set the UI into generating/idle state."""
@@ -341,11 +431,14 @@ class SceneWorkspaceView(QWidget):
             self._review_label.setText(f"⚠️ 审查发现问题 — {summary}")
             self._review_label.setStyleSheet("color: #f39c12; font-size: 12px;")
             self._continue_review_btn.show()
-        self._review_bar.show()
+        self._has_review = True
+        self._quick_chapter.show_review(passed, summary)
+        self._review_bar.setVisible(self._experience_mode == "deep")
 
     def hide_review_result(self) -> None:
         """Hide the review result bar."""
         self._review_bar.hide()
+        self._has_review = False
 
     def show_fact_approval(
         self,
@@ -358,10 +451,42 @@ class SceneWorkspaceView(QWidget):
         self._fact_approval.show_items(
             source_scene_id, source_revision_id, facts, state_changes
         )
+        self._quick_memory_source = (source_scene_id, source_revision_id)
+        self._has_memory = True
+        self._quick_chapter.show_memory(facts, state_changes)
+        self._fact_approval.setVisible(self._experience_mode == "deep")
 
     def hide_fact_approval(self) -> None:
         """Hide the fact approval panel."""
         self._fact_approval.clear_and_hide()
+        self._has_memory = False
+        self._quick_memory_source = ("", "")
+        self._quick_chapter.show_memory([], [])
+
+    def quick_plan(self) -> dict:
+        return self._quick_chapter.plan()
+
+    def quick_memory_selections(self) -> tuple[list, list]:
+        return self._quick_chapter.memory_selections()
+
+    def quick_approval_batch(self) -> tuple[str, str, list, list]:
+        facts, changes = self.quick_memory_selections()
+        scene_id, revision_id = self._quick_memory_source
+        return scene_id, revision_id, facts, changes
+
+    def set_quick_revision_metadata(
+        self,
+        scene_id: str,
+        revision_id: str,
+        review_passed: bool,
+        review_summary: str,
+        facts: list,
+        changes: list,
+    ) -> None:
+        """Project one stored revision into Quick's review and memory controls."""
+        self._quick_memory_source = (scene_id, revision_id)
+        self._quick_chapter.show_review(review_passed, review_summary)
+        self._quick_chapter.show_memory(facts, changes)
 
     # ── Actions ────────────────────────────────────────────────────────────
 

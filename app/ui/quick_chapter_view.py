@@ -1,0 +1,311 @@
+"""Compact Quick Creation companion panel for the shared writing workspace."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QSpinBox,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
+
+class QuickChapterView(QWidget):
+    """A thin companion panel; prose and workflow state stay in Deep's workspace."""
+
+    start_requested = Signal(str, str)  # chapter_id, scene_id
+    adjust_requested = Signal(str)  # chapter_id
+    save_requested = Signal()
+    regenerate_requested = Signal()
+    revision_selected = Signal(str)
+    revision_instruction_requested = Signal(str)
+    length_changed = Signal(str, int)  # mode, target Chinese characters
+    ai_fix_requested = Signal()
+    details_requested = Signal()
+    override_requested = Signal()
+    approve_requested = Signal()
+    approve_next_requested = Signal()
+    deep_control_requested = Signal(str)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._chapter_id = ""
+        self._scene_id = ""
+        self._facts: list[Any] = []
+        self._changes: list[Any] = []
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("快速章节"))
+
+        form = QFormLayout()
+        self.goal_edit = QLineEdit()
+        self.key_events_edit = QTextEdit()
+        self.key_events_edit.setFixedHeight(54)
+        self.emotional_turn_edit = QLineEdit()
+        self.hook_edit = QLineEdit()
+        for editor in (self.goal_edit, self.key_events_edit, self.emotional_turn_edit, self.hook_edit):
+            editor.setReadOnly(True)
+        form.addRow("目标", self.goal_edit)
+        form.addRow("关键事件", self.key_events_edit)
+        form.addRow("情绪转折", self.emotional_turn_edit)
+        form.addRow("钩子", self.hook_edit)
+        layout.addLayout(form)
+
+        self.length_combo = QComboBox()
+        for label, mode, words in (
+            ("短 2000", "short", 2000),
+            ("标准 3000", "standard", 3000),
+            ("长 5000", "long", 5000),
+            ("自定义", "custom", 3000),
+        ):
+            self.length_combo.addItem(label, mode)
+            self.length_combo.setItemData(
+                self.length_combo.count() - 1, words, Qt.ItemDataRole.UserRole + 1
+            )
+        self.length_combo.currentIndexChanged.connect(self._length_changed)
+        self.custom_length_spin = QSpinBox()
+        self.custom_length_spin.setRange(1, 100000)
+        self.custom_length_spin.setValue(3000)
+        self.custom_length_spin.valueChanged.connect(self._custom_length_changed)
+        form = QFormLayout()
+        form.addRow("章节长度", self.length_combo)
+        form.addRow("自定义字数", self.custom_length_spin)
+        layout.addLayout(form)
+        self.length_warning_label = QLabel()
+        self.length_warning_label.setWordWrap(True)
+        layout.addWidget(self.length_warning_label)
+        actions = QHBoxLayout()
+        self.start_button = QPushButton("开始")
+        self.adjust_button = QPushButton("调整")
+        self.start_button.clicked.connect(self._start)
+        self.adjust_button.clicked.connect(lambda: self.adjust_requested.emit(self._chapter_id))
+        actions.addWidget(self.start_button)
+        actions.addWidget(self.adjust_button)
+        layout.addLayout(actions)
+
+        revision_row = QHBoxLayout()
+        self.revision_combo = QComboBox()
+        self.revision_combo.currentTextChanged.connect(self._select_revision)
+        self.published_label = QLabel()
+        revision_row.addWidget(QLabel("修订"))
+        revision_row.addWidget(self.revision_combo)
+        revision_row.addWidget(self.published_label)
+        layout.addLayout(revision_row)
+
+        prose_actions = QHBoxLayout()
+        self.save_button = QPushButton("保存")
+        self.regenerate_button = QPushButton("重新生成")
+        self.save_button.clicked.connect(self.save_requested.emit)
+        self.regenerate_button.clicked.connect(self.regenerate_requested.emit)
+        prose_actions.addWidget(self.save_button)
+        prose_actions.addWidget(self.regenerate_button)
+        layout.addLayout(prose_actions)
+        self.revision_instruction_edit = QLineEdit()
+        self.revision_instruction_edit.setPlaceholderText("修订指令")
+        self.revision_instruction_button = QPushButton("提交修订指令")
+        self.revision_instruction_button.clicked.connect(
+            lambda: self.revision_instruction_requested.emit(
+                self.revision_instruction_edit.text().strip()
+            )
+        )
+        layout.addWidget(self.revision_instruction_edit)
+        layout.addWidget(self.revision_instruction_button)
+
+        layout.addWidget(QLabel("审查"))
+        self.review_summary_label = QLabel()
+        self.review_summary_label.setWordWrap(True)
+        layout.addWidget(self.review_summary_label)
+        review_actions = QHBoxLayout()
+        self.ai_fix_button = QPushButton("AI 修复")
+        self.details_button = QPushButton("详情")
+        self.override_button = QPushButton("明确覆盖")
+        self.ai_fix_button.clicked.connect(self.ai_fix_requested.emit)
+        self.details_button.clicked.connect(self.details_requested.emit)
+        self.override_button.clicked.connect(self.override_requested.emit)
+        for button in (self.ai_fix_button, self.details_button, self.override_button):
+            review_actions.addWidget(button)
+        layout.addLayout(review_actions)
+        for button in (self.ai_fix_button, self.details_button, self.override_button):
+            button.hide()
+
+        layout.addWidget(QLabel("记忆确认"))
+        self.memory_layout = QVBoxLayout()
+        layout.addLayout(self.memory_layout)
+        self.fact_checks: list[QCheckBox] = []
+        self.change_checks: list[QCheckBox] = []
+
+        approval_actions = QHBoxLayout()
+        self.approve_button = QPushButton("批准本章")
+        self.approve_next_button = QPushButton("批准并进入下一章")
+        self.approve_button.clicked.connect(self.approve_requested.emit)
+        self.approve_next_button.clicked.connect(self.approve_next_requested.emit)
+        approval_actions.addWidget(self.approve_button)
+        approval_actions.addWidget(self.approve_next_button)
+        layout.addLayout(approval_actions)
+
+        layout.addWidget(QLabel("高级信息"))
+        self.context_label = QLabel()
+        self.review_label = QLabel()
+        self.memory_label = QLabel()
+        self.status_label = QLabel()
+        for label in (self.context_label, self.review_label, self.memory_label, self.status_label):
+            label.setWordWrap(True)
+            layout.addWidget(label)
+        advanced_actions = QHBoxLayout()
+        self.context_button = QPushButton("上下文")
+        self.review_button = QPushButton("审查")
+        self.memory_button = QPushButton("记忆")
+        self.status_button = QPushButton("状态")
+        for name, button in (
+            ("context", self.context_button),
+            ("review", self.review_button),
+            ("memory", self.memory_button),
+            ("status", self.status_button),
+        ):
+            button.clicked.connect(lambda _checked=False, value=name: self.deep_control_requested.emit(value))
+            advanced_actions.addWidget(button)
+        layout.addLayout(advanced_actions)
+        layout.addStretch()
+
+    @property
+    def selected_revision(self) -> str:
+        return self.revision_combo.currentData() or ""
+
+    def set_chapter(self, chapter_id: str, scene_id: str) -> None:
+        self._chapter_id = chapter_id
+        self._scene_id = scene_id
+
+    def show_plan(self, plan: dict[str, Any]) -> None:
+        self._scene_id = str(plan.get("scene_id", self._scene_id))
+        self.goal_edit.setText(str(plan.get("scene_goal", "")))
+        self.key_events_edit.setPlainText("\n".join(plan.get("required_beats", [])))
+        self.emotional_turn_edit.setText(str(plan.get("emotional_arc", "")))
+        self.hook_edit.setText(str(plan.get("ending_hook", "")))
+
+    def show_review(self, passed: bool, summary: str) -> None:
+        self.review_summary_label.setText(
+            (("审查通过：" if passed else "关键问题：") + summary) if summary else ""
+        )
+        self.review_label.setText(summary)
+        for button in (self.ai_fix_button, self.details_button, self.override_button):
+            button.setVisible(not passed and bool(summary))
+
+    def show_memory(self, facts: list[Any], changes: list[Any]) -> None:
+        self._set_memory(facts, changes)
+        self.memory_label.setText(f"{len(facts)} 个事实，{len(changes)} 个状态变化待确认")
+
+    def set_status(self, status: str) -> None:
+        self.status_label.setText(status)
+
+    def set_context_summary(self, context: str) -> None:
+        self.context_label.setText(context)
+
+    def set_revisions(
+        self, revisions: list[Any], selected: str = "", published: str = ""
+    ) -> None:
+        self._set_revisions(revisions, selected)
+        self.published_label.setText(f"已发布：{published}" if published else "未发布")
+
+    def set_length(self, mode: str, target_chinese_characters: int, warning: str = "") -> None:
+        self._set_length(mode, target_chinese_characters)
+        self.length_warning_label.setText(warning)
+
+    def memory_selections(self) -> tuple[list[Any], list[Any]]:
+        facts = [item for item, box in zip(self._facts, self.fact_checks) if box.isChecked()]
+        changes = [
+            item for item, box in zip(self._changes, self.change_checks) if box.isChecked()
+        ]
+        return facts, changes
+
+    def plan(self) -> dict[str, Any]:
+        return {
+            "scene_id": self._scene_id,
+            "scene_goal": self.goal_edit.text(),
+            "required_beats": [
+                line.strip()
+                for line in self.key_events_edit.toPlainText().splitlines()
+                if line.strip()
+            ],
+            "emotional_arc": self.emotional_turn_edit.text(),
+            "ending_hook": self.hook_edit.text(),
+        }
+
+    def _start(self) -> None:
+        self.start_requested.emit(self._chapter_id, self._scene_id)
+
+    def _select_revision(self, revision_id: str) -> None:
+        if revision_id:
+            self.revision_selected.emit(self.revision_combo.currentData() or revision_id)
+
+    def _set_revisions(self, revisions: list[Any], selected: str) -> None:
+        self.revision_combo.blockSignals(True)
+        self.revision_combo.clear()
+        for revision in revisions:
+            value = str(self._value(revision, "revision_id", "id", default=revision))
+            self.revision_combo.addItem(value, value)
+        if selected:
+            index = self.revision_combo.findData(selected)
+            self.revision_combo.setCurrentIndex(index)
+        self.revision_combo.blockSignals(False)
+
+    def _set_length(self, mode: str, words: int) -> None:
+        self.length_combo.blockSignals(True)
+        self.custom_length_spin.blockSignals(True)
+        for index in range(self.length_combo.count()):
+            if self.length_combo.itemData(index) == mode:
+                self.length_combo.setCurrentIndex(index)
+                break
+        self.custom_length_spin.setValue(int(words))
+        self.length_combo.blockSignals(False)
+        self.custom_length_spin.blockSignals(False)
+
+    def _length_changed(self, _index: int) -> None:
+        mode = self.length_combo.currentData()
+        words = self.length_combo.currentData(Qt.ItemDataRole.UserRole + 1)
+        if mode == "custom":
+            words = self.custom_length_spin.value()
+        self.length_changed.emit(mode, words)
+
+    def _custom_length_changed(self, words: int) -> None:
+        if self.length_combo.currentData() == "custom":
+            self.length_changed.emit("custom", words)
+
+    def _set_memory(self, facts: list[Any], changes: list[Any]) -> None:
+        for box in self.fact_checks + self.change_checks:
+            box.deleteLater()
+        self._facts = list(facts)
+        self._changes = list(changes)
+        self.fact_checks = [self._memory_box("事实", item) for item in self._facts]
+        self.change_checks = [self._memory_box("状态变化", item) for item in self._changes]
+        for box in self.fact_checks + self.change_checks:
+            self.memory_layout.addWidget(box)
+
+    @staticmethod
+    def _memory_box(kind: str, item: Any) -> QCheckBox:
+        text = item
+        for name in ("description", "character_name", "text", "content"):
+            if isinstance(item, dict) and name in item:
+                text = item[name]
+                break
+            if hasattr(item, name):
+                text = getattr(item, name)
+                break
+        return QCheckBox(f"{kind}：{text}")
+
+    @staticmethod
+    def _value(item: Any, *names: str, default: Any = "") -> Any:
+        for name in names:
+            if isinstance(item, dict) and name in item:
+                return item[name]
+            if hasattr(item, name):
+                return getattr(item, name)
+        return default

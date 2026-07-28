@@ -118,6 +118,10 @@ class PlannerCheckpointWidget(QWidget):
         self._reject_btn.setEnabled(True)
         self.show()
 
+    @property
+    def has_plan(self) -> bool:
+        return self._plan is not None
+
     def hide_plan(self) -> None:
         """Hide the checkpoint widget."""
         self._plan = None

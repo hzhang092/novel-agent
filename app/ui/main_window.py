@@ -66,6 +66,7 @@ class MainWindow(QMainWindow):
         self._previous_destination = "dashboard"
         self._experience_mode = "deep"
         self._editor_layout_store: EditorLayoutStore | None = None
+        self._pending_plan_patch: tuple[object, str] | None = None
 
         # Event bus for live UI refresh
         self._domain_bus = EventBus()
@@ -206,6 +207,26 @@ class MainWindow(QMainWindow):
             None,
         )
 
+    def _chapter_length(self, chapter_id: str) -> tuple[str, int]:
+        if self._current_project_dir is None:
+            return "standard", 3000
+        from app.application.scene_workflow import resolve_chapter_target
+        from app.storage.project_files import load_all_volumes, load_project
+
+        project = load_project(self._current_project_dir)
+        chapter = next(
+            (
+                item
+                for volume in load_all_volumes(self._current_project_dir)
+                for item in volume.chapters
+                if item.id == chapter_id
+            ),
+            None,
+        )
+        setting = chapter.chapter_length_override if chapter else None
+        mode = setting.preset if setting is not None else project.chapter_length.preset
+        return mode, resolve_chapter_target(project, chapter)
+
     def _connect_view_signals(self) -> None:
         """Connect view signals once during UI construction."""
         self._bible_view.elements_changed.connect(
@@ -230,6 +251,34 @@ class MainWindow(QMainWindow):
         )
         self._workspace_view.plan_approved.connect(self._on_plan_approved)
         self._workspace_view.plan_rejected.connect(self._on_plan_rejected)
+        self._workspace_view.quick_start_requested.connect(self._on_quick_start)
+        self._workspace_view.quick_adjust_requested.connect(
+            self._open_deep_workspace_for_chapter
+        )
+        self._workspace_view.quick_save_requested.connect(self._on_quick_save)
+        self._workspace_view.quick_regenerate_requested.connect(
+            self._on_quick_regenerate
+        )
+        self._workspace_view.quick_revision_instruction_requested.connect(
+            self._on_quick_revision_instruction
+        )
+        self._workspace_view.quick_length_changed.connect(
+            self._on_quick_length_changed
+        )
+        self._workspace_view.quick_ai_fix_requested.connect(self._on_quick_ai_fix)
+        self._workspace_view.quick_details_requested.connect(
+            self._open_deep_workspace
+        )
+        self._workspace_view.quick_override_requested.connect(
+            self._on_continue_review_requested
+        )
+        self._workspace_view.quick_approve_requested.connect(self._on_quick_approve)
+        self._workspace_view.quick_approve_next_requested.connect(
+            self._on_quick_approve_next
+        )
+        self._workspace_view.deep_control_requested.connect(
+            self._open_deep_control
+        )
         self._quick_story_view.settings_requested.connect(self._on_llm_settings)
         self._quick_story_view.bootstrap_approved.connect(self._reload_after_bootstrap)
         self._quick_story_view.character_requested.connect(self._open_deep_character)
@@ -273,6 +322,7 @@ class MainWindow(QMainWindow):
     def _activate_presentation(self, mode: str, destination: str | None) -> None:
         target = self._quick_presentation if mode == "quick" else self._deep_presentation
         source = self._deep_presentation if target is self._quick_presentation else self._quick_presentation
+        self._workspace_view.set_experience_mode(mode)
         for view in (self._workspace_view,):
             if source.stack.indexOf(view) >= 0:
                 source.stack.removeWidget(view)
@@ -542,13 +592,21 @@ class MainWindow(QMainWindow):
         settings.setValue("projects/last_parent", str(project_dir.parent))
         key = f"last_scene/{Path(dir_path)}"
         last_scene_id = settings.value(key)
+        resume_scene_id = None
         if last_scene_id and isinstance(last_scene_id, str):
             chapter_id = self._find_chapter_for_scene(last_scene_id)
             if chapter_id:
-                self._select_destination("workspace")
-                self._outline_view.activate_scene(last_scene_id)
-            else:
-                self.sidebar.setCurrentRow(0)
+                resume_scene_id = last_scene_id
+        if resume_scene_id is None:
+            from app.application.scene_workflow import choose_resume_chapter
+
+            chapter_id = choose_resume_chapter(project_dir)
+            resume_scene_id = self._scene_for_chapter(chapter_id) if chapter_id else None
+        if resume_scene_id:
+            self._select_destination("workspace")
+            self._outline_view.activate_scene(resume_scene_id)
+        else:
+            self.sidebar.setCurrentRow(0)
 
         # Check for legacy character files and offer migration
         self._check_legacy_migration(Path(dir_path))
@@ -641,6 +699,10 @@ class MainWindow(QMainWindow):
         self._bible_view.set_current_scene_context(scene_id, referenced_ids)
         chapter_id = self._find_chapter_for_scene(scene_id)
         self._workspace_view.set_scene(scene_id, chapter_id or "")
+        if chapter_id and self._application is not None:
+            self._application.scene_workflow.remember_active_chapter(chapter_id)
+            mode, target = self._chapter_length(chapter_id)
+            self._workspace_view.set_quick_length(mode, target)
 
         from PySide6.QtCore import QSettings
         settings = QSettings()
@@ -737,7 +799,10 @@ class MainWindow(QMainWindow):
         """Refresh editor version choices for the current scene."""
         if self._current_project_dir is None:
             return []
-        from app.storage.project_files import list_scene_prose_versions
+        from app.storage.project_files import (
+            get_active_scene_prose_version,
+            list_scene_prose_versions,
+        )
 
         versions = list_scene_prose_versions(
             self._current_project_dir, chapter_id, scene_id
@@ -747,8 +812,34 @@ class MainWindow(QMainWindow):
         if current is None and versions:
             current = versions[0]
         self._current_prose_version = current
-        self._workspace_view.set_prose_versions(versions, current)
+        published = get_active_scene_prose_version(
+            self._current_project_dir, chapter_id, scene_id
+        )
+        self._workspace_view.set_prose_versions(versions, current, published)
+        if current:
+            from app.storage.project_files import load_scene_generation_record
+
+            record = load_scene_generation_record(
+                self._current_project_dir, scene_id, version=current
+            )
+            if record is not None:
+                self._show_quick_revision(record)
         return versions
+
+    def _show_quick_revision(self, record) -> None:
+        review = record.review or {}
+        self._workspace_view.set_quick_revision_metadata(
+            record.scene_id,
+            record.revision_id,
+            bool(review.get("overall_pass", False)),
+            str(review.get("summary", "")),
+            record.approved_facts if record.published_at else record.extracted_facts_raw,
+            (
+                record.approved_state_change_proposals
+                if record.published_at
+                else record.state_changes_raw
+            ),
+        )
 
     def _on_prose_version_selected(self, version: str) -> None:
         """Load the selected prose version into the editor."""
@@ -772,14 +863,22 @@ class MainWindow(QMainWindow):
                 self._refresh_prose_versions(chapter_id, scene_id, self._current_prose_version)
                 return
 
-        from app.storage.project_files import load_scene_prose_version
+        from app.storage.project_files import (
+            load_scene_generation_record,
+            load_scene_prose_version,
+        )
 
         workspace.set_prose_text(
             load_scene_prose_version(self._current_project_dir, chapter_id, scene_id, version)
         )
         self._current_prose_version = version
         if self._application is not None:
-            self._application.scene_workflow.select_revision(version)
+            record = load_scene_generation_record(
+                self._current_project_dir, scene_id, version=version
+            )
+            if record is not None:
+                self._application.scene_workflow.select_revision(record.revision_id)
+                self._show_quick_revision(record)
 
     def _on_set_active_prose_version(self, version: str) -> None:
         """Offer publication for the selected revision; selection alone is view-only."""
@@ -834,6 +933,42 @@ class MainWindow(QMainWindow):
     def _on_plan_approved(self, edited_plan: dict) -> None:
         """Resolve the current planner decision as approved."""
         if self._application is not None:
+            if self._pending_plan_patch is not None:
+                source_record, instruction = self._pending_plan_patch
+                self._pending_plan_patch = None
+                from app.storage.models import ScenePlanPatch
+
+                patch = ScenePlanPatch(
+                    base_revision_id=source_record.revision_id,
+                    **{
+                        key: edited_plan.get(key)
+                        for key in (
+                            "scene_goal",
+                            "required_beats",
+                            "conflict",
+                            "emotional_arc",
+                            "ending_hook",
+                            "continuity_constraints",
+                        )
+                    },
+                )
+                _, target = self._chapter_length(
+                    self._find_chapter_for_scene(source_record.scene_id) or ""
+                )
+                try:
+                    self._application.scene_workflow.regenerate(
+                        source_record.scene_id,
+                        source_record,
+                        self._scene_workflow_observer(),
+                        instruction=instruction,
+                        plan_patch=patch,
+                        target_characters=target,
+                    )
+                    self._workspace_view.begin_generation()
+                except Exception as error:
+                    QMessageBox.warning(self, "无法重新生成", str(error))
+                self._workspace_view.hide_plan_checkpoint()
+                return
             self._application.scene_workflow.approve_plan(edited_plan)
             self._workspace_view.hide_plan_checkpoint()
             return
@@ -841,9 +976,140 @@ class MainWindow(QMainWindow):
     def _on_plan_rejected(self) -> None:
         """Resolve the current planner decision as rejected."""
         if self._application is not None:
+            if self._pending_plan_patch is not None:
+                self._pending_plan_patch = None
+                self._workspace_view.hide_plan_checkpoint()
+                return
             self._application.scene_workflow.reject_plan()
             self._workspace_view.hide_plan_checkpoint()
             return
+
+    def _open_deep_workspace(self) -> None:
+        self._set_experience_mode("deep")
+        self._select_destination("workspace")
+
+    def _open_deep_workspace_for_chapter(self, _chapter_id: str) -> None:
+        self._open_deep_workspace()
+
+    def _open_deep_control(self, control: str) -> None:
+        self._open_deep_workspace()
+        self._workspace_view.focus_deep_control(control)
+
+    def _on_quick_start(self, _chapter_id: str, scene_id: str) -> None:
+        if self._application is None:
+            return
+        workflow = self._application.scene_workflow
+        if workflow.waiting_for_plan:
+            workflow.approve_plan(self._workspace_view.quick_plan())
+            self._workspace_view.hide_plan_checkpoint()
+        elif scene_id:
+            self._on_generate_requested(scene_id)
+
+    def _selected_generation_record(self):
+        if self._current_project_dir is None:
+            return None
+        scene_id = self._workspace_view.current_scene_id
+        version = self._current_prose_version
+        if not scene_id or not version:
+            return None
+        from app.storage.project_files import load_scene_generation_record
+
+        return load_scene_generation_record(
+            self._current_project_dir, scene_id, version=version
+        )
+
+    def _on_quick_save(self) -> None:
+        record = self._selected_generation_record()
+        if record is None or self._application is None:
+            QMessageBox.warning(self, "无法保存", "请先生成章节草稿。")
+            return
+        asyncio.ensure_future(
+            self._application.scene_workflow.save_edited_draft(
+                self._workspace_view.prose_text(),
+                record,
+                self._scene_workflow_observer(),
+                analyze=False,
+            )
+        )
+
+    def _regenerate_quick(self, instruction: str = "") -> None:
+        record = self._selected_generation_record()
+        if record is None or self._application is None:
+            QMessageBox.warning(self, "无法重新生成", "请选择带有已批准计划的草稿。")
+            return
+        scene_id = record.scene_id
+        _, target = self._chapter_length(
+            self._find_chapter_for_scene(scene_id) or ""
+        )
+        try:
+            self._application.scene_workflow.regenerate(
+                scene_id,
+                record,
+                self._scene_workflow_observer(),
+                instruction=instruction,
+                target_characters=target,
+            )
+            self._workspace_view.begin_generation()
+        except Exception as error:
+            QMessageBox.warning(self, "无法重新生成", str(error))
+
+    def _on_quick_regenerate(self) -> None:
+        self._regenerate_quick()
+
+    def _on_quick_revision_instruction(self, instruction: str) -> None:
+        if not instruction:
+            return
+        from app.application.scene_workflow import (
+            prose_instruction_requires_plan_patch,
+        )
+
+        record = self._selected_generation_record()
+        if record is None:
+            QMessageBox.warning(self, "无法重新生成", "请选择带有已批准计划的草稿。")
+            return
+        if prose_instruction_requires_plan_patch(instruction):
+            self._pending_plan_patch = (record, instruction)
+            self._workspace_view.show_plan_checkpoint(record.scene_plan)
+            self._open_deep_workspace()
+            return
+        self._regenerate_quick(instruction)
+
+    def _on_quick_ai_fix(self) -> None:
+        self._on_quick_revision_instruction(
+            f"修改正文，修复审查指出的问题：{self._workspace_view.review_summary}"
+        )
+
+    def _on_quick_length_changed(self, mode: str, target: int) -> None:
+        if self._current_project_dir is None:
+            return
+        chapter_id = self._workspace_view.current_chapter_id
+        if not chapter_id:
+            return
+        from app.storage.models import ChapterLength
+        from app.storage.project_files import load_all_volumes, save_volume_outline
+
+        for volume in load_all_volumes(self._current_project_dir):
+            chapter = next(
+                (item for item in volume.chapters if item.id == chapter_id), None
+            )
+            if chapter is not None:
+                chapter.chapter_length_override = ChapterLength(
+                    preset=mode, target_chinese_characters=target
+                )
+                save_volume_outline(self._current_project_dir, volume)
+                self._workspace_view.set_quick_length(mode, target)
+                return
+
+    def _on_quick_approve(self) -> bool:
+        batch = self._workspace_view.quick_approval_batch()
+        if not batch[0] or not batch[1]:
+            QMessageBox.warning(self, "无法批准", "请先完成审查和记忆确认。")
+            return False
+        return self._on_approval_batch_approved(*batch)
+
+    def _on_quick_approve_next(self) -> None:
+        if self._on_quick_approve():
+            self._on_next_scene()
 
     def _on_next_scene(self) -> None:
         """Navigate to the next scene in the outline sequence."""
@@ -860,9 +1126,15 @@ class MainWindow(QMainWindow):
             return
         workspace = self._workspace_view
         observer = self._scene_workflow_observer()
+        _, target = self._chapter_length(
+            self._find_chapter_for_scene(scene_id) or ""
+        )
         try:
             self._application.scene_workflow.start(
-                scene_id, self._find_chapter_for_scene(scene_id) or "", observer
+                scene_id,
+                self._find_chapter_for_scene(scene_id) or "",
+                observer,
+                target_characters=target,
             )
             workspace.begin_generation()
         except Exception as error:
@@ -881,13 +1153,24 @@ class MainWindow(QMainWindow):
             review=workspace.show_review_result,
             draft=self._on_workflow_draft,
             memory=workspace.show_fact_approval,
+            length_warning=self._show_length_warning,
             error=lambda error: logger.exception("Scene workflow failed", exc_info=error),
         )
+
+    def _show_length_warning(self, warning: str) -> None:
+        chapter_id = self._workspace_view.current_chapter_id or ""
+        mode, target = self._chapter_length(chapter_id)
+        self._workspace_view.set_quick_length(mode, target, warning)
+        self._workspace_view.set_status(warning)
 
     def _on_workflow_draft(self, record) -> None:
         chapter_id = self._find_chapter_for_scene(record.scene_id)
         if chapter_id:
             self._refresh_prose_versions(chapter_id, record.scene_id, f"v{record.revision_number}")
+            mode, target = self._chapter_length(chapter_id)
+            self._workspace_view.set_quick_length(
+                mode, target, record.length_warning
+            )
         self._workspace_view.set_prose_text(record.draft_text)
         self._update_status_bar_tokens()
 
@@ -903,10 +1186,10 @@ class MainWindow(QMainWindow):
         revision_id: str,
         approved_facts: list[dict],
         approved_changes: list[dict],
-    ) -> None:
+    ) -> bool:
         """Publish the exact draft revision and its approved memory."""
         if self._current_project_dir is None:
-            return
+            return False
         workspace = self._workspace_view
         if workspace.prose_is_modified():
             from app.storage.project_files import load_scene_generation_record
@@ -916,18 +1199,18 @@ class MainWindow(QMainWindow):
             )
             if source_record is not None:
                 self._continue_with_edited_draft(workspace, source_record)
-            return
+            return False
         try:
             if self._application is not None:
                 self._application.scene_workflow.publish(
                     scene_id, revision_id, approved_facts, approved_changes
                 )
             else:
-                return
+                return False
         except Exception as exc:
             logger.exception("Could not publish scene revision %s", revision_id)
             QMessageBox.critical(self, "发布失败", str(exc))
-            return
+            return False
         workspace.hide_fact_approval()
         chapter_id = self._find_chapter_for_scene(scene_id)
         record = None
@@ -939,6 +1222,7 @@ class MainWindow(QMainWindow):
             if record is not None:
                 self._refresh_prose_versions(chapter_id, scene_id, f"v{record.revision_number}")
         workspace.set_status("已发布")
+        return True
 
 
     def _retry_agent(self, agent_name: str) -> None:

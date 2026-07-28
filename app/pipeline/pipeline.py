@@ -18,7 +18,7 @@ from app.pipeline.agents.planner import ScenePlannerAgent
 from app.pipeline.agents.reviewer import ReviewerAgent
 from app.pipeline.agents.fact_extractor import FactExtractorAgent
 from app.pipeline.agents.state_updater import StateUpdaterAgent
-from app.pipeline.agents.writer import WriterAgent
+from app.pipeline.agents.writer import WriterAgent, provider_target_warning
 from app.pipeline.context_builder import RetrievalEngine
 from app.providers.base import LLMProvider
 from app.pipeline.token_tracker import TokenTracker
@@ -65,6 +65,8 @@ class GenerationResult:
     state_changes: list[dict] = field(default_factory=list)
     scene_summary: dict | None = None
     generated_with: dict[str, dict] = field(default_factory=dict)
+    target_chinese_characters: int = 3000
+    length_warning: str = ""
 
 
 # Callback types for trace updates
@@ -119,6 +121,9 @@ class ScenePipeline:
         on_trace: TraceCallback | None = None,
         on_plan_ready: PlanReadyCallback | None = None,
         max_character_agents: int = 4,
+        approved_plan: ScenePlan | dict | None = None,
+        revision_instruction: str = "",
+        target_characters: int | None = None,
     ) -> AsyncGenerator[tuple[str | None, GenerationResult | None], None]:
         """Run the full pipeline and stream writer tokens.
 
@@ -130,6 +135,11 @@ class ScenePipeline:
         tracker = TokenTracker.get()
         # ── Step 1: Assemble context ──
         context = self.assemble_context(project_dir, scene_id)
+        target = target_characters or _target_for_scene(project_dir, scene_id)
+        context["target_chinese_characters"] = target
+        context["revision_instruction"] = revision_instruction
+        result.target_chinese_characters = target
+        result.length_warning = provider_target_warning(writer_provider, target)
         result.generated_with = {
             "characters": context.get("read_points", {}),
             "bible_elements": context.get("world_element_read_points", {}),
@@ -140,36 +150,42 @@ class ScenePipeline:
         result.trace.append(planner_trace)
         self._emit_trace(on_trace, result.trace)
 
-        planner_trace.status = "running"
-        t0 = time.monotonic()
-        try:
-            plan = await self._planner.generate(planner_provider, context, scene_id)
-            planner_trace.status = "completed"
-            planner_trace.duration_ms = int((time.monotonic() - t0) * 1000)
-            if self._planner.last_usage:
-                planner_trace.token_count = self._planner.last_usage.get("total_tokens", 0)
+        if approved_plan is not None:
+            plan = ScenePlan.model_validate(approved_plan)
+            planner_trace.status = "skipped"
             result.plan = plan
-            if self._planner.last_usage:
-                tracker.log_call(
-                    project_dir, scene_id, agent_name='Scene Planner',
-                    provider=planner_provider.__class__.__name__.replace('Provider', '').lower(),
-                    model=getattr(planner_provider, 'model', 'unknown'),
-                    prompt_tokens=self._planner.last_usage.get('prompt_tokens', 0),
-                    completion_tokens=self._planner.last_usage.get('completion_tokens', 0),
-                    duration_ms=planner_trace.duration_ms,
-                )
             self._emit_trace(on_trace, result.trace)
-        except Exception as e:
-            planner_trace.status = "failed"
-            planner_trace.error_message = str(e)
-            planner_trace.failed_prompt = self._planner.build_prompt(context)
-            self._emit_trace(on_trace, result.trace)
-            result.total_duration_ms = int((time.monotonic() - pipeline_start) * 1000)
-            yield (None, result)
-            return
+        else:
+            planner_trace.status = "running"
+            t0 = time.monotonic()
+            try:
+                plan = await self._planner.generate(planner_provider, context, scene_id)
+                planner_trace.status = "completed"
+                planner_trace.duration_ms = int((time.monotonic() - t0) * 1000)
+                if self._planner.last_usage:
+                    planner_trace.token_count = self._planner.last_usage.get("total_tokens", 0)
+                result.plan = plan
+                if self._planner.last_usage:
+                    tracker.log_call(
+                        project_dir, scene_id, agent_name='Scene Planner',
+                        provider=planner_provider.__class__.__name__.replace('Provider', '').lower(),
+                        model=getattr(planner_provider, 'model', 'unknown'),
+                        prompt_tokens=self._planner.last_usage.get('prompt_tokens', 0),
+                        completion_tokens=self._planner.last_usage.get('completion_tokens', 0),
+                        duration_ms=planner_trace.duration_ms,
+                    )
+                self._emit_trace(on_trace, result.trace)
+            except Exception as e:
+                planner_trace.status = "failed"
+                planner_trace.error_message = str(e)
+                planner_trace.failed_prompt = self._planner.build_prompt(context)
+                self._emit_trace(on_trace, result.trace)
+                result.total_duration_ms = int((time.monotonic() - pipeline_start) * 1000)
+                yield (None, result)
+                return
 
         # ── Step 3: User checkpoint (plan approval) ──
-        if on_plan_ready is not None:
+        if on_plan_ready is not None and approved_plan is None:
             approved = await on_plan_ready(plan)
             if not approved:
                 result.total_duration_ms = int((time.monotonic() - pipeline_start) * 1000)
@@ -268,7 +284,11 @@ class ScenePipeline:
                     for k, v in result.character_intents.items()
                 }
             )
-            async for token in self._writer.generate_stream(writer_provider, enhanced_context):
+            async for token in self._writer.generate_stream(
+                writer_provider,
+                enhanced_context,
+                target_characters=target,
+            ):
                 tokens_collected.append(token)
                 yield (token, None)
 
@@ -431,6 +451,18 @@ def _enhance_context_with_plan_and_intents(
     enhanced["scene_plan"] = plan
     enhanced["character_intents"] = intents
     return enhanced
+
+
+def _target_for_scene(project_dir: Path, scene_id: str) -> int:
+    from app.application.scene_workflow import resolve_chapter_target
+    from app.storage.project_files import load_all_volumes, load_project
+
+    project = load_project(project_dir)
+    for volume in load_all_volumes(project_dir):
+        for chapter in volume.chapters:
+            if any(scene.id == scene_id for scene in chapter.scenes):
+                return resolve_chapter_target(project, chapter)
+    return project.chapter_length.resolved_target
 
 
 def _count_trace_tokens(trace: list[AgentTraceEntry]) -> int:

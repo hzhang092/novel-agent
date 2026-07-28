@@ -164,6 +164,24 @@ async def test_adjustment_rejects_stale_draft_and_approval_keeps_canonical_files
 
 
 @pytest.mark.asyncio
+async def test_proposal_approval_sets_the_project_chapter_length_default(tmp_path):
+    project_dir = create_project(tmp_path, Project(title="Folder title"))
+    service = StoryDesignerService(
+        project_dir,
+        provider_factory=lambda: MockProvider(structured_response=proposal()),
+    )
+    story_brief = brief()
+    story_brief.chapter_length.preset = "custom"
+    story_brief.chapter_length.target_chinese_characters = 4200
+    service.save_brief(story_brief)
+    draft = await service.generate_proposal()
+
+    service.approve_proposal(base_revision=draft.revision)
+
+    assert load_project(project_dir).chapter_length.resolved_target == 4200
+
+
+@pytest.mark.asyncio
 async def test_adjustment_rejects_a_draft_based_on_an_old_brief(tmp_path):
     project_dir = create_project(tmp_path, Project(title="Folder title"))
     service = StoryDesignerService(

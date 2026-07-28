@@ -29,19 +29,61 @@ class WriterAgent:
         """Build the full user prompt from the context dict."""
         return _build_writer_prompt(context)
 
-    async def generate_text(self, provider: LLMProvider, context: dict) -> str:
+    async def generate_text(
+        self, provider: LLMProvider, context: dict, *, target_characters: int | None = None
+    ) -> str:
         """Non-streaming generation: returns complete prose."""
         messages = _build_messages(context)
-        resp = await provider.generate_text(messages, temperature=0.7, max_tokens=4096)
+        resp = await provider.generate_text(
+            messages,
+            temperature=0.7,
+            max_tokens=output_token_budget(target_characters),
+        )
         return resp.text
 
     async def generate_stream(
-        self, provider: LLMProvider, context: dict
+        self,
+        provider: LLMProvider,
+        context: dict,
+        *,
+        target_characters: int | None = None,
     ) -> AsyncGenerator[str, None]:
         """Streaming generation: yields tokens as they arrive."""
         messages = _build_messages(context)
-        async for token in provider.generate_stream(messages, temperature=0.7, max_tokens=4096):
+        async for token in provider.generate_stream(
+            messages,
+            temperature=0.7,
+            max_tokens=output_token_budget(target_characters),
+        ):
             yield token
+
+
+def count_chinese_characters(text: str) -> int:
+    """Count Han characters, excluding punctuation, spaces, and Latin text."""
+    return sum("\u4e00" <= char <= "\u9fff" for char in text)
+
+
+def output_token_budget(target_characters: int | None) -> int:
+    """Allow up to two model tokens per requested Chinese character."""
+    return max(4096, (target_characters or 0) * 2)
+
+
+def provider_target_warning(provider: object, target_characters: int) -> str:
+    """Return a warning when a provider advertises a smaller output capacity."""
+    character_limit = getattr(provider, "max_output_characters", None)
+    token_limit = getattr(provider, "max_output_tokens", None)
+    if character_limit is None and token_limit is None:
+        return ""
+    supported_characters = (
+        character_limit if character_limit is not None else token_limit // 2
+    )
+    if target_characters <= supported_characters:
+        return ""
+    model = getattr(provider, "model", "当前模型")
+    return (
+        f"模型 {model} 的单次输出约支持 {supported_characters} 个中文字符，"
+        f"低于目标 {target_characters}。"
+    )
 
 
 def _build_messages(context: dict) -> list[dict[str, str]]:
@@ -90,6 +132,11 @@ def _build_writer_prompt(context: dict) -> str:
         constraints = scene.get("constraints", [])
         if constraints:
             lines.append(f"- 约束条件：{'；'.join(constraints)}")
+        lines.append("")
+
+    target = context.get("target_chinese_characters")
+    if target:
+        lines.append(f"【篇幅要求】正文目标约 {target} 个中文字符。")
         lines.append("")
 
     # ── Scene Plan (from Planner) ──
@@ -313,5 +360,7 @@ def _build_writer_prompt(context: dict) -> str:
     lines.append("3. 角色的言行必须符合其性格、情绪和目标")
     lines.append("4. 不得违反世界观设定和约束条件")
     lines.append("5. 直接输出小说正文，不要添加任何解释、标记或JSON包装")
+    if context.get("revision_instruction"):
+        lines.append(f"6. 本次改写要求：{context['revision_instruction']}")
 
     return "\n".join(lines)

@@ -99,15 +99,14 @@ class StoryDesignerService:
         planning.approved_proposal = approved
         planning.approved_brief = planning.story_brief.model_copy(deep=True)
         planning.active_draft = None
-        paths = [self.project_dir / PLANNING_YAML]
-        if accept_title:
-            paths.append(self.project_dir / PROJECT_YAML)
+        paths = [self.project_dir / PLANNING_YAML, self.project_dir / PROJECT_YAML]
         with rollback_files(paths):
             save_planning(self.project_dir, planning)
+            project = load_project(self.project_dir)
+            project.chapter_length = planning.story_brief.chapter_length
             if accept_title:
-                project = load_project(self.project_dir)
                 project.title = approved.title
-                save_project(self.project_dir, project)
+            save_project(self.project_dir, project)
         return approved
 
     def can_generate_bootstrap(self) -> bool:

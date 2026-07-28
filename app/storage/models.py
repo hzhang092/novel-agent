@@ -219,6 +219,7 @@ class ChapterOutline(BaseModel):
     summary: str = ""
     scenes: list[SceneOutline] = Field(default_factory=list)
     target_word_count: int = 3000
+    chapter_length_override: "ChapterLength | None" = None
     generation_blocked: bool = False
     needs_review: bool = False
 
@@ -393,6 +394,9 @@ class SceneGenerationRecord(BaseModel):
     published_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.now)
     user_modifications: Optional[str] = None
+    target_chinese_characters: int = 3000
+    prose_chinese_characters: int = 0
+    length_warning: str = ""
 
 
 # ── Memory System ──────────────────────────────────────────────────────────
@@ -440,6 +444,8 @@ class Project(BaseModel):
     updated_at: datetime = Field(default_factory=datetime.now)
     world_setting: WorldSetting = Field(default_factory=WorldSetting)
     style_guide: StyleGuide = Field(default_factory=StyleGuide)
+    chapter_length: "ChapterLength" = Field(default_factory=lambda: ChapterLength())
+    last_active_chapter_id: str | None = None
 
 
 # ── Provider Config ────────────────────────────────────────────────────────
@@ -524,6 +530,15 @@ class ChapterLength(BaseModel):
     model_config = ConfigDict(extra="forbid")
     preset: Literal["short", "standard", "long", "custom"] = "standard"
     target_chinese_characters: int = Field(default=3000, gt=0)
+
+    @property
+    def resolved_target(self) -> int:
+        return {
+            "short": 2000,
+            "standard": 3000,
+            "long": 5000,
+            "custom": self.target_chinese_characters,
+        }[self.preset]
 
 
 class StoryProposal(BaseModel):
@@ -659,6 +674,33 @@ class ScenePlan(BaseModel):
     emotional_arc: str = ""
     ending_hook: str = ""
     continuity_constraints: list[str] = Field(default_factory=list)
+
+
+class ScenePlanPatch(BaseModel):
+    """Explicit plan changes required before a story-affecting rewrite."""
+
+    base_revision_id: str = ""
+    scene_goal: str | None = None
+    required_beats: list[str] | None = None
+    conflict: str | None = None
+    emotional_arc: str | None = None
+    ending_hook: str | None = None
+    continuity_constraints: list[str] | None = None
+
+    def apply(self, plan: ScenePlan) -> ScenePlan:
+        values = plan.model_dump()
+        for field in (
+            "scene_goal",
+            "required_beats",
+            "conflict",
+            "emotional_arc",
+            "ending_hook",
+            "continuity_constraints",
+        ):
+            value = getattr(self, field)
+            if value is not None:
+                values[field] = value
+        return ScenePlan.model_validate(values)
 
 
 class CharacterIntent(BaseModel):

@@ -5,6 +5,7 @@ from app.ui.widgets.agent_trace import AgentTracePanel
 from app.ui.widgets.fact_approval import FactApprovalPanel
 from app.ui.widgets.planner_checkpoint import PlannerCheckpointWidget
 from app.ui.widgets.prose_editor import ProseEditorWidget
+from app.ui.quick_chapter_view import QuickChapterView
 
 
 def test_scene_state_and_prose_facade(qtbot):
@@ -108,6 +109,37 @@ def test_workspace_trace_planner_status_and_generation_facades(qtbot, monkeypatc
     assert workspace._status_label.text() == "已是最后一场景"
 
 
+def test_quick_mode_is_a_compact_layer_over_the_same_workspace_state(qtbot):
+    workspace = SceneWorkspaceView()
+    qtbot.addWidget(workspace)
+    quick = workspace.findChild(QuickChapterView)
+    planner = workspace.findChild(PlannerCheckpointWidget)
+
+    workspace.set_scene("scene-1", "chapter-1")
+    workspace.set_prose_text("shared draft")
+    workspace.show_plan_checkpoint(
+        {
+            "scene_id": "scene-1",
+            "scene_goal": "找到钥匙",
+            "required_beats": ["进入档案室"],
+            "emotional_arc": "笃定到不安",
+            "ending_hook": "门后有脚步",
+        }
+    )
+    workspace.set_experience_mode("quick")
+
+    assert not quick.isHidden()
+    assert quick.goal_edit.text() == "找到钥匙"
+    assert planner.isHidden()
+    assert workspace.prose_text() == "shared draft"
+
+    workspace.set_experience_mode("deep")
+
+    assert quick.isHidden()
+    assert planner._plan["scene_goal"] == "找到钥匙"
+    assert workspace.prose_text() == "shared draft"
+
+
 def test_workspace_does_not_expose_raw_embedded_widgets(qtbot):
     workspace = SceneWorkspaceView()
     qtbot.addWidget(workspace)
@@ -120,6 +152,27 @@ def test_workspace_does_not_expose_raw_embedded_widgets(qtbot):
         "context_preview",
     ):
         assert not hasattr(workspace, name)
+
+
+def test_selected_quick_revision_owns_its_unchecked_memory_batch(qtbot):
+    workspace = SceneWorkspaceView()
+    qtbot.addWidget(workspace)
+
+    workspace.set_quick_revision_metadata(
+        "scene-1",
+        "revision-2",
+        True,
+        "通过",
+        [{"description": "事实"}],
+        [{"character_id": "c1"}],
+    )
+
+    assert workspace.quick_approval_batch() == (
+        "scene-1",
+        "revision-2",
+        [],
+        [],
+    )
 
 
 def test_trace_reset_does_not_duplicate_internal_signal_connections(qtbot):

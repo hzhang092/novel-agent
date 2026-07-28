@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from app.application.errors import OperationBlockedError
+from app.storage.models import ChapterLength, ChapterOutline, Project, ScenePlan, ScenePlanPatch
 
 
 class ProjectRunGuard:
@@ -46,6 +47,7 @@ class SceneWorkflowObserver:
     memory: Callable[[str, str, list[dict], list[dict]], None] = (
         lambda _scene, _revision, _facts, _changes: None
     )
+    length_warning: Callable[[str], None] = lambda _warning: None
     error: Callable[[Exception], None] = lambda _error: None
 
 
@@ -60,6 +62,7 @@ class SceneWorkflowState:
     selected_revision: str | None = None
     memory_facts: list[dict] = field(default_factory=list)
     memory_changes: list[dict] = field(default_factory=list)
+    approved_plan: ScenePlan | None = None
     active: bool = False
 
 
@@ -83,6 +86,9 @@ class SceneWorkflow:
         self._observer = SceneWorkflowObserver()
         self._pipeline: Any = None
         self._result: Any = None
+        self._approved_plan: ScenePlan | None = None
+        self._instruction = ""
+        self._target_characters: int | None = None
         self._provider_loader = provider_loader or _load_generation_providers
         self._pipeline_factory = pipeline_factory or _new_pipeline
 
@@ -90,18 +96,45 @@ class SceneWorkflow:
     def task(self) -> asyncio.Task | None:
         return self._task
 
+    @property
+    def waiting_for_plan(self) -> bool:
+        return self._plan_future is not None and not self._plan_future.done()
+
+    def remember_active_chapter(self, chapter_id: str) -> None:
+        _remember_active_chapter(self.project_dir, chapter_id)
+
     def start(
         self,
         scene_id: str,
         chapter_id: str,
         observer: SceneWorkflowObserver,
+        *,
+        approved_plan: ScenePlan | dict | None = None,
+        instruction: str = "",
+        plan_patch: ScenePlanPatch | dict | None = None,
+        target_characters: int | None = None,
     ) -> None:
         from app.application.quick_planning import QuickPlanningService
 
+        if prose_instruction_requires_plan_patch(instruction) and plan_patch is None:
+            raise OperationBlockedError("该修改会改变事件、角色或钩子，请先提交计划补丁")
+        if plan_patch is not None and approved_plan is None:
+            raise OperationBlockedError("计划补丁需要基于已批准的章节计划")
+        if plan_patch is not None:
+            approved_plan = _apply_plan_patch(approved_plan, plan_patch)
         QuickPlanningService(self.project_dir).assert_generation_allowed(chapter_id)
+        _remember_active_chapter(self.project_dir, chapter_id)
         if not self.run_guard.acquire("scene_workflow"):
             raise OperationBlockedError("Another project generation is already active")
-        self.state = SceneWorkflowState(scene_id=scene_id, chapter_id=chapter_id, active=True)
+        self.state = SceneWorkflowState(
+            scene_id=scene_id,
+            chapter_id=chapter_id,
+            approved_plan=ScenePlan.model_validate(approved_plan) if approved_plan is not None else None,
+            active=True,
+        )
+        self._approved_plan = self.state.approved_plan
+        self._instruction = instruction
+        self._target_characters = target_characters
         self._observer = observer
         self._pipeline = self._pipeline_factory()
         self._observer.generating(True)
@@ -147,6 +180,34 @@ class SceneWorkflow:
             raise OperationBlockedError("No finished scene run is available to retry")
         self.start(self.state.scene_id, self.state.chapter_id, self._observer)
 
+    def regenerate(
+        self,
+        scene_id: str,
+        source_record: Any,
+        observer: SceneWorkflowObserver,
+        *,
+        instruction: str = "",
+        plan_patch: ScenePlanPatch | dict | None = None,
+        target_characters: int | None = None,
+    ) -> None:
+        if not source_record.scene_plan:
+            raise OperationBlockedError("没有已批准的章节计划，无法安全再生成")
+        plan = ScenePlan.model_validate(source_record.scene_plan)
+        if plan_patch is not None:
+            patch = ScenePlanPatch.model_validate(plan_patch)
+            if patch.base_revision_id and patch.base_revision_id != source_record.revision_id:
+                raise OperationBlockedError("计划补丁基于过期草稿")
+            plan = patch.apply(plan)
+        self.start(
+            scene_id,
+            _chapter_for_scene(self.project_dir, scene_id) or "",
+            observer,
+            approved_plan=plan,
+            instruction=instruction,
+            plan_patch=ScenePlanPatch() if plan_patch is not None else None,
+            target_characters=target_characters,
+        )
+
     async def continue_review(self) -> None:
         if self._pipeline is None or self._result is None or self.state.draft_record is None:
             return
@@ -157,7 +218,12 @@ class SceneWorkflow:
         await self._analyze_draft()
 
     async def save_edited_draft(
-        self, prose: str, source_record: Any, observer: SceneWorkflowObserver
+        self,
+        prose: str,
+        source_record: Any,
+        observer: SceneWorkflowObserver,
+        *,
+        analyze: bool = True,
     ) -> Any:
         from app.pipeline.pipeline import GenerationResult
         from app.storage.models import CharacterIntent, ScenePlan
@@ -192,11 +258,14 @@ class SceneWorkflow:
             self.state.scene_id = scene_id
             self.state.chapter_id = chapter_id
             record = self._save_draft(self._result)
-            record.review_overridden = True
+            record.review_overridden = analyze
             self.state.draft_record = record
             self.state.selected_revision = record.revision_id
             self._observer.draft(record)
-            await self._analyze_draft()
+            if analyze:
+                await self._analyze_draft()
+            else:
+                self._finish("草稿已保存")
             return record
         except Exception:
             if acquired:
@@ -245,12 +314,24 @@ class SceneWorkflow:
         return record
 
     def publish(
-        self, scene_id: str, revision_id: str, facts: list[dict], changes: list[dict]
+        self,
+        scene_id: str,
+        revision_id: str | None = None,
+        facts: list[dict] | None = None,
+        changes: list[dict] | None = None,
     ) -> None:
         from app.storage.timeline_repository import publish_scene_revision
 
+        revision_id = revision_id or self.state.selected_revision
+        if not revision_id:
+            raise OperationBlockedError("请先选择要发布的草稿修订")
         publish_scene_revision(
-            self.project_dir, scene_id, revision_id, facts, changes, self.event_bus
+            self.project_dir,
+            scene_id,
+            revision_id,
+            facts if facts is not None else self.state.memory_facts,
+            changes if changes is not None else self.state.memory_changes,
+            self.event_bus,
         )
         self._finish("已发布")
 
@@ -259,6 +340,12 @@ class SceneWorkflow:
         try:
             planner, characters, writer, reviewer = self._provider_loader()
             providers = [planner, characters, writer, reviewer]
+            if self._target_characters:
+                from app.pipeline.agents.writer import provider_target_warning
+
+                warning = provider_target_warning(writer, self._target_characters)
+                if warning:
+                    self._observer.length_warning(warning)
             async for token, result in self._pipeline.generate_stream(
                 self.project_dir,
                 self.state.scene_id,
@@ -268,6 +355,9 @@ class SceneWorkflow:
                 reviewer,
                 on_trace=self._trace,
                 on_plan_ready=self._wait_for_plan,
+                approved_plan=self._approved_plan,
+                revision_instruction=self._instruction,
+                target_characters=self._target_characters,
             ):
                 if token is not None:
                     self.state.partial_prose += token
@@ -363,6 +453,7 @@ class SceneWorkflow:
                     pass
 
     def _save_draft(self, result: Any, version: int | None = None) -> Any:
+        from app.pipeline.agents.writer import count_chinese_characters
         from app.storage.models import SceneGenerationRecord, parse_generation_read_points
         from app.storage.project_files import discard_scene_writer_draft, save_scene_generation_record
         from app.storage.timeline_repository import find_scene_position
@@ -390,6 +481,9 @@ class SceneWorkflow:
             final_text="",
             extracted_facts_raw=getattr(result, "extracted_facts", []),
             state_changes_raw=getattr(result, "state_changes", []),
+            target_chinese_characters=getattr(result, "target_chinese_characters", 3000),
+            prose_chinese_characters=count_chinese_characters(result.prose),
+            length_warning=getattr(result, "length_warning", ""),
         )
         save_scene_generation_record(self.project_dir, record)
         discard_scene_writer_draft(self.project_dir, result.scene_id)
@@ -429,6 +523,116 @@ def _chapter_for_scene(project_dir: Path, scene_id: str) -> str | None:
             if any(scene.id == scene_id for scene in chapter.scenes):
                 return chapter.id
     return None
+
+
+def resolve_chapter_target(
+    project: Project,
+    chapter: ChapterOutline,
+    override: ChapterLength | None = None,
+) -> int:
+    if override is not None:
+        return override.resolved_target
+    if chapter.chapter_length_override is not None:
+        return chapter.chapter_length_override.resolved_target
+    if chapter.target_word_count != 3000:
+        return chapter.target_word_count
+    return project.chapter_length.resolved_target
+
+
+def prose_instruction_requires_plan_patch(instruction: str) -> bool:
+    lowered = instruction.casefold()
+    story_terms = ("事件", "情节", "角色", "人物", "钩子", "结尾", "event", "character", "hook")
+    change_terms = (
+        "改",
+        "换",
+        "新增",
+        "增加",
+        "删除",
+        "移除",
+        "杀死",
+        "复活",
+        "change",
+        "replace",
+        "add",
+        "remove",
+        "kill",
+    )
+    return any(term in lowered for term in story_terms) and any(
+        term in lowered for term in change_terms
+    )
+
+
+def _apply_plan_patch(
+    approved_plan: ScenePlan | dict,
+    plan_patch: ScenePlanPatch | dict,
+) -> ScenePlan:
+    plan = ScenePlan.model_validate(approved_plan)
+    patch = ScenePlanPatch.model_validate(plan_patch)
+    if patch.base_revision_id:
+        raise OperationBlockedError("计划补丁需要在具体草稿上提交")
+    return patch.apply(plan)
+
+
+def _remember_active_chapter(project_dir: Path, chapter_id: str) -> None:
+    from app.storage.project_files import load_project, save_project
+
+    if not (project_dir / "project.yaml").exists():
+        return
+    project = load_project(project_dir)
+    if project.last_active_chapter_id == chapter_id:
+        return
+    project.last_active_chapter_id = chapter_id
+    save_project(project_dir, project)
+
+
+def choose_resume_chapter(project_dir: Path) -> str | None:
+    from app.storage.project_files import (
+        list_scene_prose_versions,
+        load_all_volumes,
+        load_project,
+        load_scene_generation_record,
+        load_scene_writer_draft,
+    )
+
+    chapters = [chapter for volume in load_all_volumes(project_dir) for chapter in volume.chapters]
+    if not chapters:
+        return None
+    by_id = {chapter.id: chapter for chapter in chapters}
+    project = load_project(project_dir)
+    if project.last_active_chapter_id in by_id:
+        return project.last_active_chapter_id
+    for chapter in chapters:
+        if chapter.needs_review:
+            return chapter.id
+    unwritten: list[str] = []
+    for chapter in chapters:
+        has_written_scene = False
+        for scene in chapter.scenes:
+            prose_versions = list_scene_prose_versions(project_dir, chapter.id, scene.id)
+            if prose_versions:
+                has_written_scene = True
+            if load_scene_writer_draft(project_dir, scene.id):
+                return chapter.id
+            generation_versions = {
+                path.name.split(".")[-3]
+                for path in (project_dir / "scenes" / chapter.id).glob(f"{scene.id}.v*.gen.json")
+            }
+            for version in set(prose_versions) | generation_versions:
+                if version == "legacy":
+                    continue
+                record = load_scene_generation_record(project_dir, scene.id, version=version)
+                if record is not None and record.status == "draft":
+                    return chapter.id
+            if prose_versions:
+                from app.storage.timeline_repository import get_active_scene_revision_id
+
+                if not get_active_scene_revision_id(project_dir, scene.id):
+                    return chapter.id
+        if chapter.scenes and not has_written_scene:
+            unwritten.append(chapter.id)
+    if unwritten:
+        return unwritten[0]
+    return chapters[0].id
 
 
 def _save_versioned_prose(project_dir: Path, chapter_id: str, scene_id: str, prose: str, version: int) -> None:
