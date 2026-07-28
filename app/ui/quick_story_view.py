@@ -118,11 +118,13 @@ class QuickStoryView(QWidget):
         layout.addStretch()
 
     def bind_application(self, application) -> None:
+        self.cancel_generation()
+        self._proposal_task = None
         self._application = application
         planning = load_planning(application.project_dir)
-        if planning.story_brief:
-            self._set_brief(planning.story_brief)
+        self._set_brief(planning.story_brief or StoryBrief())
         self.ending_edit.setText(planning.provisional_destination)
+        self.adjust_edit.clear()
         self._show_proposal(planning.active_draft or planning.approved_proposal)
 
     def _start_task(self, coroutine) -> None:
@@ -144,8 +146,7 @@ class QuickStoryView(QWidget):
             custom = [value for value in selected if value not in values]
             self._custom[field].setText("、".join(custom))
         self._set_combo(self.target_combo, brief.target_length)
-        if brief.custom_target_chapters:
-            self.custom_target.setValue(brief.custom_target_chapters)
+        self.custom_target.setValue(brief.custom_target_chapters or 30)
         self._set_combo(self.romance_combo, brief.romance_emphasis)
         self._set_combo(self.protagonist_combo, brief.protagonist_structure)
         self._set_combo(self.chapter_combo, brief.chapter_length.preset)
@@ -220,7 +221,8 @@ class QuickStoryView(QWidget):
         )
 
     async def _generate_proposal(self, *, prepared: bool = False) -> None:
-        if self._application is None:
+        application = self._application
+        if application is None:
             return
         if not prepared:
             self._prepare_brief()
@@ -228,33 +230,40 @@ class QuickStoryView(QWidget):
         if self.target_combo.currentData() == "ongoing" and instruction:
             instruction = f"长篇连载的暂定去向：{instruction}"
         try:
-            draft = await self._application.story_designer.generate_proposal(instruction)
+            draft = await application.story_designer.generate_proposal(instruction)
         except ProviderConfigurationError as error:
-            self._provider_error(str(error), self._generate_proposal)
+            if self._application is application:
+                self._provider_error(str(error), self._generate_proposal)
             return
         except (StoryDesignerProviderError, ConcurrentModificationError, OperationBlockedError) as error:
-            self._provider_error(f"生成失败：{error}", self._generate_proposal)
+            if self._application is application:
+                self._provider_error(f"生成失败：{error}", self._generate_proposal)
             return
-        self._show_proposal(draft)
+        if self._application is application:
+            self._show_proposal(draft)
 
     async def _adjust_proposal(self) -> None:
-        if self._application is None:
+        application = self._application
+        if application is None:
             return
         self._prepare_brief()
-        planning = load_planning(self._application.project_dir)
+        planning = load_planning(application.project_dir)
         if planning.active_draft is None:
             return await self._generate_proposal(prepared=True)
         try:
-            draft = await self._application.story_designer.adjust_proposal(
+            draft = await application.story_designer.adjust_proposal(
                 self.adjust_edit.text().strip(), base_revision=planning.active_draft.revision
             )
         except ProviderConfigurationError as error:
-            self._provider_error(str(error), self._adjust_proposal)
+            if self._application is application:
+                self._provider_error(str(error), self._adjust_proposal)
             return
         except (StoryDesignerProviderError, ConcurrentModificationError, OperationBlockedError) as error:
-            self._provider_error(f"调整失败：{error}", self._adjust_proposal)
+            if self._application is application:
+                self._provider_error(f"调整失败：{error}", self._adjust_proposal)
             return
-        self._show_proposal(draft)
+        if self._application is application:
+            self._show_proposal(draft)
 
     async def _adopt_proposal(self) -> None:
         if self._application is None:

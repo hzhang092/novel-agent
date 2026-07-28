@@ -137,6 +137,44 @@ async def test_cancelled_quick_proposal_keeps_the_resumable_project_folder(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_rebinding_cancels_a_late_proposal_without_updating_the_next_project(tmp_path, qtbot):
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class LateProvider(MockProvider):
+        def __init__(self):
+            super().__init__(structured_response=_proposal())
+
+        async def generate_structured(self, *args, **kwargs):
+            started.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                await release.wait()
+            return await super().generate_structured(*args, **kwargs)
+
+    first_dir = create_quick_project(tmp_path / "first", "第一本")
+    first_application = build_project_application(first_dir)
+    first_application.story_designer._provider_factory = LateProvider
+    second_dir = create_project(tmp_path / "second", Project(title="第二本"))
+    view = QuickStoryView()
+    qtbot.addWidget(view)
+    view.bind_application(first_application)
+    view.premise_edit.setPlainText("第一本故事")
+    view._start_task(view._generate_proposal())
+    first_task = view._proposal_task
+    await started.wait()
+
+    view.bind_application(build_project_application(second_dir))
+    release.set()
+    await first_task
+
+    assert load_planning(second_dir).active_draft is None
+    assert view.proposal_label.text() == "尚未生成"
+    assert view.premise_edit.toPlainText() == ""
+
+
+@pytest.mark.asyncio
 async def test_story_designer_wraps_non_runtime_provider_errors_and_closes(tmp_path):
     class BrokenProvider(MockProvider):
         def __init__(self):
