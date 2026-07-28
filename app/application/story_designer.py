@@ -392,9 +392,9 @@ def _bootstrap_patch_messages(
             "role": "system",
             "content": (
                 "Return a BootstrapPatchPreview only. Use RFC6902 replace for existing scalar leaves, "
-                "or add/remove scalar list items at explicit indices or '-'. Use paths under /overview, "
-                "/elements, /characters, /style, or /arcs. Do not change IDs, revisions, whole objects, "
-                "or whole arrays. Address only the requested fields. Include short human-readable "
+                "or add/remove one list item at explicit indices or '-'. Use paths under /overview, "
+                "/elements, /characters, /style, or /arcs. Do not edit existing IDs or revisions, and do "
+                "not replace whole objects or arrays. Address only the requested fields. Include short human-readable "
                 "changes and consequences."
             ),
         },
@@ -416,16 +416,16 @@ _IMMUTABLE_PATH_PARTS = {
 
 
 def _replace_bootstrap_value(document: dict, path: str, value: object | None, op: str = "replace") -> None:
-    """Apply the small, scalar-only RFC6902 subset accepted for bootstrap drafts."""
+    """Apply the small RFC6902 subset accepted for bootstrap drafts."""
     if not path.startswith("/"):
         raise ValueError("Bootstrap patch path must be a JSON Pointer")
     parts = [part.replace("~1", "/").replace("~0", "~") for part in path[1:].split("/")]
     if (
         len(parts) < 2
         or parts[0] not in _PATCH_ROOTS
-        or (parts[0] in {"elements", "characters", "arcs"} and len(parts) < 3)
+        or (op == "replace" and parts[0] in {"elements", "characters", "arcs"} and len(parts) < 3)
     ):
-        raise ValueError("Bootstrap patch may only replace an existing nested field")
+        raise ValueError("Bootstrap patch must target a nested field or list item")
     if any(part in _IMMUTABLE_PATH_PARTS for part in parts):
         raise ValueError("Bootstrap patch may not change identity or revision fields")
     target: object = document
@@ -442,15 +442,11 @@ def _replace_bootstrap_value(document: dict, path: str, value: object | None, op
     if op == "add":
         if not isinstance(target, list) or (final != "-" and (not final.isdigit() or int(final) > len(target))):
             raise ValueError("Bootstrap patch add must target a list index")
-        if isinstance(value, (dict, list)):
-            raise ValueError("Bootstrap patch may only add scalar list items")
         target.insert(len(target) if final == "-" else int(final), value)
         return
     if op == "remove":
         if not isinstance(target, list) or not final.isdigit() or int(final) >= len(target):
             raise ValueError("Bootstrap patch remove must target an existing list item")
-        if isinstance(target[int(final)], (dict, list)):
-            raise ValueError("Bootstrap patch may only remove scalar list items")
         target.pop(int(final))
         return
     if isinstance(target, dict):

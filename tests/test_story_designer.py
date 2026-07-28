@@ -326,7 +326,7 @@ async def test_bootstrap_patch_preview_does_not_mutate_and_preserves_manual_valu
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_patch_adds_and_removes_scalar_list_items_without_losing_manual_fields(tmp_path):
+async def test_bootstrap_patch_adds_and_removes_list_items_without_losing_manual_fields(tmp_path):
     provider = MockProvider(structured_response=proposal())
     _project_dir, service = await approved_service(tmp_path, provider)
     provider.structured_response = bootstrap()
@@ -354,6 +354,56 @@ async def test_bootstrap_patch_adds_and_removes_scalar_list_items_without_losing
             operations=[{"path": "/arcs/0/id", "value": "new"}],
             changes=["改 ID"], consequences=["错误"],
         ))
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_patch_adds_and_removes_a_chapter_and_rejects_invalid_final_shapes(tmp_path):
+    provider = MockProvider(structured_response=proposal())
+    project_dir, service = await approved_service(tmp_path, provider)
+    provider.structured_response = bootstrap()
+    draft = await service.generate_bootstrap()
+    manual = draft.bootstrap.model_copy(deep=True)
+    manual.style.pov = "第一人称"
+    draft = service.save_bootstrap(manual, base_revision=draft.revision)
+    chapter = draft.bootstrap.arcs[0].chapters[0].model_dump(mode="json")
+    chapter["id"] = "added-chapter"
+    chapter["volume_id"] = draft.bootstrap.arcs[0].id
+    chapter["scenes"][0]["id"] = "added-scene"
+    chapter["scenes"][0]["chapter_id"] = "added-chapter"
+
+    added = service.apply_bootstrap_patch(BootstrapPatchPreview(
+        base_revision=draft.revision,
+        operations=[{"op": "add", "path": "/arcs/0/chapters/-", "value": chapter}],
+        changes=["加入章节"], consequences=["增加一个起始场景"],
+    ))
+    removed = service.apply_bootstrap_patch(BootstrapPatchPreview(
+        base_revision=added.revision,
+        operations=[{"op": "remove", "path": "/arcs/0/chapters/1"}],
+        changes=["移除章节"], consequences=["恢复原章数"],
+    ))
+    arc = removed.bootstrap.arcs[0].model_dump(mode="json")
+    arc.update({"id": "later-arc", "title": "后续故事弧", "chapters": []})
+    added_arc = service.apply_bootstrap_patch(BootstrapPatchPreview(
+        base_revision=removed.revision,
+        operations=[{"op": "add", "path": "/arcs/-", "value": arc}],
+        changes=["加入故事弧"], consequences=["保留给后续展开"],
+    ))
+    removed_arc = service.apply_bootstrap_patch(BootstrapPatchPreview(
+        base_revision=added_arc.revision,
+        operations=[{"op": "remove", "path": "/arcs/2"}],
+        changes=["移除故事弧"], consequences=["恢复原故事弧"],
+    ))
+
+    assert len(added.bootstrap.arcs[0].chapters) == 2
+    assert len(added_arc.bootstrap.arcs) == 3
+    assert removed_arc.bootstrap.style.pov == "第一人称"
+    with pytest.raises(ValueError, match="exactly one scene"):
+        service.apply_bootstrap_patch(BootstrapPatchPreview(
+            base_revision=removed_arc.revision,
+            operations=[{"op": "add", "path": "/arcs/0/chapters/-", "value": {"id": "invalid"}}],
+            changes=["加入坏章节"], consequences=["必须拒绝"],
+        ))
+    assert load_planning(project_dir).active_draft == removed_arc
 
 
 @pytest.mark.asyncio

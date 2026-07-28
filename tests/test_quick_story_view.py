@@ -329,3 +329,50 @@ async def test_bootstrap_basic_bible_and_style_cards_save_without_touching_advan
     assert saved.elements[0].definition == "新定义"
     assert saved.style.tone == "新语气"
     assert saved.style.reference_passages == ["高级字段"]
+
+
+@pytest.mark.asyncio
+async def test_invalid_bootstrap_card_stops_adjustment_and_approval(tmp_path, qtbot, monkeypatch):
+    project_dir = create_project(tmp_path, Project(title="无效启动包"))
+    application = build_project_application(project_dir)
+    application.story_designer._provider_factory = lambda: MockProvider(structured_response=_proposal())
+    view = QuickStoryView()
+    qtbot.addWidget(view)
+    view.bind_application(application)
+    await view._generate_proposal()
+    await view._adopt_proposal()
+    application.story_designer._provider_factory = lambda: MockProvider(structured_response=_bootstrap())
+    await view._generate_bootstrap()
+    view._add_bootstrap_field("错误角色状态", "wrong-id", ("characters", 0, "state", "character_id"))
+    errors = []
+    monkeypatch.setattr(view, "_provider_error", errors.append)
+    adjusted = []
+    approved = []
+    monkeypatch.setattr(application.story_designer, "adjust_bootstrap", lambda *_args, **_kwargs: adjusted.append(True))
+    monkeypatch.setattr(application.story_designer, "approve_bootstrap", lambda **_kwargs: approved.append(True))
+
+    await view._adjust_bootstrap()
+    view._approve_bootstrap()
+
+    assert len(errors) == 2
+    assert all(message.startswith("保存失败：") for message in errors)
+    assert adjusted == []
+    assert approved == []
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_label_says_adopted_after_approval(tmp_path, qtbot):
+    project_dir = create_project(tmp_path, Project(title="采用启动包"))
+    application = build_project_application(project_dir)
+    application.story_designer._provider_factory = lambda: MockProvider(structured_response=_proposal())
+    view = QuickStoryView()
+    qtbot.addWidget(view)
+    view.bind_application(application)
+    await view._generate_proposal()
+    await view._adopt_proposal()
+    application.story_designer._provider_factory = lambda: MockProvider(structured_response=_bootstrap())
+    await view._generate_bootstrap()
+
+    view._approve_bootstrap()
+
+    assert view.bootstrap_label.text() == "已采用"

@@ -358,7 +358,7 @@ class QuickStoryView(QWidget):
         self.apply_bootstrap_patch_button.setEnabled(False)
         self.cancel_bootstrap_patch_button.setEnabled(False)
         if not editable:
-            self.bootstrap_label.setText("采用故事后可生成" if not approved else "尚未生成")
+            self.bootstrap_label.setText("采用故事后可生成" if not approved else ("尚未生成" if can_generate else "已采用"))
             self.bootstrap_advanced.clear()
             return
         bootstrap = draft.bootstrap
@@ -408,21 +408,26 @@ class QuickStoryView(QWidget):
             target[path[-1]] = [item.strip() for item in field.text().replace("，", "、").split("、") if item.strip()] if is_list else field.text()
         return StoryBootstrap.model_validate(data)
 
-    def _save_bootstrap(self) -> None:
+    def _save_bootstrap(self) -> bool:
         if self._application is None or self._bootstrap_draft is None:
-            return
+            return False
         try:
-            self._show_bootstrap(self._application.story_designer.save_bootstrap(
-                self._edited_bootstrap(), base_revision=self._bootstrap_draft.revision
-            ))
+            bootstrap = self._edited_bootstrap()
+            if bootstrap is None:
+                return False
+            saved = self._application.story_designer.save_bootstrap(
+                bootstrap, base_revision=self._bootstrap_draft.revision
+            )
+            self._show_bootstrap(saved)
         except (ConcurrentModificationError, ValueError) as error:
             self._provider_error(f"保存失败：{error}")
+            return False
+        return True
 
     async def _adjust_bootstrap(self) -> None:
         if self._application is None or self._bootstrap_draft is None:
             return
-        self._save_bootstrap()
-        if self._bootstrap_draft is None:
+        if not self._save_bootstrap():
             return
         application = self._application
         try:
@@ -456,8 +461,7 @@ class QuickStoryView(QWidget):
     def _approve_bootstrap(self) -> None:
         if self._application is None or self._bootstrap_draft is None:
             return
-        self._save_bootstrap()
-        if self._bootstrap_draft is None:
+        if not self._save_bootstrap():
             return
         try:
             self._application.story_designer.approve_bootstrap(base_revision=self._bootstrap_draft.revision)
