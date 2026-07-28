@@ -774,32 +774,12 @@ class MainWindow(QMainWindow):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        from app.pipeline.pipeline import GenerationResult, ScenePipeline
-        from app.storage.models import CharacterIntent, ScenePlan
-        from app.storage.project_files import save_scene_generation_record
-
-        result = GenerationResult(
-            scene_id=source_record.scene_id,
-            prose=workspace.prose_text(),
-            plan=ScenePlan.model_validate(source_record.scene_plan)
-            if source_record.scene_plan
-            else None,
-            character_intents={
-                name: CharacterIntent.model_validate(intent)
-                for name, intent in source_record.character_intents.items()
-            },
-            generated_with=source_record.generated_with,
-        )
-        pipeline = ScenePipeline()
-        record = self._save_generated_scene(result)
-        if record is None:
-            return
-        record.review_overridden = True
-        save_scene_generation_record(self._current_project_dir, record)
-        self._pending_draft = (pipeline, result, record)
-        self._schedule_analysis_with_retry(
-            pipeline, result, record, workspace, workspace.update_trace
-        )
+        if self._application is not None:
+            asyncio.ensure_future(
+                self._application.scene_workflow.save_edited_draft(
+                    workspace.prose_text(), source_record
+                )
+            )
 
     def _on_plan_approved(self, edited_plan: dict) -> None:
         """Resolve the current planner decision as approved."""
@@ -1030,16 +1010,7 @@ class MainWindow(QMainWindow):
                     scene_id, revision_id, approved_facts, approved_changes
                 )
             else:
-                from app.storage.timeline_repository import publish_scene_revision
-
-                publish_scene_revision(
-                    self._current_project_dir,
-                    scene_id,
-                    revision_id,
-                    approved_facts,
-                    approved_changes,
-                    self._domain_bus,
-                )
+                return
         except Exception as exc:
             logger.exception("Could not publish scene revision %s", revision_id)
             QMessageBox.critical(self, "发布失败", str(exc))

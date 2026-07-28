@@ -157,6 +157,24 @@ class SceneWorkflow:
         save_scene_generation_record(self.project_dir, self.state.draft_record)
         await self._analyze_draft()
 
+    async def save_edited_draft(self, prose: str, source_record: Any) -> Any:
+        from app.pipeline.pipeline import GenerationResult
+        from app.storage.models import CharacterIntent, ScenePlan
+        self._pipeline = self._pipeline_factory()
+        self._result = GenerationResult(
+            scene_id=source_record.scene_id, prose=prose,
+            plan=ScenePlan.model_validate(source_record.scene_plan) if source_record.scene_plan else None,
+            character_intents={name: CharacterIntent.model_validate(value) for name, value in source_record.character_intents.items()},
+            generated_with=source_record.generated_with,
+        )
+        self.state.scene_id = source_record.scene_id
+        self.state.chapter_id = self.state.chapter_id or _chapter_for_scene(self.project_dir, source_record.scene_id)
+        record = self._save_draft(self._result)
+        record.review_overridden = True
+        self.state.draft_record = record
+        await self._analyze_draft()
+        return record
+
     def publish(
         self, scene_id: str, revision_id: str, facts: list[dict], changes: list[dict]
     ) -> None:
@@ -333,6 +351,15 @@ def _next_version(project_dir: Path, chapter_id: str, scene_id: str) -> int:
 
     versions = list_scene_prose_versions(project_dir, chapter_id, scene_id)
     return max((int(value[1:]) for value in versions if value.startswith("v") and value[1:].isdigit()), default=0) + 1
+
+
+def _chapter_for_scene(project_dir: Path, scene_id: str) -> str | None:
+    from app.storage.project_files import load_all_volumes
+    for volume in load_all_volumes(project_dir):
+        for chapter in volume.chapters:
+            if any(scene.id == scene_id for scene in chapter.scenes):
+                return chapter.id
+    return None
 
 
 def _save_versioned_prose(project_dir: Path, chapter_id: str, scene_id: str, prose: str, version: int) -> None:
