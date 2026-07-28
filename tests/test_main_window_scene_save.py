@@ -1,5 +1,6 @@
 from app.storage.models import ChapterOutline, Project, SceneOutline, VolumeOutline
 from app.storage.project_files import create_project, save_scene_writer_draft, save_volume_outline
+from app.application.errors import OperationBlockedError
 from app.ui.main_window import MainWindow
 
 
@@ -60,3 +61,24 @@ def test_publish_action_delegates_to_project_workflow(tmp_path, qtbot, monkeypat
 
     assert calls == [("scene-1", "rev-1", [{"description": "事实"}], [])]
     assert not workspace.fact_approval_is_visible
+
+
+def test_rejected_generation_does_not_clear_workspace_buffer(tmp_path, qtbot, monkeypatch):
+    project_dir = _project(tmp_path)
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._current_project_dir = project_dir
+    window._bind_project_application(project_dir)
+    workspace = window._workspace_view
+    workspace.set_scene("scene-1", "ch-1")
+    workspace.set_prose_text("keep this draft")
+    monkeypatch.setattr(
+        window._application.scene_workflow,
+        "start",
+        lambda *_args: (_ for _ in ()).throw(OperationBlockedError("already running")),
+    )
+    monkeypatch.setattr("app.ui.main_window.QMessageBox.warning", lambda *_args: None)
+
+    window._on_generate_requested("scene-1")
+
+    assert workspace.prose_text() == "keep this draft"

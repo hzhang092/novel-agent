@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import gc
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -62,7 +61,6 @@ class SceneWorkflowState:
     memory_facts: list[dict] = field(default_factory=list)
     memory_changes: list[dict] = field(default_factory=list)
     active: bool = False
-    source_revisions: dict[str, Any] = field(default_factory=dict)
 
 
 class SceneWorkflow:
@@ -96,13 +94,11 @@ class SceneWorkflow:
         self,
         scene_id: str,
         chapter_id: str,
-        observer: SceneWorkflowObserver | None = None,
+        observer: SceneWorkflowObserver,
     ) -> None:
         if not self.run_guard.acquire("scene_workflow"):
             raise OperationBlockedError("Another project generation is already active")
         self.state = SceneWorkflowState(scene_id=scene_id, chapter_id=chapter_id, active=True)
-        if observer is None:
-            return
         self._observer = observer
         self._pipeline = self._pipeline_factory()
         self._observer.generating(True)
@@ -110,8 +106,8 @@ class SceneWorkflow:
         self._task = asyncio.ensure_future(self._run())
 
     def approve_plan(self, plan: dict[str, Any]) -> None:
-        self.state.planner_decision = plan
         if self._plan_future is not None and not self._plan_future.done():
+            self.state.planner_decision = plan
             self._plan_future.set_result((True, plan))
 
     def receive_plan(self, plan: dict[str, Any]) -> None:
@@ -157,23 +153,52 @@ class SceneWorkflow:
         save_scene_generation_record(self.project_dir, self.state.draft_record)
         await self._analyze_draft()
 
-    async def save_edited_draft(self, prose: str, source_record: Any) -> Any:
+    async def save_edited_draft(
+        self, prose: str, source_record: Any, observer: SceneWorkflowObserver
+    ) -> Any:
         from app.pipeline.pipeline import GenerationResult
         from app.storage.models import CharacterIntent, ScenePlan
-        self._pipeline = self._pipeline_factory()
-        self._result = GenerationResult(
-            scene_id=source_record.scene_id, prose=prose,
-            plan=ScenePlan.model_validate(source_record.scene_plan) if source_record.scene_plan else None,
-            character_intents={name: CharacterIntent.model_validate(value) for name, value in source_record.character_intents.items()},
-            generated_with=source_record.generated_with,
-        )
-        self.state.scene_id = source_record.scene_id
-        self.state.chapter_id = self.state.chapter_id or _chapter_for_scene(self.project_dir, source_record.scene_id)
-        record = self._save_draft(self._result)
-        record.review_overridden = True
-        self.state.draft_record = record
-        await self._analyze_draft()
-        return record
+        scene_id = source_record.scene_id
+        chapter_id = _chapter_for_scene(self.project_dir, scene_id)
+        if not chapter_id:
+            raise OperationBlockedError("The scene has no chapter")
+        acquired = False
+        if self._task is not None and not self._task.done():
+            raise OperationBlockedError("Another scene generation is already active")
+        if self.state.active:
+            if self.state.scene_id != scene_id:
+                raise OperationBlockedError("Another scene generation is already active")
+        elif not self.run_guard.acquire("scene_workflow"):
+            raise OperationBlockedError("Another project generation is already active")
+        else:
+            acquired = True
+            self.state = SceneWorkflowState(
+                scene_id=scene_id,
+                chapter_id=chapter_id,
+                active=True,
+            )
+        try:
+            self._observer = observer
+            self._pipeline = self._pipeline_factory()
+            self._result = GenerationResult(
+                scene_id=scene_id, prose=prose,
+                plan=ScenePlan.model_validate(source_record.scene_plan) if source_record.scene_plan else None,
+                character_intents={name: CharacterIntent.model_validate(value) for name, value in source_record.character_intents.items()},
+                generated_with=source_record.generated_with,
+            )
+            self.state.scene_id = scene_id
+            self.state.chapter_id = chapter_id
+            record = self._save_draft(self._result)
+            record.review_overridden = True
+            self.state.draft_record = record
+            self.state.selected_revision = record.revision_id
+            self._observer.draft(record)
+            await self._analyze_draft()
+            return record
+        except Exception:
+            if acquired:
+                self._finish("")
+            raise
 
     def recover_writer_draft(self, scene_id: str, chapter_id: str, prose: str) -> Any:
         """Promote a crash-recovery buffer through the normal draft store."""
@@ -185,6 +210,10 @@ class SceneWorkflow:
             load_scene_prose_version,
         )
 
+        if self.state.active:
+            if self.state.scene_id != scene_id:
+                raise OperationBlockedError("Another scene generation is already active")
+            return self.state.draft_record
         self.state.scene_id, self.state.chapter_id = scene_id, chapter_id
         for version_name in list_scene_prose_versions(self.project_dir, chapter_id, scene_id):
             if not version_name.startswith("v"):
@@ -269,7 +298,6 @@ class SceneWorkflow:
                     await provider.close()
                 except Exception:
                     pass
-            gc.collect()
 
     async def _wait_for_plan(self, plan: Any) -> bool:
         self._plan_future = asyncio.get_running_loop().create_future()
@@ -322,6 +350,7 @@ class SceneWorkflow:
             self._observer.status("等待发布")
         except Exception as error:
             self._observer.error(error)
+            self._observer.review(False, "记忆分析失败；草稿已保存，可重试")
             self._observer.status("记忆分析失败")
         finally:
             for provider in providers:

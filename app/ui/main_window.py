@@ -12,8 +12,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QHBoxLayout,
     QComboBox,
-    QListWidget,
-    QListWidgetItem,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -43,20 +41,6 @@ from app.ui.dashboard import DashboardView
 from app.ui.outline_editor import OutlineEditorView
 from app.ui.scene_workspace import SceneWorkspaceView
 from app.ui.experience_presentations import DeepCreationPresentation, QuickCreationPresentation
-
-NAV_ITEMS = [
-    ("总览", "dashboard"),
-    ("设定集", "bible"),
-    ("大纲", "outline"),
-    ("写作台", "workspace"),
-]
-
-QUICK_NAV_ITEMS = [
-    ("故事", "story"),
-    ("大纲", "outline"),
-    ("写章节", "workspace"),
-]
-
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
@@ -218,27 +202,6 @@ class MainWindow(QMainWindow):
         del blocker
         self._activate_presentation(self._experience_mode, None)
 
-    def _populate_navigation(self) -> None:
-        destinations = QUICK_NAV_ITEMS if self._experience_mode == "quick" else NAV_ITEMS
-        previous_key = self.sidebar.currentItem().data(Qt.ItemDataRole.UserRole) if self.sidebar.currentItem() else None
-        self.sidebar.clear()
-        for label, key in destinations:
-            item = QListWidgetItem(label)
-            item.setData(Qt.ItemDataRole.UserRole, key)
-            self.sidebar.addItem(item)
-        layout = self._editor_layout_store.layout if self._editor_layout_store else None
-        desired = (
-            layout.quick_destination if self._experience_mode == "quick" else layout.deep_destination
-        ) if layout else None
-        if self._experience_mode == "deep" and previous_key == "story":
-            key = "bible"
-        elif self._experience_mode == "quick" and previous_key == "bible":
-            key = "story"
-        else:
-            key = previous_key if previous_key in {item[1] for item in destinations} else desired
-        row = next((i for i, item in enumerate(destinations) if item[1] == key), 0)
-        self.sidebar.setCurrentRow(row)
-
     def _activate_presentation(self, mode: str, destination: str | None) -> None:
         target = self._quick_presentation if mode == "quick" else self._deep_presentation
         source = self._deep_presentation if target is self._quick_presentation else self._quick_presentation
@@ -308,7 +271,7 @@ class MainWindow(QMainWindow):
         key = item.data(Qt.ItemDataRole.UserRole)
         previous_key = self._previous_destination
         if self.sidebar.currentRow() != index or previous_key not in self._views:
-            previous_items = QUICK_NAV_ITEMS if self._experience_mode == "quick" else NAV_ITEMS
+            previous_items = self._quick_presentation.destinations if self._experience_mode == "quick" else self._deep_presentation.destinations
             previous_key = previous_items[self._previous_tab_index][1]
         if (
             previous_key == "bible"
@@ -467,7 +430,7 @@ class MainWindow(QMainWindow):
         if last_scene_id and isinstance(last_scene_id, str):
             chapter_id = self._find_chapter_for_scene(last_scene_id)
             if chapter_id:
-                self.sidebar.setCurrentRow(3)
+                self._select_destination("workspace")
                 self._outline_view.activate_scene(last_scene_id)
             else:
                 self.sidebar.setCurrentRow(0)
@@ -748,7 +711,7 @@ class MainWindow(QMainWindow):
         if self._application is not None:
             asyncio.ensure_future(
                 self._application.scene_workflow.save_edited_draft(
-                    workspace.prose_text(), source_record
+                    workspace.prose_text(), source_record, self._scene_workflow_observer()
                 )
             )
 
@@ -780,8 +743,20 @@ class MainWindow(QMainWindow):
         if self._current_project_dir is None or self._application is None:
             return
         workspace = self._workspace_view
-        workspace.begin_generation()
-        observer = SceneWorkflowObserver(
+        observer = self._scene_workflow_observer()
+        try:
+            self._application.scene_workflow.start(
+                scene_id, self._find_chapter_for_scene(scene_id) or "", observer
+            )
+            workspace.begin_generation()
+        except Exception as error:
+            workspace.set_generating(False)
+            QMessageBox.warning(self, "正在生成", str(error))
+
+    def _scene_workflow_observer(self) -> SceneWorkflowObserver:
+        """Build the current workspace's rendering adapter."""
+        workspace = self._workspace_view
+        return SceneWorkflowObserver(
             trace=workspace.update_trace,
             prose=workspace.append_prose,
             plan=workspace.show_plan_checkpoint,
@@ -792,13 +767,6 @@ class MainWindow(QMainWindow):
             memory=workspace.show_fact_approval,
             error=lambda error: logger.exception("Scene workflow failed", exc_info=error),
         )
-        try:
-            self._application.scene_workflow.start(
-                scene_id, self._find_chapter_for_scene(scene_id) or "", observer
-            )
-        except Exception as error:
-            workspace.set_generating(False)
-            QMessageBox.warning(self, "正在生成", str(error))
 
     def _on_workflow_draft(self, record) -> None:
         chapter_id = self._find_chapter_for_scene(record.scene_id)

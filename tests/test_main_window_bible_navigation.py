@@ -1,8 +1,7 @@
-import asyncio
-
 import pytest
 
 from PySide6.QtGui import QCloseEvent
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox
 
 from app.storage.bible_models import FactionElement
@@ -10,6 +9,7 @@ from app.storage.bible_repository import BibleElementRepository
 from app.storage.character_definition_service import CharacterDefinitionService
 from app.storage.models import CharacterCore, CharacterElementRelation, Project
 from app.storage.project_files import create_project
+from app.storage.editor_layout import EditorLayoutStore
 from app.ui.bible_editor import BibleEditorView
 from app.ui.character_editor import CharacterEditorView
 from app.ui.main_window import MainWindow
@@ -342,6 +342,41 @@ def test_open_project_wires_scene_selection_once(tmp_path, qtbot, monkeypatch):
     assert selected == ["scene-open"]
 
 
+def test_quick_reopen_last_scene_selects_workspace_destination(tmp_path, qtbot, monkeypatch):
+    project_dir = create_project(tmp_path, Project(title="Open", genre="Fantasy"))
+    from app.storage.models import ChapterOutline, SceneOutline, VolumeOutline
+    from app.storage.project_files import save_volume_outline
+
+    save_volume_outline(
+        project_dir,
+        VolumeOutline(
+            id="volume", chapters=[ChapterOutline(id="chapter", scenes=[SceneOutline(id="scene")])]
+        ),
+    )
+    layout = EditorLayoutStore(project_dir)
+    layout.layout.experience_mode = "quick"
+    layout.save()
+
+    class Settings:
+        def value(self, _key):
+            return "scene"
+
+        def setValue(self, _key, _value):
+            pass
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    monkeypatch.setattr(
+        "app.ui.main_window.QFileDialog.getExistingDirectory", lambda *_args: str(project_dir)
+    )
+    monkeypatch.setattr("PySide6.QtCore.QSettings", Settings)
+
+    window._on_open_project()
+
+    assert window._experience_mode == "quick"
+    assert window.sidebar.currentItem().data(Qt.ItemDataRole.UserRole) == "workspace"
+
+
 def test_leaving_outline_uses_public_save_contract(tmp_path, qtbot, monkeypatch):
     project_dir = create_project(tmp_path, Project(title="Story", genre="Fantasy"))
     window = MainWindow()
@@ -383,25 +418,6 @@ def test_discarding_dirty_bible_uses_reload_facade(qtbot, monkeypatch):
 
     assert window._maybe_close_current_project() is True
     assert reloaded == [True]
-
-
-@pytest.mark.asyncio
-async def test_plan_decision_signals_resolve_once(qtbot):
-    window = MainWindow()
-    qtbot.addWidget(window)
-    loop = asyncio.get_running_loop()
-
-    approved = loop.create_future()
-    window._plan_decision = approved
-    window._workspace_view.plan_approved.emit({"goal": "cross the pass"})
-    window._workspace_view.plan_approved.emit({"goal": "duplicate"})
-    assert approved.result() == (True, {"goal": "cross the pass"})
-
-    rejected = loop.create_future()
-    window._plan_decision = rejected
-    window._workspace_view.plan_rejected.emit()
-    window._workspace_view.plan_rejected.emit()
-    assert rejected.result() == (False, None)
 
 
 def test_repeated_navigation_does_not_duplicate_generation_signal(qtbot, monkeypatch):
