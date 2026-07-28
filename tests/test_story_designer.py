@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from app.application.errors import ConcurrentModificationError
@@ -95,6 +97,36 @@ async def test_adjustment_rejects_a_draft_based_on_an_old_brief(tmp_path):
 
     with pytest.raises(ConcurrentModificationError):
         await service.adjust_proposal("stale brief", base_revision=draft.revision)
+
+
+@pytest.mark.asyncio
+async def test_adjustment_rechecks_the_brief_after_provider_waits(tmp_path):
+    started, release = asyncio.Event(), asyncio.Event()
+
+    class WaitingProvider(MockProvider):
+        async def generate_structured(self, *args, **kwargs):
+            started.set()
+            await release.wait()
+            return await super().generate_structured(*args, **kwargs)
+
+    project_dir = create_project(tmp_path, Project(title="Folder title"))
+    initial = StoryDesignerService(
+        project_dir, provider_factory=lambda: MockProvider(structured_response=proposal())
+    )
+    initial.save_brief(brief())
+    draft = await initial.generate_proposal()
+    service = StoryDesignerService(
+        project_dir, provider_factory=lambda: WaitingProvider(structured_response=proposal())
+    )
+    adjustment = asyncio.create_task(
+        service.adjust_proposal("wait", base_revision=draft.revision)
+    )
+    await started.wait()
+    service.save_brief(brief())
+    release.set()
+
+    with pytest.raises(ConcurrentModificationError):
+        await adjustment
 
 
 @pytest.mark.asyncio

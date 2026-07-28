@@ -105,17 +105,24 @@ class StoryDesignerService:
             if isinstance(response.model, StoryProposal)
             else StoryProposal.model_validate(response.parsed or {})
         )
+        current = load_planning(self.project_dir)
+        if (
+            current.story_brief is None
+            or current.story_brief.revision != brief.revision
+            or _draft_revision(current) != _draft_revision(planning)
+        ):
+            raise ConcurrentModificationError("The proposal draft has changed; regenerate it")
         draft = ActiveProposalDraft(
             revision=(
-                planning.active_draft.revision + 1
-                if planning.active_draft
-                else (planning.approved_proposal.revision + 1 if planning.approved_proposal else 1)
+                current.active_draft.revision + 1
+                if current.active_draft
+                else (current.approved_proposal.revision + 1 if current.approved_proposal else 1)
             ),
             based_on_brief_revision=brief.revision,
             proposal=proposal,
         )
-        planning.active_draft = draft
-        save_planning(self.project_dir, planning)
+        current.active_draft = draft
+        save_planning(self.project_dir, current)
         return draft
 
     @staticmethod
@@ -146,3 +153,7 @@ def _proposal_messages(
             ),
         },
     ]
+
+
+def _draft_revision(planning) -> int | None:
+    return planning.active_draft.revision if planning.active_draft else None

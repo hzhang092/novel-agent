@@ -25,6 +25,7 @@ STEP_LABELS = {
     "fact_extractor": "事实提取 (Fact Extractor)",
     "state_updater": "状态更新 (State Updater)",
     "bible_assistant": "Story Bible Assistant",
+    "story_designer": "Story Designer",
 }
 
 PROVIDER_CHOICES = ["ollama", "deepseek"]
