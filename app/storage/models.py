@@ -438,6 +438,7 @@ class PlanningData(BaseModel):
     model_config = ConfigDict(extra="forbid")
     schema_version: Literal[1] = 1
     story_brief: StoryBrief | None = None
+    provisional_destination: str = ""
     approved_proposal: ApprovedStoryProposal | None = None
     active_draft: ActiveProposalDraft | None = None
 

@@ -6,7 +6,7 @@ import asyncio
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, QSignalBlocker, Qt, QUrl
+from PySide6.QtCore import QSignalBlocker, Qt, QUrl
 from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -344,6 +344,8 @@ class MainWindow(QMainWindow):
         return False
 
     def _on_new_project(self) -> None:
+        from PySide6.QtCore import QSettings
+
         settings = QSettings()
         last_parent = settings.value("projects/last_parent", str(Path.home() / "NovelForge"))
         dialog = CreateProjectDialog(
@@ -450,6 +452,7 @@ class MainWindow(QMainWindow):
 
         from PySide6.QtCore import QSettings
         settings = QSettings()
+        settings.setValue("projects/last_parent", str(project_dir.parent))
         key = f"last_scene/{Path(dir_path)}"
         last_scene_id = settings.value(key)
         if last_scene_id and isinstance(last_scene_id, str):

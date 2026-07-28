@@ -26,7 +26,6 @@ class CreateProjectDialog(QDialog):
         self._default_storage_dir = default_storage_dir or (Path.home() / "NovelForge")
         self._result: dict[str, str] | None = None
         self._layout = QVBoxLayout(self)
-        self._quick_creation_enabled = quick_creation_enabled
         if quick_creation_enabled:
             self._build_choice()
         else:

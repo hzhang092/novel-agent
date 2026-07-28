@@ -40,10 +40,14 @@ class StoryDesignerService:
         self._provider_factory = provider_factory or self._default_provider
         self.run_guard = run_guard or ProjectRunGuard()
 
-    def save_brief(self, brief: StoryBrief) -> StoryBrief:
+    def save_brief(
+        self, brief: StoryBrief, *, provisional_destination: str | None = None
+    ) -> StoryBrief:
         planning = load_planning(self.project_dir)
         brief.revision = (planning.story_brief.revision + 1) if planning.story_brief else 1
         planning.story_brief = brief
+        if provisional_destination is not None:
+            planning.provisional_destination = " ".join(provisional_destination.split())
         save_planning(self.project_dir, planning)
         return brief
 
