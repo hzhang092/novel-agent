@@ -488,6 +488,7 @@ class ActiveBootstrapDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["bootstrap"] = "bootstrap"
     revision: int = Field(default=1, ge=1)
+    based_on_brief_revision: int = Field(ge=1)
     based_on_proposal_revision: int = Field(ge=1)
     bootstrap: StoryBootstrap
 

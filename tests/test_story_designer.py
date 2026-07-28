@@ -326,6 +326,53 @@ async def test_bootstrap_patch_preview_does_not_mutate_and_preserves_manual_valu
 
 
 @pytest.mark.asyncio
+async def test_bootstrap_operations_reject_a_draft_based_on_an_old_brief(tmp_path):
+    provider = MockProvider(structured_response=proposal())
+    _project_dir, service = await approved_service(tmp_path, provider)
+    provider.structured_response = bootstrap()
+    draft = await service.generate_bootstrap()
+    service.save_brief(brief())
+    preview = BootstrapPatchPreview(
+        base_revision=draft.revision,
+        operations=[{"path": "/style/tone", "value": "新语气"}],
+        changes=["改语气"], consequences=["风格变化"],
+    )
+
+    assert draft.based_on_brief_revision == 1
+    with pytest.raises(ConcurrentModificationError, match="Story Brief"):
+        service.save_bootstrap(draft.bootstrap, base_revision=draft.revision)
+    with pytest.raises(ConcurrentModificationError, match="Story Brief"):
+        await service.adjust_bootstrap("改语气", base_revision=draft.revision)
+    with pytest.raises(ConcurrentModificationError, match="Story Brief"):
+        service.apply_bootstrap_patch(preview)
+    with pytest.raises(ConcurrentModificationError, match="Story Brief"):
+        service.approve_bootstrap(base_revision=draft.revision)
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_generation_rechecks_the_brief_after_provider_waits(tmp_path):
+    started, release = asyncio.Event(), asyncio.Event()
+
+    class WaitingProvider(MockProvider):
+        async def generate_structured(self, *args, **kwargs):
+            started.set()
+            await release.wait()
+            return await super().generate_structured(*args, **kwargs)
+
+    project_dir, initial = await approved_service(tmp_path, MockProvider(structured_response=proposal()))
+    service = StoryDesignerService(
+        project_dir, provider_factory=lambda: WaitingProvider(structured_response=bootstrap())
+    )
+    generation = asyncio.create_task(service.generate_bootstrap())
+    await started.wait()
+    initial.save_brief(brief())
+    release.set()
+
+    with pytest.raises(ConcurrentModificationError, match="Story Brief"):
+        await generation
+
+
+@pytest.mark.asyncio
 async def test_bootstrap_patch_adds_and_removes_list_items_without_losing_manual_fields(tmp_path):
     provider = MockProvider(structured_response=proposal())
     _project_dir, service = await approved_service(tmp_path, provider)

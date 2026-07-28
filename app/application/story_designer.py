@@ -125,10 +125,13 @@ class StoryDesignerService:
             if not self.can_generate_bootstrap():
                 raise OperationBlockedError("Bootstrap requires an approved proposal and an empty project without an active draft")
             proposal = planning.approved_proposal
+            brief = planning.story_brief
+            if brief is None:
+                raise OperationBlockedError("A Story Brief is required before bootstrap")
             provider = self._provider_factory()
             try:
                 response: ProviderResponse = await provider.generate_structured(
-                    _bootstrap_messages(proposal, planning.story_brief), StoryBootstrap
+                    _bootstrap_messages(proposal, brief), StoryBootstrap
                 )
                 bootstrap = (
                     response.model
@@ -144,10 +147,13 @@ class StoryDesignerService:
             current = load_planning(self.project_dir)
             if current.approved_proposal is None or current.approved_proposal.revision != proposal.revision:
                 raise ConcurrentModificationError("The approved proposal has changed; regenerate bootstrap")
+            if current.story_brief is None or current.story_brief.revision != brief.revision:
+                raise ConcurrentModificationError("The Story Brief has changed; regenerate bootstrap")
             if current.active_draft is not None or not self._is_empty_project():
                 raise OperationBlockedError("Bootstrap requires an empty project without an active draft")
             draft = ActiveBootstrapDraft(
                 revision=(current.active_draft.revision + 1 if current.active_draft else proposal.revision + 1),
+                based_on_brief_revision=brief.revision,
                 based_on_proposal_revision=proposal.revision,
                 bootstrap=bootstrap,
             )
@@ -248,6 +254,8 @@ class StoryDesignerService:
             draft.based_on_proposal_revision != planning.approved_proposal.revision
         ):
             raise ConcurrentModificationError("The approved proposal has changed; regenerate bootstrap")
+        if planning.story_brief is None or draft.based_on_brief_revision != planning.story_brief.revision:
+            raise ConcurrentModificationError("The Story Brief has changed; regenerate bootstrap")
         return draft
 
     def _is_empty_project(self) -> bool:
@@ -357,7 +365,7 @@ def _proposal_messages(
 
 
 def _bootstrap_messages(
-    proposal: ApprovedStoryProposal, brief: StoryBrief | None
+    proposal: ApprovedStoryProposal, brief: StoryBrief
 ) -> list[dict[str, str]]:
     return [
         {
@@ -377,7 +385,7 @@ def _bootstrap_messages(
         {
             "role": "user",
             "content": json.dumps(
-                {"approved_proposal": proposal.model_dump(), "story_brief": brief.model_dump() if brief else None},
+                {"approved_proposal": proposal.model_dump(), "story_brief": brief.model_dump()},
                 ensure_ascii=False,
             ),
         },
