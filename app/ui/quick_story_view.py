@@ -302,6 +302,7 @@ class QuickStoryView(QWidget):
         )
 
     def _provider_error(self, message: str, retry=None) -> None:
+        application = self._application
         box = QMessageBox(QMessageBox.Icon.Warning, "Story Designer", message, parent=self)
         retry_button = box.addButton("重试", QMessageBox.ButtonRole.AcceptRole) if retry else None
         settings_button = box.addButton("打开设置", QMessageBox.ButtonRole.ActionRole)
@@ -310,4 +311,7 @@ class QuickStoryView(QWidget):
         if box.clickedButton() is settings_button:
             self.settings_requested.emit()
         elif retry_button is not None and box.clickedButton() is retry_button:
-            QTimer.singleShot(0, lambda: self._start_task(retry()))
+            QTimer.singleShot(
+                0,
+                lambda: self._start_task(retry()) if self._application is application else None,
+            )

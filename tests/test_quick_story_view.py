@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+import app.ui.quick_story_view as quick_story_view
 from app.application.errors import StoryDesignerProviderError
 from app.application.project_context import build_project_application
 from app.application.story_designer import StoryDesignerService
@@ -172,6 +173,62 @@ async def test_rebinding_cancels_a_late_proposal_without_updating_the_next_proje
     assert load_planning(second_dir).active_draft is None
     assert view.proposal_label.text() == "尚未生成"
     assert view.premise_edit.toPlainText() == ""
+
+
+@pytest.mark.asyncio
+async def test_rebinding_before_a_queued_retry_does_not_run_it_for_the_next_project(
+    tmp_path, qtbot, monkeypatch
+):
+    queued = []
+    retries = []
+
+    class RetryBox:
+        class Icon:
+            Warning = object()
+
+        class ButtonRole:
+            AcceptRole = object()
+            ActionRole = object()
+
+        class StandardButton:
+            Cancel = object()
+
+        def __init__(self, *_args, **_kwargs):
+            self.retry_button = object()
+            self.settings_button = object()
+
+        def addButton(self, label, *_args):
+            return self.retry_button if label == "重试" else self.settings_button
+
+        def exec(self):
+            pass
+
+        def clickedButton(self):
+            return self.retry_button
+
+    class Timer:
+        @staticmethod
+        def singleShot(_delay, callback):
+            queued.append(callback)
+
+    first_dir = create_quick_project(tmp_path / "first", "第一本")
+    first_application = build_project_application(first_dir)
+    second_dir = create_project(tmp_path / "second", Project(title="第二本"))
+    view = QuickStoryView()
+    qtbot.addWidget(view)
+    view.bind_application(first_application)
+    monkeypatch.setattr(quick_story_view, "QMessageBox", RetryBox)
+    monkeypatch.setattr(quick_story_view, "QTimer", Timer)
+
+    async def retry():
+        retries.append(True)
+
+    view._provider_error("失败", retry)
+    view.bind_application(build_project_application(second_dir))
+    queued.pop()()
+    await asyncio.sleep(0)
+
+    assert retries == []
 
 
 @pytest.mark.asyncio
