@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import weakref
 from collections.abc import Callable
 from pathlib import Path
@@ -52,9 +51,7 @@ class MainWindow(QMainWindow):
     def __init__(self, *, quick_creation_enabled: bool | None = None) -> None:
         super().__init__()
         self._quick_creation_enabled = (
-            os.environ.get("NOVELFORGE_QUICK_CREATION") == "1"
-            if quick_creation_enabled is None
-            else quick_creation_enabled
+            True if quick_creation_enabled is None else quick_creation_enabled
         )
         self.setWindowTitle("NovelForge")
         self.resize(1200, 800)
@@ -109,6 +106,11 @@ class MainWindow(QMainWindow):
         settings_action = QAction("LLM 设置(&S)...", self)
         settings_action.triggered.connect(self._on_llm_settings)
         file_menu.addAction(settings_action)
+
+        help_action = QAction("创作帮助(&H)", self)
+        help_action.triggered.connect(self._show_creation_help)
+        file_menu.addAction(help_action)
+        self._help_action = help_action
 
         file_menu.addSeparator()
         export_md_action = QAction("导出 Markdown(&M)...", self)
@@ -1180,6 +1182,17 @@ class MainWindow(QMainWindow):
             return False
         return self._on_approval_batch_approved(*batch)
 
+    def _show_creation_help(self) -> None:
+        QMessageBox.information(
+            self,
+            "创作帮助",
+            "快速创作适合快速推进故事，深度创作提供完整的设定、大纲和审查控制。\n\n"
+            "故事模板：可预览，并在明确应用后写入故事设定；生成指南：只影响生成提示，"
+            "不会成为故事设定。\n\n"
+            "保存修改：保存当前章节草稿，仍可继续编辑；批准本章：确认审查结果并发布，"
+            "让正文和记忆进入故事主线。",
+        )
+
     def _on_quick_approve_next(self) -> None:
         if self._on_quick_approve():
             self._on_next_scene()
@@ -1227,8 +1240,29 @@ class MainWindow(QMainWindow):
             draft=self._on_workflow_draft,
             memory=workspace.show_fact_approval,
             length_warning=self._show_length_warning,
-            error=lambda error: logger.exception("Scene workflow failed", exc_info=error),
+            error=self._show_workflow_error,
         )
+
+    def _show_workflow_error(self, error: Exception) -> None:
+        logger.error(
+            "Scene workflow failed: %s",
+            error,
+            exc_info=(type(error), error, error.__traceback__),
+        )
+        from app.providers.config import ProviderConfigurationError
+
+        if isinstance(error, ProviderConfigurationError):
+            QMessageBox.warning(
+                self,
+                "需要配置模型",
+                f"{error}\n\n请打开“文件 → LLM 设置”完成配置后重试。",
+            )
+        else:
+            QMessageBox.warning(
+                self,
+                "生成失败",
+                f"{error}\n\n已保存的结果会保留，可重试当前章节。",
+            )
 
     def _show_length_warning(self, warning: str) -> None:
         chapter_id = self._workspace_view.current_chapter_id or ""

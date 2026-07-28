@@ -488,7 +488,6 @@ class SceneWorkflow:
                     self._source_context_fingerprint = getattr(
                         result, "source_context_fingerprint", ""
                     )
-                    self.state.artifacts.append(result)
                     if not result.prose:
                         self._finish("生成失败")
                         return

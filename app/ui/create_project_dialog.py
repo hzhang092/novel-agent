@@ -1,4 +1,4 @@
-"""New-project entry, including the development-only Quick Creation route."""
+"""New-project entry for Quick and Deep Creation."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ class CreateProjectDialog(QDialog):
     def _build_choice(self) -> None:
         self._clear()
         self._layout.addWidget(QLabel("你想怎样开始？"))
-        self.quick_button = QPushButton("快速构思故事\n选择几个方向，让 AI 帮你构思和规划")
+        self.quick_button = QPushButton("快速构思故事（快速创作）\n选择几个方向，让 AI 帮你构思和规划")
         self.quick_button.setStyleSheet("font-size: 16px; font-weight: bold; padding: 22px;")
         self.quick_button.clicked.connect(lambda: self._build_setup("quick"))
         self._layout.addWidget(self.quick_button)
@@ -51,7 +51,7 @@ class CreateProjectDialog(QDialog):
     def _build_setup(self, mode: str) -> None:
         self._clear()
         self._mode = mode
-        self._layout.addWidget(QLabel("快速构思故事" if mode == "quick" else "创建新项目"))
+        self._layout.addWidget(QLabel("快速创作" if mode == "quick" else "创建新项目"))
         form = QFormLayout()
         self.title_edit = QLineEdit()
         self.title_edit.setPlaceholderText("工作标题（可选）" if mode == "quick" else "输入小说标题")

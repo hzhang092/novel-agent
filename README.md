@@ -124,6 +124,22 @@ python -m app.main
 
 Then select **文件 → 新建项目** and follow the writing workflow above.
 
+### Windows packaged build and smoke check
+
+From an activated `fourteen` conda environment:
+
+```powershell
+conda activate fourteen
+pyinstaller --clean --noconfirm NovelForge-v0.1.0.spec
+python -m pytest -q tests/test_slice8_packaging.py
+```
+
+The executable is written to `dist/NovelForge-v0.1.0.exe`. The automated smoke
+suite checks the packaging contract plus switching, generation/publication,
+reopen, and export seams. Then launch the executable and manually verify: create
+a Quick project, switch to Deep and back, generate and publish one chapter,
+close and reopen the project, and export Markdown.
+
 ## Main areas of the application
 
 | Area | Purpose |
