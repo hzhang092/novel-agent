@@ -17,7 +17,13 @@ from app.application.errors import (
     OperationBlockedError,
     StoryDesignerProviderError,
 )
-from app.storage.models import ActiveBootstrapDraft, ChapterLength, StoryBootstrap, StoryBrief
+from app.storage.models import (
+    ActiveBootstrapDraft,
+    ActiveStoryPatchDraft,
+    ChapterLength,
+    StoryBootstrap,
+    StoryBrief,
+)
 from app.storage.project_files import load_planning
 
 
@@ -34,6 +40,8 @@ _ROMANCE_CHIPS = {"恋人", "暧昧"}
 class QuickStoryView(QWidget):
     settings_requested = Signal()
     bootstrap_approved = Signal()
+    character_requested = Signal(str)
+    world_element_requested = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -100,6 +108,36 @@ class QuickStoryView(QWidget):
         self.proposal_label = QLabel("尚未生成")
         self.proposal_label.setWordWrap(True)
         layout.addWidget(self.proposal_label)
+        self.approved_brief_label = QLabel("")
+        self.approved_brief_label.setWordWrap(True)
+        layout.addWidget(self.approved_brief_label)
+        self.quick_projection_label = QLabel("")
+        self.quick_projection_label.setWordWrap(True)
+        layout.addWidget(self.quick_projection_label)
+        self.quick_projection_actions = QHBoxLayout()
+        layout.addLayout(self.quick_projection_actions)
+        self.story_patch_edit = QLineEdit()
+        self.story_patch_edit.setPlaceholderText("用一句话调整主角或核心设定")
+        layout.addWidget(self.story_patch_edit)
+        story_patch_actions = QHBoxLayout()
+        self.generate_story_patch_button = QPushButton("生成调整预览")
+        self.apply_story_patch_button = QPushButton("应用调整")
+        self.cancel_story_patch_button = QPushButton("取消调整")
+        self.generate_story_patch_button.clicked.connect(
+            lambda: self._start_task(self._generate_story_patch())
+        )
+        self.apply_story_patch_button.clicked.connect(self._apply_story_patch)
+        self.cancel_story_patch_button.clicked.connect(self._cancel_story_patch)
+        for button in (
+            self.generate_story_patch_button,
+            self.apply_story_patch_button,
+            self.cancel_story_patch_button,
+        ):
+            story_patch_actions.addWidget(button)
+        layout.addLayout(story_patch_actions)
+        self.story_patch_label = QLabel("")
+        self.story_patch_label.setWordWrap(True)
+        layout.addWidget(self.story_patch_label)
         self.adjust_edit = QLineEdit()
         self.adjust_edit.setPlaceholderText("告诉 AI 如何调整")
         layout.addWidget(self.adjust_edit)
@@ -153,6 +191,8 @@ class QuickStoryView(QWidget):
         self._bootstrap_draft = None
         self._bootstrap_preview = None
         self._bootstrap_fields = []
+        self._story_patch_preview = None
+        self._set_story_projection(None)
         layout.addStretch()
 
     def bind_application(self, application) -> None:
@@ -165,7 +205,120 @@ class QuickStoryView(QWidget):
         self.adjust_edit.clear()
         proposal = planning.active_draft if hasattr(planning.active_draft, "proposal") else planning.approved_proposal
         self._show_proposal(proposal)
+        self.refresh_quick_projection()
+        if isinstance(planning.active_draft, ActiveStoryPatchDraft):
+            self._story_patch_preview = planning.active_draft
+            self._show_story_patch()
         self._show_bootstrap(planning.active_draft if isinstance(planning.active_draft, ActiveBootstrapDraft) else None)
+
+    def refresh_quick_projection(self) -> None:
+        """Refresh the compact post-bootstrap projection from canonical storage."""
+        if self._application is None:
+            self._set_story_projection(None)
+            return
+        planning = load_planning(self._application.project_dir)
+        if planning.approved_brief is not None:
+            self.approved_brief_label.setText(
+                f"已批准 Brief：{planning.approved_brief.premise or '（未填写）'}"
+            )
+        else:
+            self.approved_brief_label.clear()
+        self._set_story_projection(self._application.quick_planning.story_projection())
+
+    def _set_story_projection(self, projection) -> None:
+        while self.quick_projection_actions.count():
+            item = self.quick_projection_actions.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self.quick_projection_label.clear()
+        if projection is None:
+            self.generate_story_patch_button.setEnabled(False)
+            self._cancel_story_patch()
+            return
+        characters = "、".join(
+            f"{character.name}（{character.identity or '未设定'}）"
+            for character in projection.main_characters
+        ) or "暂无主角"
+        setting = projection.core_setting
+        self.quick_projection_label.setText(
+            "快速总览\n"
+            f"主角：{characters}\n"
+            f"核心世界：{setting.geography or '未设定'}；规则：{'、'.join(setting.rules) or '未设定'}"
+        )
+        for character in projection.main_characters:
+            button = QPushButton(f"高级角色：{character.name}")
+            button.clicked.connect(
+                lambda checked=False, character_id=character.id: self.character_requested.emit(character_id)
+            )
+            self.quick_projection_actions.addWidget(button)
+        overview_button = QPushButton("高级世界设定")
+        overview_button.clicked.connect(
+            lambda: self.world_element_requested.emit("overview")
+        )
+        self.quick_projection_actions.addWidget(overview_button)
+        if self._application is not None:
+            elements = self._application.story_bible.load_editor_snapshot().bible.elements
+            for element in elements:
+                if getattr(getattr(element, "element_type", None), "value", None) != "power_system":
+                    continue
+                button = QPushButton(f"高级能力：{element.name}")
+                button.clicked.connect(
+                    lambda checked=False, element_id=element.id: self.world_element_requested.emit(element_id)
+                )
+                self.quick_projection_actions.addWidget(button)
+        self.generate_story_patch_button.setEnabled(True)
+
+    async def _generate_story_patch(self) -> None:
+        if self._application is None or not self.story_patch_edit.text().strip():
+            return
+        application = self._application
+        try:
+            self._story_patch_preview = await application.quick_planning.generate_story_patch(
+                self.story_patch_edit.text().strip()
+            )
+        except (ProviderConfigurationError, StoryDesignerProviderError,
+                ConcurrentModificationError, OperationBlockedError) as error:
+            if self._application is application:
+                self._provider_error(f"调整失败：{error}", self._generate_story_patch)
+            return
+        if self._application is application:
+            self._show_story_patch()
+
+    def _show_story_patch(self) -> None:
+        self.story_patch_label.setText(
+            "变更：" + "；".join(self._story_patch_preview.changes or ["无具体变更"])
+            + "\n影响：" + "；".join(self._story_patch_preview.consequences or ["无"])
+        )
+        self.apply_story_patch_button.setEnabled(True)
+        self.cancel_story_patch_button.setEnabled(True)
+
+    def _apply_story_patch(self) -> None:
+        if self._application is None or self._story_patch_preview is None:
+            return
+        try:
+            self._application.quick_planning.apply_story_patch(self._story_patch_preview)
+        except (ConcurrentModificationError, OperationBlockedError, ValueError) as error:
+            self._provider_error(f"应用失败：{error}")
+            return
+        self._cancel_story_patch(clear_persisted=False)
+        self.refresh_quick_projection()
+
+    def _cancel_story_patch(self, *, clear_persisted: bool = True) -> None:
+        if (
+            clear_persisted
+            and self._application is not None
+            and self._story_patch_preview is not None
+        ):
+            try:
+                self._application.quick_planning.cancel_story_patch(
+                    self._story_patch_preview
+                )
+            except ConcurrentModificationError:
+                pass
+        self._story_patch_preview = None
+        self.story_patch_label.clear()
+        self.apply_story_patch_button.setEnabled(False)
+        self.cancel_story_patch_button.setEnabled(False)
 
     def _start_task(self, coroutine) -> None:
         if self._proposal_task is None or self._proposal_task.done():

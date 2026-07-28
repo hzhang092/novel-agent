@@ -48,6 +48,9 @@ def test_world_editor_public_navigation_contracts(tmp_path, qtbot, monkeypatch):
     editor.show_overview()
 
     assert editor._element_list.selected_element_id() == "overview"
+    assert editor.show_element("faction") is True
+    assert editor._element_list.selected_element_id() == "faction"
+    editor.show_overview()
     editor._overview_geography.setPlainText("Unsaved")
     monkeypatch.setattr(
         "app.ui.world_bible_editor.QMessageBox.question",

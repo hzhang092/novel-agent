@@ -148,6 +148,16 @@ class BibleEditorView(QWidget):
         self._tabs.setCurrentWidget(self._character_tab)
         return self._character_tab.select_character(character_id)
 
+    def open_world_element(self, element_id: str) -> bool:
+        """Open the matching World Bible element after resolving pending edits."""
+        if not self._world_tab.prepare_for_navigation():
+            return False
+        self._tabs.setCurrentWidget(self._world_tab)
+        if element_id == "overview":
+            self._world_tab.show_overview()
+            return True
+        return self._world_tab.show_element(element_id)
+
     def set_current_scene_id(self, scene_id: str | None) -> None:
         self._character_tab.set_current_scene_id(scene_id)
         self._world_tab.set_current_scene_id(scene_id)

@@ -96,6 +96,9 @@ class SceneWorkflow:
         chapter_id: str,
         observer: SceneWorkflowObserver,
     ) -> None:
+        from app.application.quick_planning import QuickPlanningService
+
+        QuickPlanningService(self.project_dir).assert_generation_allowed(chapter_id)
         if not self.run_guard.acquire("scene_workflow"):
             raise OperationBlockedError("Another project generation is already active")
         self.state = SceneWorkflowState(scene_id=scene_id, chapter_id=chapter_id, active=True)

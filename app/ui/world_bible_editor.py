@@ -86,6 +86,10 @@ class WorldBibleEditorView(QWidget):
         else:
             self._element_list.select_element("overview")
 
+    def show_element(self, element_id: str) -> bool:
+        """Select one canonical Bible element."""
+        return self._element_list.select_element(element_id)
+
     def prepare_for_navigation(self) -> bool:
         """Resolve pending edits before external navigation."""
         return self._resolve_dirty_before_switch()

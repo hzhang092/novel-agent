@@ -77,6 +77,8 @@ def test_bible_public_facade_delegates_context_bus_and_character_reload(
 
 
 def test_bible_public_load_reload_and_character_navigation(tmp_path, qtbot):
+    from app.storage.bible_models import FactionElement
+    from app.storage.bible_repository import BibleElementRepository
     from app.storage.character_definition_service import CharacterDefinitionService
     from app.storage.models import CharacterCore
     from app.ui.bible_editor import BibleEditorView
@@ -84,6 +86,9 @@ def test_bible_public_load_reload_and_character_navigation(tmp_path, qtbot):
     project_dir = create_project(tmp_path, Project(title="测试项目", genre="玄幻"))
     characters = CharacterDefinitionService(project_dir)
     characters.save(CharacterCore(id="first", name="First"))
+    BibleElementRepository(project_dir).create(
+        FactionElement(id="faction", name="Faction")
+    )
     editor = BibleEditorView()
     qtbot.addWidget(editor)
 
@@ -97,6 +102,9 @@ def test_bible_public_load_reload_and_character_navigation(tmp_path, qtbot):
 
     assert editor.open_character("second") is True
     assert editor.open_character("missing") is False
+    assert editor.open_world_element("overview") is True
+    assert editor.open_world_element("faction") is True
+    assert editor.open_world_element("missing") is False
 
 
 def test_bible_actions_state_their_scope_and_template_is_overview_only(qtbot):

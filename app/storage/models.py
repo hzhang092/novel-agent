@@ -219,6 +219,8 @@ class ChapterOutline(BaseModel):
     summary: str = ""
     scenes: list[SceneOutline] = Field(default_factory=list)
     target_word_count: int = 3000
+    generation_blocked: bool = False
+    needs_review: bool = False
 
 
 class VolumeOutline(BaseModel):
@@ -236,6 +238,120 @@ class StoryOutline(BaseModel):
     themes: list[str] = Field(default_factory=list)
     ending: str = ""
     volumes: list[VolumeOutline] = Field(default_factory=list)
+
+
+class ChapterCardStatus(str, Enum):
+    UNWRITTEN = "待写"
+    DRAFT = "草稿"
+    APPROVED = "已批准"
+    NEW_DRAFT = "有新草稿"
+    NEEDS_REVIEW = "需要复核"
+
+
+class ChapterCardProjection(BaseModel):
+    id: str
+    volume_id: str
+    scene_id: str = ""
+    title: str
+    summary: str
+    ending_hook: str
+    status: ChapterCardStatus
+
+
+class StoryArcProjection(BaseModel):
+    id: str
+    story_id: str
+    title: str
+    summary: str
+    chapter_cards: list[ChapterCardProjection] = Field(default_factory=list)
+
+
+class QuickCharacterProjection(BaseModel):
+    id: str
+    name: str
+    identity: str
+    personality: str
+    long_term_goal: str | None = None
+
+
+class QuickStoryProjection(BaseModel):
+    arcs: list[StoryArcProjection] = Field(default_factory=list)
+    main_characters: list[QuickCharacterProjection] = Field(default_factory=list)
+    core_setting: WorldOverview = Field(default_factory=WorldOverview)
+
+
+class HiddenFieldPatch(BaseModel):
+    path: str
+    old_value: object
+    new_value: object
+    reason: str
+
+
+class ChapterCardEditPreview(BaseModel):
+    chapter_id: str
+    changed_fields: list[str] = Field(default_factory=list)
+    title: str
+    summary: str
+    ending_hook: str
+    advanced_patch: list[HiddenFieldPatch] = Field(default_factory=list)
+
+
+class StoryBriefDrift(BaseModel):
+    changed_fields: list[str] = Field(default_factory=list)
+
+
+class StoryPatchOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    target: Literal["character", "overview"]
+    target_id: str = ""
+    field: str
+    value: str | list[str] | None
+
+
+class StoryPatchPreview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["story_patch"] = "story_patch"
+    base_revision: int = Field(default=1, ge=1)
+    operations: list[StoryPatchOperation] = Field(min_length=1)
+    changes: list[str] = Field(default_factory=list)
+    consequences: list[str] = Field(default_factory=list)
+
+
+class ReplanPreview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["replan"] = "replan"
+    base_revision: int = Field(default=1, ge=1)
+    future_chapter_ids: list[str] = Field(default_factory=list)
+    published_chapter_ids: list[str] = Field(default_factory=list)
+    downstream_review_chapter_ids: list[str] = Field(default_factory=list)
+    changes: list[str] = Field(default_factory=list)
+    consequences: list[str] = Field(default_factory=list)
+    story_affecting: bool = True
+    operations: list[dict] = Field(default_factory=list)
+
+
+class LaterArcPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["later_arc"] = "later_arc"
+    base_revision: int = Field(default=1, ge=1)
+    title: str
+    summary: str
+    chapters: list[ChapterOutline] = Field(default_factory=list)
+    direction_conflicts: list[str] = Field(default_factory=list)
+    changes: list[str] = Field(default_factory=list)
+    consequences: list[str] = Field(default_factory=list)
+
+
+class ActiveReplanDraft(ReplanPreview):
+    pass
+
+
+class ActiveStoryPatchDraft(StoryPatchPreview):
+    pass
+
+
+class ActiveLaterArcDraft(LaterArcPlan):
+    pass
 
 
 # ── Scene Generation ───────────────────────────────────────────────────────
@@ -511,7 +627,14 @@ class BootstrapPatchPreview(BaseModel):
 
 
 ActivePlanningDraft = Annotated[
-    Union[ActiveProposalDraft, ActiveBootstrapDraft], Field(discriminator="kind")
+    Union[
+        ActiveProposalDraft,
+        ActiveBootstrapDraft,
+        ActiveStoryPatchDraft,
+        ActiveReplanDraft,
+        ActiveLaterArcDraft,
+    ],
+    Field(discriminator="kind"),
 ]
 
 
@@ -521,6 +644,7 @@ class PlanningData(BaseModel):
     story_brief: StoryBrief | None = None
     provisional_destination: str = ""
     approved_proposal: ApprovedStoryProposal | None = None
+    approved_brief: StoryBrief | None = None
     active_draft: ActivePlanningDraft | None = None
 
 

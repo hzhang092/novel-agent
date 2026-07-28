@@ -7,6 +7,8 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 
+from pydantic import BaseModel
+
 from app.application.errors import (
     ConcurrentModificationError,
     OperationBlockedError,
@@ -95,6 +97,7 @@ class StoryDesignerService:
             based_on_brief_revision=draft.based_on_brief_revision,
         )
         planning.approved_proposal = approved
+        planning.approved_brief = planning.story_brief.model_copy(deep=True)
         planning.active_draft = None
         paths = [self.project_dir / PLANNING_YAML]
         if accept_title:
@@ -116,6 +119,37 @@ class StoryDesignerService:
             and self._is_empty_project()
         )
 
+    async def generate_structured(
+        self, messages: list[dict[str, str]], schema: type[BaseModel]
+    ) -> BaseModel:
+        """Use Story Designer's configured structured-provider route for planning drafts."""
+        if not self.run_guard.acquire("story_designer"):
+            raise OperationBlockedError("Another project generation is already active")
+        try:
+            return await self._generate_with_provider(messages, schema)
+        finally:
+            self.run_guard.release("story_designer")
+
+    async def _generate_with_provider(
+        self, messages: list[dict[str, str]], schema: type[BaseModel]
+    ) -> BaseModel:
+        provider = self._provider_factory()
+        try:
+            response: ProviderResponse = await provider.generate_structured(
+                messages, schema
+            )
+            return (
+                response.model
+                if isinstance(response.model, schema)
+                else schema.model_validate(response.parsed or {})
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            raise StoryDesignerProviderError(str(error)) from error
+        finally:
+            await provider.close()
+
     async def generate_bootstrap(self) -> ActiveBootstrapDraft:
         """Generate one initial canonical bundle, but retain it as a draft."""
         if not self.run_guard.acquire("story_designer"):
@@ -128,22 +162,9 @@ class StoryDesignerService:
             brief = planning.story_brief
             if brief is None:
                 raise OperationBlockedError("A Story Brief is required before bootstrap")
-            provider = self._provider_factory()
-            try:
-                response: ProviderResponse = await provider.generate_structured(
-                    _bootstrap_messages(proposal, brief), StoryBootstrap
-                )
-                bootstrap = (
-                    response.model
-                    if isinstance(response.model, StoryBootstrap)
-                    else StoryBootstrap.model_validate(response.parsed or {})
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception as error:
-                raise StoryDesignerProviderError(str(error)) from error
-            finally:
-                await provider.close()
+            bootstrap = await self._generate_with_provider(
+                _bootstrap_messages(proposal, brief), StoryBootstrap
+            )
             current = load_planning(self.project_dir)
             if current.approved_proposal is None or current.approved_proposal.revision != proposal.revision:
                 raise ConcurrentModificationError("The approved proposal has changed; regenerate bootstrap")
@@ -181,22 +202,10 @@ class StoryDesignerService:
         try:
             planning = load_planning(self.project_dir)
             draft = self._bootstrap_draft(planning, base_revision)
-            provider = self._provider_factory()
-            try:
-                response: ProviderResponse = await provider.generate_structured(
-                    _bootstrap_patch_messages(draft, instruction), BootstrapPatchPreview
-                )
-                preview = (
-                    response.model
-                    if isinstance(response.model, BootstrapPatchPreview)
-                    else BootstrapPatchPreview.model_validate(response.parsed or {})
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception as error:
-                raise StoryDesignerProviderError(str(error)) from error
-            finally:
-                await provider.close()
+            preview = await self._generate_with_provider(
+                _bootstrap_patch_messages(draft, instruction),
+                BootstrapPatchPreview,
+            )
             self._bootstrap_draft(load_planning(self.project_dir), base_revision)
             return preview.model_copy(update={"base_revision": base_revision})
         finally:
@@ -298,22 +307,10 @@ class StoryDesignerService:
             or planning.active_draft.based_on_brief_revision != brief.revision
         ):
             raise ConcurrentModificationError("The proposal draft has changed; regenerate it")
-        provider = self._provider_factory()
-        try:
-            response: ProviderResponse = await provider.generate_structured(
-                _proposal_messages(brief, planning.active_draft, instruction), StoryProposal
-            )
-            proposal = (
-                response.model
-                if isinstance(response.model, StoryProposal)
-                else StoryProposal.model_validate(response.parsed or {})
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as error:
-            raise StoryDesignerProviderError(str(error)) from error
-        finally:
-            await provider.close()
+        proposal = await self._generate_with_provider(
+            _proposal_messages(brief, planning.active_draft, instruction),
+            StoryProposal,
+        )
         current = load_planning(self.project_dir)
         if (
             current.story_brief is None

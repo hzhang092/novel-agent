@@ -65,10 +65,55 @@ def test_switching_preserves_shared_writing_and_outline_state(tmp_path, qtbot):
 
     assert _labels(window) == ["故事", "大纲", "写章节"]
     assert window._quick_presentation.stack.indexOf(workspace) >= 0
+    assert window._quick_presentation.stack.indexOf(window._quick_outline_view) >= 0
+    assert window._quick_presentation.stack.indexOf(window._outline_view) == -1
+    assert window._deep_presentation.stack.indexOf(window._outline_view) >= 0
     assert workspace.prose_text() == "in memory"
     assert workspace.current_scene_id == "scene-1"
     assert workspace.current_prose_version() == "v1"
     assert window._outline_view._selected_node_id == "chapter-1"
+
+
+def test_switching_from_deep_outline_saves_before_quick_refresh(
+    tmp_path, qtbot, monkeypatch
+):
+    window = _window(tmp_path, qtbot)
+    window._select_destination("outline")
+    calls = []
+    monkeypatch.setattr(window._outline_view, "save", lambda: calls.append("save") or True)
+    monkeypatch.setattr(
+        window._quick_outline_view,
+        "refresh",
+        lambda: calls.append("refresh"),
+    )
+
+    _switch(window, "quick")
+
+    assert calls == ["save", "refresh"]
+
+
+def test_quick_advanced_links_open_the_exact_deep_element(
+    tmp_path, qtbot, monkeypatch
+):
+    window = _window(tmp_path, qtbot)
+    calls = []
+    monkeypatch.setattr(
+        window._bible_view,
+        "open_character",
+        lambda item_id: calls.append(("character", item_id)) or True,
+    )
+    monkeypatch.setattr(
+        window._bible_view,
+        "open_world_element",
+        lambda item_id: calls.append(("world", item_id)) or True,
+    )
+    _switch(window, "quick")
+
+    window._quick_story_view.character_requested.emit("hero-1")
+    _switch(window, "quick")
+    window._quick_story_view.world_element_requested.emit("power-1")
+
+    assert calls == [("character", "hero-1"), ("world", "power-1")]
 
 
 def test_story_mapping_restores_remembered_deep_location(tmp_path, qtbot):

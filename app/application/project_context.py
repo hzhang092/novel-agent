@@ -10,6 +10,7 @@ from app.application.characters import CharacterApplicationService
 from app.application.outlines import OutlineApplicationService
 from app.application.story_bible import StoryBibleApplicationService
 from app.application.scene_workflow import SceneWorkflow
+from app.application.quick_planning import QuickPlanningService
 from app.application.story_designer import StoryDesignerService
 
 
@@ -20,6 +21,7 @@ class ProjectApplicationContext:
     story_bible: StoryBibleApplicationService
     outlines: OutlineApplicationService
     story_designer: StoryDesignerService
+    quick_planning: QuickPlanningService
     scene_workflow: SceneWorkflow
 
 
@@ -45,5 +47,6 @@ def build_project_application(
             story_bible=story_bible,
         ),
         story_designer=StoryDesignerService(project_dir, run_guard=workflow.run_guard),
+        quick_planning=QuickPlanningService(project_dir, run_guard=workflow.run_guard),
         scene_workflow=workflow,
     )

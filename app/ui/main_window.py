@@ -44,6 +44,7 @@ from app.ui.outline_editor import OutlineEditorView
 from app.ui.scene_workspace import SceneWorkspaceView
 from app.ui.experience_presentations import DeepCreationPresentation, QuickCreationPresentation
 from app.ui.quick_story_view import QuickStoryView
+from app.ui.quick_outline_view import QuickOutlineView
 
 class MainWindow(QMainWindow):
     def __init__(self, *, quick_creation_enabled: bool | None = None) -> None:
@@ -140,6 +141,7 @@ class MainWindow(QMainWindow):
         self._quick_story_view = QuickStoryView()
         self._bible_view = BibleEditorView()
         self._outline_view = OutlineEditorView()
+        self._quick_outline_view = QuickOutlineView()
         self._workspace_view = SceneWorkspaceView()
         self._views: dict[str, QWidget] = {
             "dashboard": self._dashboard_view,
@@ -150,7 +152,9 @@ class MainWindow(QMainWindow):
         }
         self._deep_presentation.stack.addWidget(self._dashboard_view)
         self._deep_presentation.stack.addWidget(self._bible_view)
+        self._deep_presentation.stack.addWidget(self._outline_view)
         self._quick_presentation.stack.addWidget(self._quick_story_view)
+        self._quick_presentation.stack.addWidget(self._quick_outline_view)
         self._deep_presentation.destination_changed.connect(self._on_destination_changed)
         self._quick_presentation.destination_changed.connect(self._on_destination_changed)
         self._connect_view_signals()
@@ -163,6 +167,44 @@ class MainWindow(QMainWindow):
     def _open_scene_from_bible(self, scene_id: str) -> None:
         self._select_destination("workspace")
         self._outline_view.activate_scene(scene_id)
+
+    def _open_quick_scene(self, scene_id: str) -> None:
+        self._on_scene_selected(scene_id)
+        self._select_destination("workspace")
+
+    def _open_deep_character(self, character_id: str) -> None:
+        self._set_experience_mode("deep")
+        self._select_destination("bible")
+        self._bible_view.open_character(character_id)
+
+    def _open_deep_world_element(self, element_id: str) -> None:
+        self._set_experience_mode("deep")
+        self._select_destination("bible")
+        self._bible_view.open_world_element(element_id)
+
+    def _open_deep_outline(self, chapter_id: str) -> None:
+        self._set_experience_mode("deep")
+        self._select_destination("outline")
+        if self._current_project_dir is not None:
+            self._outline_view.load_project_dir(self._current_project_dir)
+        scene_id = self._scene_for_chapter(chapter_id)
+        if scene_id:
+            self._outline_view.activate_scene(scene_id)
+
+    def _scene_for_chapter(self, chapter_id: str) -> str | None:
+        if self._current_project_dir is None:
+            return None
+        from app.storage.project_files import load_all_volumes
+
+        return next(
+            (
+                chapter.scenes[0].id
+                for volume in load_all_volumes(self._current_project_dir)
+                for chapter in volume.chapters
+                if chapter.id == chapter_id and chapter.scenes
+            ),
+            None,
+        )
 
     def _connect_view_signals(self) -> None:
         """Connect view signals once during UI construction."""
@@ -190,12 +232,17 @@ class MainWindow(QMainWindow):
         self._workspace_view.plan_rejected.connect(self._on_plan_rejected)
         self._quick_story_view.settings_requested.connect(self._on_llm_settings)
         self._quick_story_view.bootstrap_approved.connect(self._reload_after_bootstrap)
+        self._quick_story_view.character_requested.connect(self._open_deep_character)
+        self._quick_story_view.world_element_requested.connect(self._open_deep_world_element)
+        self._quick_outline_view.scene_selected.connect(self._open_quick_scene)
+        self._quick_outline_view.deep_outline_requested.connect(self._open_deep_outline)
 
     def _reload_after_bootstrap(self) -> None:
         """Refresh existing canonical editors after Quick approves a bootstrap."""
         self._bible_view.reload()
         if self._current_project_dir is not None:
             self._outline_view.load_project_dir(self._current_project_dir)
+            self._quick_outline_view.refresh()
 
     def _bind_project_application(self, project_dir: Path) -> None:
         self._current_project_dir = project_dir
@@ -205,6 +252,7 @@ class MainWindow(QMainWindow):
         )
         self._bible_view.bind_application(self._application)
         self._outline_view.bind_application(self._application.outlines)
+        self._quick_outline_view.bind_application(self._application.quick_planning)
         self._quick_story_view.bind_application(self._application)
         self._editor_layout_store = EditorLayoutStore(project_dir)
         self._set_nav_items_enabled(True)
@@ -225,12 +273,15 @@ class MainWindow(QMainWindow):
     def _activate_presentation(self, mode: str, destination: str | None) -> None:
         target = self._quick_presentation if mode == "quick" else self._deep_presentation
         source = self._deep_presentation if target is self._quick_presentation else self._quick_presentation
-        for view in (self._outline_view, self._workspace_view):
+        for view in (self._workspace_view,):
             if source.stack.indexOf(view) >= 0:
                 source.stack.removeWidget(view)
                 target.stack.addWidget(view)
             elif target.stack.indexOf(view) < 0:
                 target.stack.addWidget(view)
+        self._views["outline"] = (
+            self._quick_outline_view if mode == "quick" else self._outline_view
+        )
         self._presentation_stack.setCurrentWidget(target)
         self.sidebar, self.stack = target.sidebar, target.stack
         destinations = target.destinations
@@ -283,11 +334,28 @@ class MainWindow(QMainWindow):
             return
         if leaving_bible:
             self._previous_destination = target
+        if (
+            self._experience_mode == "deep"
+            and current == "outline"
+            and self._outline_view.is_loaded
+        ):
+            self._outline_view.save()
+            self._quick_outline_view.refresh()
         self._experience_mode = mode
         if self._editor_layout_store is not None:
             self._editor_layout_store.layout.experience_mode = mode
             self._editor_layout_store.save()
         self._activate_presentation(mode, target)
+        if (
+            mode == "deep"
+            and target == "outline"
+            and self._current_project_dir is not None
+        ):
+            chapter_id = self._quick_outline_view.selected_chapter_id
+            self._outline_view.load_project_dir(self._current_project_dir)
+            scene_id = self._scene_for_chapter(chapter_id)
+            if scene_id:
+                self._outline_view.activate_scene(scene_id)
 
     def _on_nav_changed(self, index: int) -> None:
         item = self.sidebar.item(index)
@@ -309,7 +377,12 @@ class MainWindow(QMainWindow):
             return
 
         # Auto-save Outline editor when navigating away from it
-        if previous_key == "outline" and key != "outline" and self._outline_view.is_loaded:
+        if (
+            self._experience_mode == "deep"
+            and previous_key == "outline"
+            and key != "outline"
+            and self._outline_view.is_loaded
+        ):
             self._outline_view.save()
 
         # Wire event bus to Bible Editor's character editor when navigating to Bible
@@ -585,6 +658,7 @@ class MainWindow(QMainWindow):
 
         # Load existing prose if available
         if chapter_id:
+            self._quick_outline_view.select_chapter(chapter_id)
             self._load_scene_prose_into_editor(
                 self._workspace_view, chapter_id, scene_id
             )
