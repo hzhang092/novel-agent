@@ -47,8 +47,8 @@ class StoryDesignerService:
         save_planning(self.project_dir, planning)
         return brief
 
-    async def generate_proposal(self) -> ActiveProposalDraft:
-        return await self._replace_draft(base_revision=None, instruction="")
+    async def generate_proposal(self, instruction: str = "") -> ActiveProposalDraft:
+        return await self._replace_draft(base_revision=None, instruction=instruction)
 
     async def adjust_proposal(
         self, instruction: str, *, base_revision: int
@@ -145,9 +145,9 @@ class StoryDesignerService:
 
     @staticmethod
     def _default_provider() -> LLMProvider:
-        from app.providers.config import get_provider_for_step, load_provider_config
+        from app.providers.config import get_configured_provider_for_step, load_provider_config
 
-        return get_provider_for_step("story_designer", load_provider_config())
+        return get_configured_provider_for_step("story_designer", load_provider_config())
 
 
 def _proposal_messages(

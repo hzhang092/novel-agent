@@ -30,6 +30,13 @@ def test_existing_project_defaults_to_deep_with_separate_presentations(tmp_path,
     assert window._deep_presentation.sidebar is not window._quick_presentation.sidebar
 
 
+def test_quick_affordance_is_hidden_without_the_development_flag(qtbot):
+    window = MainWindow(quick_creation_enabled=False)
+    qtbot.addWidget(window)
+
+    assert window._experience_switch.isHidden()
+
+
 def test_switching_preserves_shared_writing_and_outline_state(tmp_path, qtbot):
     window = _window(tmp_path, qtbot)
     workspace = window._workspace_view

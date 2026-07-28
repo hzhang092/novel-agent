@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
-from PySide6.QtCore import QSignalBlocker, Qt, QUrl
+from PySide6.QtCore import QSettings, QSignalBlocker, Qt, QUrl
 from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -28,6 +29,7 @@ from app.application.scene_workflow import SceneWorkflowObserver
 from app.storage.models import Project as ProjectModel
 from app.storage.repository import Repository
 from app.storage.editor_layout import EditorLayoutStore
+from app.storage.project_files import create_quick_project
 import logging
 
 from app.events.bus import EventBus
@@ -41,10 +43,16 @@ from app.ui.dashboard import DashboardView
 from app.ui.outline_editor import OutlineEditorView
 from app.ui.scene_workspace import SceneWorkspaceView
 from app.ui.experience_presentations import DeepCreationPresentation, QuickCreationPresentation
+from app.ui.quick_story_view import QuickStoryView
 
 class MainWindow(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, *, quick_creation_enabled: bool | None = None) -> None:
         super().__init__()
+        self._quick_creation_enabled = (
+            os.environ.get("NOVELFORGE_QUICK_CREATION") == "1"
+            if quick_creation_enabled is None
+            else quick_creation_enabled
+        )
         self.setWindowTitle("NovelForge")
         self.resize(1200, 800)
         self._current_prose_version: str | None = None
@@ -118,6 +126,7 @@ class MainWindow(QMainWindow):
         self._experience_switch = QComboBox()
         self._experience_switch.addItem("快速创作", "quick")
         self._experience_switch.addItem("深度创作", "deep")
+        self._experience_switch.setVisible(self._quick_creation_enabled)
         self._experience_switch.currentIndexChanged.connect(self._on_experience_changed)
         layout.addWidget(self._experience_switch)
         self._presentation_stack = QStackedWidget()
@@ -128,8 +137,7 @@ class MainWindow(QMainWindow):
         self.sidebar = self._deep_presentation.sidebar
         self.stack = self._deep_presentation.stack
         self._dashboard_view = DashboardView()
-        self._quick_story_view = QLabel("故事")
-        self._quick_story_view.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._quick_story_view = QuickStoryView()
         self._bible_view = BibleEditorView()
         self._outline_view = OutlineEditorView()
         self._workspace_view = SceneWorkspaceView()
@@ -180,6 +188,7 @@ class MainWindow(QMainWindow):
         )
         self._workspace_view.plan_approved.connect(self._on_plan_approved)
         self._workspace_view.plan_rejected.connect(self._on_plan_rejected)
+        self._quick_story_view.settings_requested.connect(self._on_llm_settings)
 
     def _bind_project_application(self, project_dir: Path) -> None:
         self._current_project_dir = project_dir
@@ -189,9 +198,11 @@ class MainWindow(QMainWindow):
         )
         self._bible_view.bind_application(self._application)
         self._outline_view.bind_application(self._application.outlines)
+        self._quick_story_view.bind_application(self._application)
         self._editor_layout_store = EditorLayoutStore(project_dir)
         self._set_nav_items_enabled(True)
-        self._set_experience_mode(self._editor_layout_store.layout.experience_mode)
+        preferred = self._editor_layout_store.layout.experience_mode
+        self._set_experience_mode(preferred)
 
     def _set_experience_mode(self, mode: str) -> None:
         """Swap presentation navigation while preserving shared editor widgets."""
@@ -333,7 +344,13 @@ class MainWindow(QMainWindow):
         return False
 
     def _on_new_project(self) -> None:
-        dialog = CreateProjectDialog(self, Path.home() / "NovelForge")
+        settings = QSettings()
+        last_parent = settings.value("projects/last_parent", str(Path.home() / "NovelForge"))
+        dialog = CreateProjectDialog(
+            self,
+            Path(str(last_parent)),
+            self._quick_creation_enabled,
+        )
         if not dialog.exec():
             return
 
@@ -343,14 +360,21 @@ class MainWindow(QMainWindow):
         if not self._maybe_close_current_project():
             return
 
-        project = ProjectModel(
-            title=result["title"],
-            genre=result["genre"],
-            llm_provider=result["llm_provider"],
-        )
-
         try:
-            proj_dir = Repository(Path(result["storage_dir"])).create(project)
+            if result.get("creation_mode", "blank") == "quick":
+                proj_dir = create_quick_project(Path(result["storage_dir"]), result["title"])
+                project = self._repo.open(proj_dir)
+                layout = EditorLayoutStore(proj_dir)
+                layout.layout.experience_mode = "quick"
+                layout.layout.quick_destination = "story"
+                layout.save()
+            else:
+                project = ProjectModel(
+                    title=result["title"],
+                    genre=result["genre"],
+                    llm_provider=result["llm_provider"],
+                )
+                proj_dir = Repository(Path(result["storage_dir"])).create(project)
         except FileExistsError:
             QMessageBox.warning(self, "错误", f"项目「{result['title']}」已存在")
             return
@@ -371,6 +395,7 @@ class MainWindow(QMainWindow):
         self._dashboard_view.load_project_dir(proj_dir)
         self._outline_view.load_project_dir(proj_dir)
         self._workspace_view.load_project_dir(proj_dir)
+        settings.setValue("projects/last_parent", str(proj_dir.parent))
 
         QMessageBox.information(
             self, "创建成功", f"项目「{project.title}」已创建\n{proj_dir}"

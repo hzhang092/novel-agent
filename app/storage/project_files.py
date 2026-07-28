@@ -45,7 +45,31 @@ def create_project(project_dir: Path, project: Project) -> Path:
     Raises:
         FileExistsError: If the project directory already exists.
     """
-    proj_path = project_dir / project.title
+    return _create_project_at(project_dir, project.title, project)
+
+
+def create_quick_project(project_dir: Path, working_title: str) -> Path:
+    """Create a resumable Quick Creation project without risking a name collision."""
+    title = working_title.strip() or "未命名故事"
+    stem = _folder_stem(title)
+    project = Project(title=title)
+    index = 1
+    while True:
+        folder_name = stem if index == 1 else f"{stem}-{index}"
+        try:
+            return _create_project_at(project_dir, folder_name, project)
+        except FileExistsError:
+            index += 1
+
+
+def _folder_stem(title: str) -> str:
+    sanitized = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', " ", title)
+    sanitized = " ".join(sanitized.split()).strip(". ")
+    return sanitized or "未命名故事"
+
+
+def _create_project_at(project_dir: Path, folder_name: str, project: Project) -> Path:
+    proj_path = Path(project_dir) / folder_name
     if proj_path.exists():
         raise FileExistsError(f"Project already exists: {proj_path}")
 

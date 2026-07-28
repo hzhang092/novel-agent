@@ -12,6 +12,10 @@ _CREDENTIAL_SERVICE = "NovelForge"
 _CREDENTIAL_ACCOUNT = "DeepSeek API key"
 
 
+class ProviderConfigurationError(ValueError):
+    """The selected provider route cannot be used until Settings is completed."""
+
+
 def _get_default_config() -> ProviderConfig:
     return ProviderConfig()
 
@@ -106,4 +110,20 @@ def get_provider_for_step(step_id: str, config: ProviderConfig) -> LLMProvider:
         LLMProvider instance for this step.
     """
     provider_type = config.routing.get(step_id, "ollama")
+    return create_provider(provider_type, config)
+
+
+def get_configured_provider_for_step(step_id: str, config: ProviderConfig) -> LLMProvider:
+    """Resolve a route only when all required settings are explicitly present."""
+    provider_type = config.routing.get(step_id)
+    if provider_type not in {"ollama", "deepseek"}:
+        raise ProviderConfigurationError("请先在设置中配置 Story Designer 的服务路由。")
+    if provider_type == "ollama" and (not config.ollama_host.strip() or not config.ollama_model.strip()):
+        raise ProviderConfigurationError("请先在设置中填写 Ollama 主机和模型，然后重试。")
+    if provider_type == "deepseek" and (
+        not config.deepseek_base_url.strip()
+        or not config.deepseek_model.strip()
+        or not config.deepseek_api_key.strip()
+    ):
+        raise ProviderConfigurationError("请先在设置中完成 DeepSeek 的地址、模型和 API Key，然后重试。")
     return create_provider(provider_type, config)
