@@ -29,6 +29,7 @@ from app.application.project_context import (
     ProjectApplicationContext,
     build_project_application,
 )
+from app.application.scene_workflow import SceneWorkflowObserver
 from app.storage.models import Project as ProjectModel
 from app.storage.repository import Repository
 from app.storage.editor_layout import EditorLayoutStore
@@ -784,6 +785,10 @@ class MainWindow(QMainWindow):
 
     def _on_plan_approved(self, edited_plan: dict) -> None:
         """Resolve the current planner decision as approved."""
+        if self._application is not None:
+            self._application.scene_workflow.approve_plan(edited_plan)
+            self._workspace_view.hide_plan_checkpoint()
+            return
         if self._plan_decision is None or self._plan_decision.done():
             return
         self._plan_decision.set_result((True, edited_plan))
@@ -793,6 +798,10 @@ class MainWindow(QMainWindow):
 
     def _on_plan_rejected(self) -> None:
         """Resolve the current planner decision as rejected."""
+        if self._application is not None:
+            self._application.scene_workflow.reject_plan()
+            self._workspace_view.hide_plan_checkpoint()
+            return
         if self._plan_decision is None or self._plan_decision.done():
             return
         self._plan_decision.set_result((False, None))
@@ -814,122 +823,35 @@ class MainWindow(QMainWindow):
 
     def _on_generate_requested(self, scene_id: str) -> None:
         """Trigger full pipeline generation for the given scene."""
-        self._last_generated_scene_id = scene_id
-        if self._current_project_dir is None:
+        if self._current_project_dir is None or self._application is None:
             return
-
         workspace = self._workspace_view
-        if self._application is not None:
-            from app.application.errors import OperationBlockedError
-
-            try:
-                self._application.scene_workflow.start(
-                    scene_id, self._find_chapter_for_scene(scene_id)
-                )
-            except OperationBlockedError:
-                QMessageBox.warning(self, "正在生成", "此项目已有一个生成任务正在运行。")
-                return
-
-        from app.providers.config import get_provider_for_step, load_provider_config
-
-        config = load_provider_config()
-        planner_provider = get_provider_for_step("planner", config)
-        char_provider = get_provider_for_step("characters", config)
-        writer_provider = get_provider_for_step("writer", config)
-        reviewer_provider = get_provider_for_step("reviewer", config)
-
         workspace.begin_generation()
-        self._generation_in_progress = True
+        observer = SceneWorkflowObserver(
+            trace=workspace.update_trace,
+            prose=workspace.append_prose,
+            plan=workspace.show_plan_checkpoint,
+            status=workspace.set_status,
+            generating=workspace.set_generating,
+            review=workspace.show_review_result,
+            draft=self._on_workflow_draft,
+            memory=workspace.show_fact_approval,
+            error=lambda error: logger.exception("Scene workflow failed", exc_info=error),
+        )
+        try:
+            self._application.scene_workflow.start(
+                scene_id, self._find_chapter_for_scene(scene_id) or "", observer
+            )
+        except Exception as error:
+            workspace.set_generating(False)
+            QMessageBox.warning(self, "正在生成", str(error))
 
-        from app.pipeline.pipeline import ScenePipeline
-
-        pipeline = ScenePipeline()
-
-        async def on_plan_ready(plan) -> bool:
-            self._plan_decision = asyncio.get_event_loop().create_future()
-            workspace.show_plan_checkpoint(plan.model_dump(mode="json"))
-            try:
-                approved, edited_plan = await self._plan_decision
-                if approved and edited_plan is not None:
-                    validated = type(plan).model_validate(edited_plan)
-                    for field, value in validated.model_dump().items():
-                        setattr(plan, field, value)
-                return approved
-            finally:
-                self._plan_decision = None
-
-        async def _run():
-            providers = [planner_provider, char_provider, writer_provider, reviewer_provider]
-            try:
-                async for token, result in pipeline.generate_stream(
-                    self._current_project_dir,
-                    scene_id,
-                    planner_provider,
-                    char_provider,
-                    writer_provider,
-                    reviewer_provider,
-                    on_trace=workspace.update_trace,
-                    on_plan_ready=on_plan_ready,
-                ):
-                    if token is not None:
-                        workspace.append_prose(token)
-                        if self._application is not None:
-                            self._application.scene_workflow.append_prose(token)
-                    if result is not None:
-                        workspace.set_generating(False)
-                        self._generation_in_progress = False
-                        if result.prose:
-                            workspace.set_status("已生成")
-                            self._update_status_bar_tokens()
-                            if result.review is not None:
-                                workspace.show_review_result(
-                                    result.review.overall_pass,
-                                    result.review.summary,
-                                )
-                            else:
-                                workspace.show_review_result(
-                                    False, "审查未完成；草稿未进入记忆，可选择仍然继续"
-                                )
-                            record = self._save_generated_scene(result)
-                            if record is None:
-                                return
-                            self._pending_draft = (pipeline, result, record)
-                            if result.review is not None and result.review.overall_pass:
-                                await self._analyze_and_offer_publication(
-                                    pipeline,
-                                    result,
-                                    record,
-                                    workspace,
-                                    workspace.update_trace,
-                                )
-                            else:
-                                workspace.set_status("草稿已保存")
-                        elif result.plan is not None:
-                            pass
-                        else:
-                            workspace.set_status("生成失败")
-                            if self._application is not None:
-                                self._application.scene_workflow.finish()
-                        return
-            except Exception:
-                workspace.clear_trace()
-                workspace.set_generating(False)
-                self._generation_in_progress = False
-                if self._application is not None:
-                    self._application.scene_workflow.finish()
-                workspace.set_status("生成失败")
-            finally:
-                for p in providers:
-                    try:
-                        await p.close()
-                    except Exception:
-                        pass
-                # Force GC while event loop is still running to prevent
-                # httpcore async-generator cleanup warnings on shutdown.
-                gc.collect()
-                await asyncio.sleep(0)
-
-        asyncio.ensure_future(_run())
+    def _on_workflow_draft(self, record) -> None:
+        chapter_id = self._find_chapter_for_scene(record.scene_id)
+        if chapter_id:
+            self._refresh_prose_versions(chapter_id, record.scene_id, f"v{record.revision_number}")
+        self._workspace_view.set_prose_text(record.draft_text)
+        self._update_status_bar_tokens()
 
     def _save_generated_scene(self, result, version: int | None = None):
         """Save generated prose and artifacts as a non-canonical draft."""
