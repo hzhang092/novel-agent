@@ -369,40 +369,43 @@ class StoryBrief(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     revision: int = Field(default=1, ge=1)
-    choices: dict[str, list[str]] = Field(default_factory=dict)
+    setting_tags: list[str] = Field(default_factory=list)
+    protagonist_tags: list[str] = Field(default_factory=list)
+    relationship_tags: list[str] = Field(default_factory=list)
+    plot_engine_tags: list[str] = Field(default_factory=list)
+    tone_tags: list[str] = Field(default_factory=list)
     premise: str = ""
-    target_length: str = ""
-    romance_emphasis: str = ""
-    protagonist_structure: str = ""
-    chapter_length_default: str = ""
+    target_length: Literal["short", "around_30", "around_100", "ongoing", "custom"] = "short"
+    custom_target_chapters: int | None = Field(default=None, gt=0)
+    romance_emphasis: Literal["none", "secondary", "primary"] = "none"
+    protagonist_structure: Literal["single", "dual", "ensemble"] = "single"
+    chapter_length: "ChapterLength" = Field(default_factory=lambda: ChapterLength())
 
     @field_validator(
-        "premise", "target_length", "romance_emphasis", "protagonist_structure",
-        "chapter_length_default", mode="before",
+        "premise", mode="before",
     )
     @classmethod
     def normalize_text(cls, value: str) -> str:
         return _normalized_text(value)
 
-    @field_validator("choices")
+    @field_validator(
+        "setting_tags", "protagonist_tags", "relationship_tags", "plot_engine_tags",
+        "tone_tags",
+    )
     @classmethod
-    def normalize_choices(cls, choices: dict[str, list[str]]) -> dict[str, list[str]]:
-        normalized: dict[str, list[str]] = {}
-        for category, values in choices.items():
-            category = _normalized_text(category)
-            if not category:
-                continue
-            result: list[str] = []
-            for value in values:
-                value = _normalized_text(value)
-                if value and value not in result:
-                    result.append(value)
-            if result:
-                normalized.setdefault(category, [])
-                normalized[category].extend(
-                    value for value in result if value not in normalized[category]
-                )
+    def normalize_tags(cls, values: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for value in values:
+            value = _normalized_text(value)
+            if value and value not in normalized:
+                normalized.append(value)
         return normalized
+
+
+class ChapterLength(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    preset: Literal["short", "standard", "long", "custom"] = "standard"
+    target_chinese_characters: int = Field(default=3000, gt=0)
 
 
 class StoryProposal(BaseModel):

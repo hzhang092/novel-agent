@@ -97,9 +97,12 @@ class StoryDesignerService:
         ):
             raise ConcurrentModificationError("The proposal draft has changed; regenerate it")
         provider = self._provider_factory()
-        response: ProviderResponse = await provider.generate_structured(
-            _proposal_messages(brief, planning.active_draft, instruction), StoryProposal
-        )
+        try:
+            response: ProviderResponse = await provider.generate_structured(
+                _proposal_messages(brief, planning.active_draft, instruction), StoryProposal
+            )
+        finally:
+            await provider.close()
         proposal = (
             response.model
             if isinstance(response.model, StoryProposal)
