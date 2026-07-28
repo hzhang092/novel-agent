@@ -33,6 +33,7 @@ _ROMANCE_CHIPS = {"恋人", "暧昧"}
 
 class QuickStoryView(QWidget):
     settings_requested = Signal()
+    bootstrap_approved = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -348,7 +349,8 @@ class QuickStoryView(QWidget):
         self._bootstrap_fields = []
         editable = draft is not None
         approved = self._application is not None and load_planning(self._application.project_dir).approved_proposal is not None
-        self.bootstrap_button.setVisible(approved and not editable)
+        can_generate = self._application is not None and self._application.story_designer.can_generate_bootstrap()
+        self.bootstrap_button.setVisible(can_generate and not editable)
         self.another_button.setVisible(not editable and self.proposal_label.text() != "尚未生成")
         self.save_bootstrap_button.setEnabled(editable)
         self.adjust_bootstrap_button.setEnabled(editable)
@@ -361,7 +363,17 @@ class QuickStoryView(QWidget):
             return
         bootstrap = draft.bootstrap
         self.bootstrap_label.setText(f"v{draft.revision}：可编辑简要卡片；高级字段只读。")
-        self._add_bootstrap_field("世界概览", bootstrap.overview.geography, ("overview", "geography"))
+        self._add_bootstrap_field("地理", bootstrap.overview.geography, ("overview", "geography"))
+        self._add_bootstrap_field("世界规则", bootstrap.overview.rules, ("overview", "rules"))
+        self._add_bootstrap_field("禁忌", bootstrap.overview.taboos, ("overview", "taboos"))
+        self._add_bootstrap_field("技术水平", bootstrap.overview.technology_level, ("overview", "technology_level"))
+        self._add_bootstrap_field("社会结构", bootstrap.overview.social_structure, ("overview", "social_structure"))
+        for index, element in enumerate(bootstrap.elements):
+            self._add_bootstrap_field(f"设定 {index + 1} 名称", element.name, ("elements", index, "name"))
+            detail = "description" if hasattr(element, "description") else (
+                "definition" if hasattr(element, "definition") else "summary"
+            )
+            self._add_bootstrap_field(f"设定 {index + 1} 简述", getattr(element, detail), ("elements", index, detail))
         for index, character in enumerate(bootstrap.characters):
             self._add_bootstrap_field(f"角色 {index + 1} 名称", character.core.name, ("characters", index, "core", "name"))
             self._add_bootstrap_field(f"角色 {index + 1} 身份", character.core.identity, ("characters", index, "core", "identity"))
@@ -373,25 +385,27 @@ class QuickStoryView(QWidget):
             self._add_bootstrap_field(f"第 {index + 1} 章标题", chapter.title, ("arcs", 0, "chapters", index, "title"))
             self._add_bootstrap_field(f"第 {index + 1} 章概要", chapter.summary, ("arcs", 0, "chapters", index, "summary"))
             self._add_bootstrap_field(f"第 {index + 1} 章钩子", chapter.scenes[0].ending_hook, ("arcs", 0, "chapters", index, "scenes", 0, "ending_hook"))
+        for field in ("pacing", "dialogue_density", "description_style", "tone", "sentence_length", "pov"):
+            self._add_bootstrap_field(f"风格 {field}", getattr(bootstrap.style, field), ("style", field))
         self.bootstrap_advanced.setPlainText(bootstrap.model_dump_json(indent=2))
 
-    def _add_bootstrap_field(self, label: str, value: str, path: tuple) -> None:
+    def _add_bootstrap_field(self, label: str, value: str | list[str], path: tuple) -> None:
         row = QHBoxLayout()
         row.addWidget(QLabel(label))
-        field = QLineEdit(value)
+        field = QLineEdit("、".join(value) if isinstance(value, list) else value)
         row.addWidget(field)
         self.bootstrap_cards.addLayout(row)
-        self._bootstrap_fields.append((field, path))
+        self._bootstrap_fields.append((field, path, isinstance(value, list)))
 
     def _edited_bootstrap(self) -> StoryBootstrap | None:
         if self._bootstrap_draft is None:
             return None
         data = self._bootstrap_draft.bootstrap.model_dump(mode="json")
-        for field, path in self._bootstrap_fields:
+        for field, path, is_list in self._bootstrap_fields:
             target = data
             for part in path[:-1]:
                 target = target[part]
-            target[path[-1]] = field.text()
+            target[path[-1]] = [item.strip() for item in field.text().replace("，", "、").split("、") if item.strip()] if is_list else field.text()
         return StoryBootstrap.model_validate(data)
 
     def _save_bootstrap(self) -> None:
@@ -451,6 +465,7 @@ class QuickStoryView(QWidget):
             self._provider_error(f"采用失败：{error}")
             return
         self._show_bootstrap(None)
+        self.bootstrap_approved.emit()
 
     def _show_proposal(self, value) -> None:
         if value is None:

@@ -44,7 +44,7 @@ from app.storage.project_files import (
 
 
 class StoryDesignerService:
-    """Invents reviewable proposals; it never writes canonical story data."""
+    """Generates reviewable planning drafts and approves the initial canonical bundle."""
 
     def __init__(
         self,
@@ -82,7 +82,7 @@ class StoryDesignerService:
         planning = load_planning(self.project_dir)
         draft = planning.active_draft
         if (
-            draft is None
+            not isinstance(draft, ActiveProposalDraft)
             or draft.revision != base_revision
             or planning.story_brief is None
             or draft.based_on_brief_revision != planning.story_brief.revision
@@ -107,16 +107,23 @@ class StoryDesignerService:
                 save_project(self.project_dir, project)
         return approved
 
+    def can_generate_bootstrap(self) -> bool:
+        """Whether this project can safely start its one bootstrap draft."""
+        planning = load_planning(self.project_dir)
+        return (
+            planning.approved_proposal is not None
+            and planning.active_draft is None
+            and self._is_empty_project()
+        )
+
     async def generate_bootstrap(self) -> ActiveBootstrapDraft:
         """Generate one initial canonical bundle, but retain it as a draft."""
         if not self.run_guard.acquire("story_designer"):
             raise OperationBlockedError("Another project generation is already active")
         try:
             planning = load_planning(self.project_dir)
-            if planning.approved_proposal is None:
-                raise OperationBlockedError("An approved Story Proposal is required before bootstrap")
-            if not self._is_empty_project():
-                raise OperationBlockedError("Bootstrap is only available for an empty project")
+            if not self.can_generate_bootstrap():
+                raise OperationBlockedError("Bootstrap requires an approved proposal and an empty project without an active draft")
             proposal = planning.approved_proposal
             provider = self._provider_factory()
             try:
@@ -137,8 +144,8 @@ class StoryDesignerService:
             current = load_planning(self.project_dir)
             if current.approved_proposal is None or current.approved_proposal.revision != proposal.revision:
                 raise ConcurrentModificationError("The approved proposal has changed; regenerate bootstrap")
-            if not self._is_empty_project():
-                raise OperationBlockedError("Bootstrap is only available for an empty project")
+            if current.active_draft is not None or not self._is_empty_project():
+                raise OperationBlockedError("Bootstrap requires an empty project without an active draft")
             draft = ActiveBootstrapDraft(
                 revision=(current.active_draft.revision + 1 if current.active_draft else proposal.revision + 1),
                 based_on_proposal_revision=proposal.revision,
@@ -194,7 +201,7 @@ class StoryDesignerService:
         draft = self._bootstrap_draft(planning, preview.base_revision)
         document = draft.bootstrap.model_dump(mode="json")
         for operation in preview.operations:
-            _replace_bootstrap_value(document, operation.path, operation.value)
+            _replace_bootstrap_value(document, operation.path, operation.value, operation.op)
         return self.save_bootstrap(StoryBootstrap.model_validate(document), base_revision=draft.revision)
 
     def approve_bootstrap(self, *, base_revision: int) -> None:
@@ -251,6 +258,7 @@ class StoryDesignerService:
             and not list_character_ids(self.project_dir)
             and not load_all_volumes(self.project_dir)
             and not load_canon_facts(self.project_dir)
+            and not any(path.is_file() for path in (self.project_dir / "scenes").rglob("*"))
             and project.world_setting == WorldSetting()
             and project.style_guide == StyleGuide()
         )
@@ -383,9 +391,10 @@ def _bootstrap_patch_messages(
         {
             "role": "system",
             "content": (
-                "Return a BootstrapPatchPreview only. Use replace operations only, with JSON Pointer "
-                "paths under /overview, /elements, /characters, /style, or /arcs. Address only the "
-                "requested fields; do not replace whole objects or arrays. Include short human-readable "
+                "Return a BootstrapPatchPreview only. Use RFC6902 replace for existing scalar leaves, "
+                "or add/remove scalar list items at explicit indices or '-'. Use paths under /overview, "
+                "/elements, /characters, /style, or /arcs. Do not change IDs, revisions, whole objects, "
+                "or whole arrays. Address only the requested fields. Include short human-readable "
                 "changes and consequences."
             ),
         },
@@ -400,10 +409,14 @@ def _bootstrap_patch_messages(
 
 
 _PATCH_ROOTS = {"overview", "elements", "characters", "style", "arcs"}
+_IMMUTABLE_PATH_PARTS = {
+    "id", "revision", "created_at", "updated_at", "definition_revision",
+    "definition_updated_at", "character_id", "chapter_id", "volume_id", "story_id", "project_id",
+}
 
 
-def _replace_bootstrap_value(document: dict, path: str, value: object) -> None:
-    """Apply only a safe, existing JSON-pointer leaf replacement."""
+def _replace_bootstrap_value(document: dict, path: str, value: object | None, op: str = "replace") -> None:
+    """Apply the small, scalar-only RFC6902 subset accepted for bootstrap drafts."""
     if not path.startswith("/"):
         raise ValueError("Bootstrap patch path must be a JSON Pointer")
     parts = [part.replace("~1", "/").replace("~0", "~") for part in path[1:].split("/")]
@@ -413,6 +426,8 @@ def _replace_bootstrap_value(document: dict, path: str, value: object) -> None:
         or (parts[0] in {"elements", "characters", "arcs"} and len(parts) < 3)
     ):
         raise ValueError("Bootstrap patch may only replace an existing nested field")
+    if any(part in _IMMUTABLE_PATH_PARTS for part in parts):
+        raise ValueError("Bootstrap patch may not change identity or revision fields")
     target: object = document
     for part in parts[:-1]:
         if isinstance(target, dict):
@@ -424,6 +439,20 @@ def _replace_bootstrap_value(document: dict, path: str, value: object) -> None:
         else:
             raise ValueError("Bootstrap patch path does not exist")
     final = parts[-1]
+    if op == "add":
+        if not isinstance(target, list) or (final != "-" and (not final.isdigit() or int(final) > len(target))):
+            raise ValueError("Bootstrap patch add must target a list index")
+        if isinstance(value, (dict, list)):
+            raise ValueError("Bootstrap patch may only add scalar list items")
+        target.insert(len(target) if final == "-" else int(final), value)
+        return
+    if op == "remove":
+        if not isinstance(target, list) or not final.isdigit() or int(final) >= len(target):
+            raise ValueError("Bootstrap patch remove must target an existing list item")
+        if isinstance(target[int(final)], (dict, list)):
+            raise ValueError("Bootstrap patch may only remove scalar list items")
+        target.pop(int(final))
+        return
     if isinstance(target, dict):
         if final not in target:
             raise ValueError("Bootstrap patch path does not exist")

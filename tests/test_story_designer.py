@@ -264,6 +264,24 @@ def test_bootstrap_schema_is_scoped_to_first_arc_and_rejects_extra_fields():
     data["arcs"][1]["id"] = data["arcs"][0]["id"]
     with pytest.raises(ValueError, match="arc IDs"):
         StoryBootstrap.model_validate(data)
+    for path, message in (("elements.0.id", "Bible Element"), ("arcs.0.chapters.0.id", "chapter"), ("arcs.0.chapters.0.scenes.0.id", "scene")):
+        data = bootstrap().model_dump(mode="json")
+        if path.startswith("elements"):
+            data["elements"].append(data["elements"][0].copy())
+        elif path.endswith("scenes.0.id"):
+            data["arcs"][0]["chapters"][0]["scenes"].append(data["arcs"][0]["chapters"][0]["scenes"][0].copy())
+        else:
+            data["arcs"][0]["chapters"].append(data["arcs"][0]["chapters"][0].copy())
+        with pytest.raises(ValueError, match=message):
+            StoryBootstrap.model_validate(data)
+    data = bootstrap().model_dump(mode="json")
+    data["arcs"][0]["chapters"][0]["volume_id"] = "other-arc"
+    with pytest.raises(ValueError, match="association IDs"):
+        StoryBootstrap.model_validate(data)
+    data = bootstrap().model_dump(mode="json")
+    data["arcs"][0]["chapters"][0]["scenes"][0]["chapter_id"] = "other-chapter"
+    with pytest.raises(ValueError, match="association IDs"):
+        StoryBootstrap.model_validate(data)
 
 
 def test_bootstrap_arc_and_chapter_counts_are_guidance_not_schema_limits():
@@ -271,7 +289,14 @@ def test_bootstrap_arc_and_chapter_counts_are_guidance_not_schema_limits():
     data["arcs"] = [data["arcs"][0]] + [
         {**data["arcs"][1], "id": f"arc-{index}"} for index in range(2, 8)
     ]
-    data["arcs"][0]["chapters"] *= 16
+    data["arcs"][0]["chapters"] = [
+        {
+            **data["arcs"][0]["chapters"][0],
+            "id": f"chapter-{index}",
+            "scenes": [{**data["arcs"][0]["chapters"][0]["scenes"][0], "id": f"scene-{index}"}],
+        }
+        for index in range(16)
+    ]
     assert len(StoryBootstrap.model_validate(data).arcs) == 7
 
 
@@ -301,6 +326,37 @@ async def test_bootstrap_patch_preview_does_not_mutate_and_preserves_manual_valu
 
 
 @pytest.mark.asyncio
+async def test_bootstrap_patch_adds_and_removes_scalar_list_items_without_losing_manual_fields(tmp_path):
+    provider = MockProvider(structured_response=proposal())
+    _project_dir, service = await approved_service(tmp_path, provider)
+    provider.structured_response = bootstrap()
+    draft = await service.generate_bootstrap()
+    manual = draft.bootstrap.model_copy(deep=True)
+    manual.style.pov = "第一人称"
+    draft = service.save_bootstrap(manual, base_revision=draft.revision)
+    added = service.apply_bootstrap_patch(BootstrapPatchPreview(
+        base_revision=draft.revision,
+        operations=[{"op": "add", "path": "/style/taboo_patterns/-", "value": "禁忌"}],
+        changes=["加入禁忌"], consequences=["写作时避开它"],
+    ))
+    removed = service.apply_bootstrap_patch(BootstrapPatchPreview(
+        base_revision=added.revision,
+        operations=[{"op": "remove", "path": "/style/taboo_patterns/0"}],
+        changes=["移除禁忌"], consequences=["不再限制"],
+    ))
+
+    assert added.bootstrap.style.taboo_patterns == ["禁忌"]
+    assert removed.bootstrap.style.taboo_patterns == []
+    assert removed.bootstrap.style.pov == "第一人称"
+    with pytest.raises(ValueError, match="identity"):
+        service.apply_bootstrap_patch(BootstrapPatchPreview(
+            base_revision=removed.revision,
+            operations=[{"path": "/arcs/0/id", "value": "new"}],
+            changes=["改 ID"], consequences=["错误"],
+        ))
+
+
+@pytest.mark.asyncio
 async def test_bootstrap_blocks_proposal_replacement_and_whole_object_patches(tmp_path):
     provider = MockProvider(structured_response=proposal())
     _project_dir, service = await approved_service(tmp_path, provider)
@@ -313,6 +369,7 @@ async def test_bootstrap_blocks_proposal_replacement_and_whole_object_patches(tm
         service.apply_bootstrap_patch(BootstrapPatchPreview(
             base_revision=draft.revision,
             operations=[{"path": "/arcs/0", "value": {}}],
+            changes=["坏变更"], consequences=["坏影响"],
         ))
 
 
@@ -342,6 +399,34 @@ async def test_bootstrap_rejects_a_project_with_existing_canon_facts(tmp_path):
 
     with pytest.raises(OperationBlockedError, match="empty project"):
         await service.generate_bootstrap()
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_query_and_generation_reject_any_active_draft_or_scene_file(tmp_path):
+    provider = MockProvider(structured_response=proposal())
+    project_dir, service = await approved_service(tmp_path, provider)
+    assert service.can_generate_bootstrap()
+    await service.generate_proposal()
+    assert not service.can_generate_bootstrap()
+    with pytest.raises(OperationBlockedError, match="active draft"):
+        await service.generate_bootstrap()
+
+    project_dir, service = await approved_service(tmp_path / "scenes", MockProvider(structured_response=proposal()))
+    (project_dir / "scenes" / "leftover.txt").write_text("draft", encoding="utf-8")
+    assert not service.can_generate_bootstrap()
+    with pytest.raises(OperationBlockedError, match="empty project"):
+        await service.generate_bootstrap()
+
+
+@pytest.mark.asyncio
+async def test_approve_proposal_rejects_bootstrap_draft_without_attribute_error(tmp_path):
+    provider = MockProvider(structured_response=proposal())
+    _project_dir, service = await approved_service(tmp_path, provider)
+    provider.structured_response = bootstrap()
+    draft = await service.generate_bootstrap()
+
+    with pytest.raises(ConcurrentModificationError):
+        service.approve_proposal(base_revision=draft.revision)
 
 
 @pytest.mark.asyncio

@@ -459,6 +459,23 @@ class StoryBootstrap(BaseModel):
         arc_ids = [arc.id for arc in self.arcs]
         if len(arc_ids) != len(set(arc_ids)):
             raise ValueError("Bootstrap arc IDs must be unique")
+        chapter_ids = [chapter.id for arc in self.arcs for chapter in arc.chapters]
+        scene_ids = [scene.id for arc in self.arcs for chapter in arc.chapters for scene in chapter.scenes]
+        element_ids = [element.id for element in self.elements]
+        if len(chapter_ids) != len(set(chapter_ids)):
+            raise ValueError("Bootstrap chapter IDs must be unique")
+        if len(scene_ids) != len(set(scene_ids)):
+            raise ValueError("Bootstrap scene IDs must be unique")
+        if len(element_ids) != len(set(element_ids)):
+            raise ValueError("Bootstrap Bible Element IDs must be unique")
+        if any(
+            chapter.volume_id and chapter.volume_id != arc.id
+            for arc in self.arcs for chapter in arc.chapters
+        ) or any(
+            scene.chapter_id and scene.chapter_id != chapter.id
+            for arc in self.arcs for chapter in arc.chapters for scene in chapter.scenes
+        ):
+            raise ValueError("Bootstrap outline association IDs must match their parent")
         character_ids = {character.core.id for character in self.characters}
         if len(character_ids) != len(self.characters) or any(
             character.state.character_id != character.core.id for character in self.characters
@@ -479,17 +496,17 @@ class BootstrapPatchOperation(BaseModel):
     """A deliberately small RFC6902 subset for reviewable draft edits."""
 
     model_config = ConfigDict(extra="forbid")
-    op: Literal["replace"] = "replace"
+    op: Literal["replace", "add", "remove"] = "replace"
     path: str
-    value: object
+    value: object | None = None
 
 
 class BootstrapPatchPreview(BaseModel):
     model_config = ConfigDict(extra="forbid")
     base_revision: int = Field(ge=1)
     operations: list[BootstrapPatchOperation] = Field(min_length=1)
-    changes: list[str] = Field(default_factory=list)
-    consequences: list[str] = Field(default_factory=list)
+    changes: list[str] = Field(min_length=1)
+    consequences: list[str] = Field(min_length=1)
 
 
 ActivePlanningDraft = Annotated[

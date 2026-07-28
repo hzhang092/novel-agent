@@ -189,6 +189,13 @@ class MainWindow(QMainWindow):
         self._workspace_view.plan_approved.connect(self._on_plan_approved)
         self._workspace_view.plan_rejected.connect(self._on_plan_rejected)
         self._quick_story_view.settings_requested.connect(self._on_llm_settings)
+        self._quick_story_view.bootstrap_approved.connect(self._reload_after_bootstrap)
+
+    def _reload_after_bootstrap(self) -> None:
+        """Refresh existing canonical editors after Quick approves a bootstrap."""
+        self._bible_view.reload()
+        if self._current_project_dir is not None:
+            self._outline_view.load_project_dir(self._current_project_dir)
 
     def _bind_project_application(self, project_dir: Path) -> None:
         self._current_project_dir = project_dir

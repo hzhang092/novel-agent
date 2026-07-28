@@ -7,7 +7,7 @@ from app.application.errors import StoryDesignerProviderError
 from app.application.project_context import build_project_application
 from app.application.story_designer import StoryDesignerService
 from app.providers.base import MockProvider
-from app.storage.bible_models import WorldOverview
+from app.storage.bible_models import TerminologyElement, WorldOverview
 from app.storage.models import (
     Character,
     CharacterCore,
@@ -44,7 +44,9 @@ def _bootstrap() -> StoryBootstrap:
         for index in range(2)
     ]
     return StoryBootstrap(
-        overview=WorldOverview(geography="城市"), characters=characters, style=StyleGuide(),
+        overview=WorldOverview(geography="城市", rules=["旧规则"]),
+        elements=[TerminologyElement(id="quick-term", name="旧术语", definition="旧定义")],
+        characters=characters, style=StyleGuide(tone="旧语气", reference_passages=["高级字段"]),
         arcs=[VolumeOutline(id="quick-arc", title="第一弧", chapters=[ChapterOutline(id="quick-chapter", scenes=[SceneOutline(id="quick-scene")])])],
     )
 
@@ -298,3 +300,32 @@ async def test_bootstrap_cards_are_editable_while_advanced_output_is_read_only(t
     assert view._bootstrap_fields and view._bootstrap_fields[0][0].isEnabled()
     assert view.approve_bootstrap_button.isEnabled()
     assert view.another_button.isHidden()
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_basic_bible_and_style_cards_save_without_touching_advanced_fields(tmp_path, qtbot):
+    project_dir = create_project(tmp_path, Project(title="编辑启动包"))
+    application = build_project_application(project_dir)
+    application.story_designer._provider_factory = lambda: MockProvider(structured_response=_proposal())
+    view = QuickStoryView()
+    qtbot.addWidget(view)
+    view.bind_application(application)
+    view._save_brief()
+    await view._generate_proposal()
+    await view._adopt_proposal()
+    application.story_designer._provider_factory = lambda: MockProvider(structured_response=_bootstrap())
+    await view._generate_bootstrap()
+
+    fields = {path: field for field, path, _is_list in view._bootstrap_fields}
+    fields[("overview", "rules")].setText("新规则、第二条")
+    fields[("elements", 0, "name")].setText("新术语")
+    fields[("elements", 0, "definition")].setText("新定义")
+    fields[("style", "tone")].setText("新语气")
+    view._save_bootstrap()
+    saved = load_planning(project_dir).active_draft.bootstrap
+
+    assert saved.overview.rules == ["新规则", "第二条"]
+    assert saved.elements[0].name == "新术语"
+    assert saved.elements[0].definition == "新定义"
+    assert saved.style.tone == "新语气"
+    assert saved.style.reference_passages == ["高级字段"]

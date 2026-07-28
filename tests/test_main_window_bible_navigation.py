@@ -420,6 +420,21 @@ def test_discarding_dirty_bible_uses_reload_facade(qtbot, monkeypatch):
     assert reloaded == [True]
 
 
+def test_bootstrap_approval_refreshes_existing_bible_and_outline_views(tmp_path, qtbot, monkeypatch):
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._current_project_dir = tmp_path
+    reloaded = []
+    outlines = []
+    monkeypatch.setattr(window._bible_view, "reload", lambda: reloaded.append(True))
+    monkeypatch.setattr(window._outline_view, "load_project_dir", outlines.append)
+
+    window._quick_story_view.bootstrap_approved.emit()
+
+    assert reloaded == [True]
+    assert outlines == [tmp_path]
+
+
 def test_repeated_navigation_does_not_duplicate_generation_signal(qtbot, monkeypatch):
     requested = []
     monkeypatch.setattr(
