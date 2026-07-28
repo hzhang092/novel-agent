@@ -175,6 +175,13 @@ class SceneWorkflow:
         await self._analyze_draft()
         return record
 
+    def recover_partial(self, scene_id: str, chapter_id: str, prose: str) -> Any:
+        from app.pipeline.pipeline import GenerationResult
+        self.state.scene_id, self.state.chapter_id = scene_id, chapter_id
+        record = self._save_draft(GenerationResult(scene_id=scene_id, prose=prose))
+        self.save_draft(record)
+        return record
+
     def publish(
         self, scene_id: str, revision_id: str, facts: list[dict], changes: list[dict]
     ) -> None:

@@ -644,12 +644,9 @@ class MainWindow(QMainWindow):
                     partial_version = int(candidate_version[1:])
                     break
             if recovered_record is None:
-                from app.pipeline.pipeline import GenerationResult
-
-                recovered_record = self._save_generated_scene(
-                    GenerationResult(scene_id=scene_id, prose=recovered_prose),
-                    version=partial_version,
-                )
+                recovered_record = self._application.scene_workflow.recover_partial(
+                    scene_id, chapter_id, recovered_prose
+                ) if self._application is not None else None
             else:
                 discard_scene_writer_draft(self._current_project_dir, scene_id)
                 self._refresh_prose_versions(
@@ -842,7 +839,7 @@ class MainWindow(QMainWindow):
         self._workspace_view.set_prose_text(record.draft_text)
         self._update_status_bar_tokens()
 
-    def _save_generated_scene(self, result, version: int | None = None):
+    def _legacy_scene_lifecycle_removed(self, result, version: int | None = None):
         """Save generated prose and artifacts as a non-canonical draft."""
         if self._current_project_dir is None:
             return None
