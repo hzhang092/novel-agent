@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -89,6 +90,9 @@ class SceneWorkflow:
         self._approved_plan: ScenePlan | None = None
         self._instruction = ""
         self._target_characters: int | None = None
+        self._providers: list[Any] = []
+        self._source_revisions: dict[str, dict] = {}
+        self._source_context_fingerprint = ""
         self._provider_loader = provider_loader or _load_generation_providers
         self._pipeline_factory = pipeline_factory or _new_pipeline
 
@@ -135,11 +139,14 @@ class SceneWorkflow:
         self._approved_plan = self.state.approved_plan
         self._instruction = instruction
         self._target_characters = target_characters
+        self._source_revisions = {}
+        self._source_context_fingerprint = ""
         self._observer = observer
         self._pipeline = self._pipeline_factory()
         self._observer.generating(True)
         self._observer.status("正在组装上下文...")
         self._task = asyncio.ensure_future(self._run())
+        self._task.add_done_callback(self._finish_cancelled_task)
 
     def approve_plan(self, plan: dict[str, Any]) -> None:
         if self._plan_future is not None and not self._plan_future.done():
@@ -166,17 +173,68 @@ class SceneWorkflow:
     def select_revision(self, revision_id: str) -> None:
         self.state.selected_revision = revision_id
 
+    def restore_draft(self, record: Any, chapter_id: str) -> None:
+        """Restore a saved draft's review/publication state without starting a run."""
+        if self.state.active:
+            return
+        from app.pipeline.pipeline import GenerationResult
+        from app.storage.models import CharacterIntent, ReviewResult
+
+        plan = ScenePlan.model_validate(record.scene_plan) if record.scene_plan else None
+        trace = [_trace_entry_from_dict(item) for item in record.generation_trace]
+        self.state = SceneWorkflowState(
+            scene_id=record.scene_id,
+            chapter_id=chapter_id,
+            artifacts=trace,
+            draft_record=record,
+            selected_revision=record.revision_id,
+            memory_facts=list(record.extracted_facts_raw),
+            memory_changes=list(record.state_changes_raw),
+            approved_plan=plan,
+        )
+        self._approved_plan = plan
+        self._pipeline = self._pipeline_factory()
+        self._result = GenerationResult(
+            scene_id=record.scene_id,
+            plan=plan,
+            character_intents={
+                name: CharacterIntent.model_validate(value)
+                for name, value in record.character_intents.items()
+            },
+            prose=record.draft_text,
+            review=ReviewResult.model_validate(record.review) if record.review else None,
+            trace=trace,
+            generated_with=record.generated_with,
+            source_context_fingerprint=record.source_context_fingerprint,
+        )
+
     def set_memory_selections(self, facts: list[dict], changes: list[dict]) -> None:
         self.state.memory_facts = facts
         self.state.memory_changes = changes
 
     def cancel(self) -> None:
+        for provider in self._providers:
+            cancel = getattr(provider, "cancel", None)
+            if cancel is None:
+                continue
+            try:
+                result = cancel()
+                if inspect.isawaitable(result):
+                    asyncio.ensure_future(result)
+            except Exception:
+                pass
         if self._task is not None and not self._task.done():
             self._task.cancel()
-        self._finish("已取消")
+        elif self._task is None:
+            self._finish("已取消")
 
     def retry(self) -> None:
-        if self.state.active or not self.state.scene_id or not self.state.chapter_id:
+        if (
+            self.state.active
+            or (self._task is not None and not self._task.done())
+            or not self.state.scene_id
+            or not self.state.chapter_id
+        ):
             raise OperationBlockedError("No finished scene run is available to retry")
         self.start(self.state.scene_id, self.state.chapter_id, self._observer)
 
@@ -192,6 +250,13 @@ class SceneWorkflow:
     ) -> None:
         if not source_record.scene_plan:
             raise OperationBlockedError("没有已批准的章节计划，无法安全再生成")
+        if self.state.active:
+            if self._task is not None and not self._task.done():
+                raise OperationBlockedError("Another scene generation is already active")
+            if self.state.scene_id != scene_id:
+                raise OperationBlockedError("Another scene generation is already active")
+            self.state.active = False
+            self.run_guard.release("scene_workflow")
         plan = ScenePlan.model_validate(source_record.scene_plan)
         if plan_patch is not None:
             patch = ScenePlanPatch.model_validate(plan_patch)
@@ -211,6 +276,10 @@ class SceneWorkflow:
     async def continue_review(self) -> None:
         if self._pipeline is None or self._result is None or self.state.draft_record is None:
             return
+        if not self.state.active:
+            if not self.run_guard.acquire("scene_workflow"):
+                raise OperationBlockedError("Another project generation is already active")
+            self.state.active = True
         self.state.draft_record.review_overridden = True
         from app.storage.project_files import save_scene_generation_record
 
@@ -325,6 +394,17 @@ class SceneWorkflow:
         revision_id = revision_id or self.state.selected_revision
         if not revision_id:
             raise OperationBlockedError("请先选择要发布的草稿修订")
+        from app.storage.project_files import load_scene_generation_record
+
+        record = load_scene_generation_record(
+            self.project_dir, scene_id, revision_id=revision_id
+        )
+        if (
+            record is not None
+            and record.stale_input
+            and not record.stale_input_reviewed
+        ):
+            raise OperationBlockedError("该草稿基于旧设定，请先复核后继续或重新生成")
         publish_scene_revision(
             self.project_dir,
             scene_id,
@@ -335,11 +415,40 @@ class SceneWorkflow:
         )
         self._finish("已发布")
 
+    async def continue_stale(self, revision_id: str | None = None) -> Any:
+        from app.storage.project_files import load_scene_generation_record, save_scene_generation_record
+
+        revision_id = revision_id or self.state.selected_revision
+        if not revision_id or not self.state.scene_id:
+            raise OperationBlockedError("请先选择过期草稿")
+        record = load_scene_generation_record(
+            self.project_dir, self.state.scene_id, revision_id=revision_id
+        )
+        if record is None or not record.stale_input or record.stale_input_reviewed:
+            raise OperationBlockedError("该草稿不是过期草稿")
+        try:
+            if (record.review or {}).get("overall_pass", False) and not self.state.active:
+                if not self.run_guard.acquire("scene_workflow"):
+                    raise OperationBlockedError("Another project generation is already active")
+                self.state.active = True
+            record.stale_input_reviewed = True
+            save_scene_generation_record(self.project_dir, record)
+            self.state.selected_revision = record.revision_id
+            self.state.draft_record = record
+            if (record.review or {}).get("overall_pass", False):
+                await self._analyze_draft()
+            return record
+        except BaseException:
+            if self.state.active:
+                self._finish("复核失败")
+            raise
+
     async def _run(self) -> None:
         providers: list[Any] = []
         try:
             planner, characters, writer, reviewer = self._provider_loader()
             providers = [planner, characters, writer, reviewer]
+            self._providers = providers
             if self._target_characters:
                 from app.pipeline.agents.writer import provider_target_warning
 
@@ -360,10 +469,25 @@ class SceneWorkflow:
                 target_characters=self._target_characters,
             ):
                 if token is not None:
+                    self._result = getattr(
+                        self._pipeline, "partial_result", self._result
+                    )
+                    self._source_revisions = getattr(
+                        self._pipeline, "source_revisions", self._source_revisions
+                    ) or self._source_revisions
+                    self._source_context_fingerprint = getattr(
+                        self._pipeline,
+                        "source_context_fingerprint",
+                        self._source_context_fingerprint,
+                    ) or self._source_context_fingerprint
                     self.state.partial_prose += token
                     self._observer.prose(token)
                 if result is not None:
                     self._result = result
+                    self._source_revisions = getattr(result, "generated_with", {}) or {}
+                    self._source_context_fingerprint = getattr(
+                        result, "source_context_fingerprint", ""
+                    )
                     self.state.artifacts.append(result)
                     if not result.prose:
                         self._finish("生成失败")
@@ -372,20 +496,60 @@ class SceneWorkflow:
                     self.state.draft_record = record
                     self.state.selected_revision = record.revision_id
                     self._observer.draft(record)
-                    if result.review is not None:
+                    if result.review is not None and not record.stale_input:
                         self._observer.review(result.review.overall_pass, result.review.summary)
-                    if result.review is not None and result.review.overall_pass:
+                    if record.stale_input:
+                        self._observer.status("基于旧设定，请复核后继续或重新生成")
+                    elif result.review is not None and result.review.overall_pass:
                         await self._analyze_draft()
                     else:
                         self._observer.status("草稿已保存")
                     return
         except asyncio.CancelledError:
-            self._finish("已取消")
+            result = self._result or getattr(self._pipeline, "partial_result", None)
+            completed_artifacts = bool(
+                result
+                and (
+                    result.plan
+                    or result.character_intents
+                    or any(item.status == "completed" for item in result.trace)
+                )
+            )
+            if (
+                self.state.draft_record is None
+                and (self.state.partial_prose or completed_artifacts)
+            ):
+                from app.pipeline.pipeline import GenerationResult
+
+                result = result or GenerationResult(
+                    scene_id=self.state.scene_id or "",
+                    plan=self._approved_plan,
+                )
+                if not result.trace:
+                    result.trace = [
+                        item
+                        for item in self.state.artifacts
+                        if hasattr(item, "agent_name")
+                    ]
+                result.prose = self.state.partial_prose
+                result.generated_with = (
+                    getattr(self._pipeline, "source_revisions", {})
+                    or self._source_revisions
+                )
+                result.source_context_fingerprint = (
+                    getattr(self._pipeline, "source_context_fingerprint", "")
+                    or self._source_context_fingerprint
+                )
+                record = self._save_draft(result, cancelled=True)
+                self.state.draft_record = record
+                self.state.selected_revision = record.revision_id
+                self._observer.draft(record)
             raise
         except Exception as error:
             self._observer.error(error)
             self._finish("生成失败")
         finally:
+            self._providers = []
             for provider in providers:
                 try:
                     await provider.close()
@@ -452,7 +616,9 @@ class SceneWorkflow:
                 except Exception:
                     pass
 
-    def _save_draft(self, result: Any, version: int | None = None) -> Any:
+    def _save_draft(
+        self, result: Any, version: int | None = None, *, cancelled: bool = False
+    ) -> Any:
         from app.pipeline.agents.writer import count_chinese_characters
         from app.storage.models import SceneGenerationRecord, parse_generation_read_points
         from app.storage.project_files import discard_scene_writer_draft, save_scene_generation_record
@@ -463,19 +629,32 @@ class SceneWorkflow:
             raise OperationBlockedError("The scene has no chapter")
         version = version or _next_version(self.project_dir, chapter_id, result.scene_id)
         _save_versioned_prose(self.project_dir, chapter_id, result.scene_id, result.prose, version)
+        source_revisions = getattr(result, "generated_with", {}) or {}
+        stale_input = _run_inputs_are_stale(
+            self.project_dir,
+            result.scene_id,
+            source_revisions,
+            getattr(result, "source_context_fingerprint", ""),
+            self._pipeline,
+        )
         points = parse_generation_read_points(getattr(result, "generated_with", {})).characters
         checkpoint = next((point.get("checkpoint_id", "") for point in points.values() if point.get("checkpoint_id")), "")
         position = find_scene_position(self.project_dir, result.scene_id)
         record = SceneGenerationRecord(
             scene_id=result.scene_id,
+            source_chapter_id=chapter_id,
             revision_number=version,
             scene_order=position.scene_order if position else 0,
             generated_from_checkpoint_id=checkpoint,
             generated_with=getattr(result, "generated_with", {}),
+            source_context_fingerprint=getattr(
+                result, "source_context_fingerprint", ""
+            ),
             status="draft",
             generation_mode="standard",
             scene_plan=result.plan.model_dump(mode="json") if result.plan else {},
             character_intents={key: value.model_dump(mode="json") for key, value in result.character_intents.items()},
+            generation_trace=[asdict(item) for item in getattr(result, "trace", [])],
             draft_text=result.prose,
             review=result.review.model_dump(mode="json") if result.review else None,
             final_text="",
@@ -484,6 +663,9 @@ class SceneWorkflow:
             target_chinese_characters=getattr(result, "target_chinese_characters", 3000),
             prose_chinese_characters=count_chinese_characters(result.prose),
             length_warning=getattr(result, "length_warning", ""),
+            stale_input=stale_input,
+            stale_reason="基于旧设定" if stale_input else "",
+            cancelled=cancelled,
         )
         save_scene_generation_record(self.project_dir, record)
         discard_scene_writer_draft(self.project_dir, result.scene_id)
@@ -494,6 +676,15 @@ class SceneWorkflow:
         self._observer.generating(False)
         self._observer.status(status)
         self.run_guard.release("scene_workflow")
+
+    def _finish_cancelled_task(self, task: asyncio.Task) -> None:
+        if task.cancelled():
+            self._finish("已取消")
+            return
+        error = task.exception()
+        if error is not None:
+            self._observer.error(error)
+            self._finish("生成失败")
 
 
 def _load_generation_providers() -> tuple[Any, Any, Any, Any]:
@@ -583,6 +774,47 @@ def _remember_active_chapter(project_dir: Path, chapter_id: str) -> None:
         return
     project.last_active_chapter_id = chapter_id
     save_project(project_dir, project)
+
+
+def _trace_entry_from_dict(data: dict) -> Any:
+    from app.pipeline.pipeline import AgentTraceEntry
+
+    values = dict(data)
+    values["children"] = [
+        _trace_entry_from_dict(item) for item in values.get("children", [])
+    ]
+    return AgentTraceEntry(**values)
+
+
+def _run_inputs_are_stale(
+    project_dir: Path,
+    scene_id: str,
+    source_revisions: dict[str, dict],
+    source_context_fingerprint: str,
+    pipeline: Any,
+) -> bool:
+    if not source_revisions and not source_context_fingerprint:
+        return False
+    assemble_context = getattr(pipeline, "assemble_context", None)
+    if assemble_context is None:
+        return True
+    try:
+        current = assemble_context(project_dir, scene_id)
+    except Exception:
+        return True
+    if source_context_fingerprint:
+        from app.pipeline.pipeline import generation_context_fingerprint
+
+        return generation_context_fingerprint(current) != source_context_fingerprint
+    current_revisions = {
+        "characters": current.get("read_points", {}),
+        "bible_elements": current.get("world_element_read_points", {}),
+    }
+    return any(
+        current_revisions.get(kind, {}) != values
+        for kind, values in source_revisions.items()
+        if kind in current_revisions
+    )
 
 
 def choose_resume_chapter(project_dir: Path) -> str | None:

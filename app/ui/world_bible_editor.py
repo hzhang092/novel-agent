@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import asyncio
 import logging
 from pathlib import Path
@@ -56,6 +57,7 @@ class WorldBibleEditorView(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._save_handler: Callable[[Callable[[], bool]], bool] | None = None
         self._project_dir: Path | None = None
         self._service: StoryBibleApplicationService | None = None
         self._layout_store: EditorLayoutStore | None = None
@@ -178,6 +180,11 @@ class WorldBibleEditorView(QWidget):
         self._project_dir = service.project_dir
 
     def save_all(self) -> bool:
+        if self._save_handler is not None:
+            return self._save_handler(self._save_all)
+        return self._save_all()
+
+    def _save_all(self) -> bool:
         if self._snapshot_dirty:
             return self._save_snapshot()
         if self._element_is_dirty() and not self.save_current_element():
@@ -217,6 +224,11 @@ class WorldBibleEditorView(QWidget):
         self._emit_dirty()
 
     def save_current_element(self) -> bool:
+        if self._save_handler is not None:
+            return self._save_handler(self._save_current_element)
+        return self._save_current_element()
+
+    def _save_current_element(self) -> bool:
         if self._snapshot_dirty:
             return self._save_snapshot()
         if self._current_id in (None, "overview") or self._service is None:
@@ -257,6 +269,11 @@ class WorldBibleEditorView(QWidget):
         self.content_changed.emit()
         self._emit_dirty()
         return True
+
+    def set_save_handler(
+        self, handler: Callable[[Callable[[], bool]], bool] | None
+    ) -> None:
+        self._save_handler = handler
 
     def _save_snapshot(self) -> bool:
         if not self._snapshot_dirty or self._service is None:

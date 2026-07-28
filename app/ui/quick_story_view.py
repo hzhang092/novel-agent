@@ -104,6 +104,11 @@ class QuickStoryView(QWidget):
         save = QPushButton("保存故事意向")
         save.clicked.connect(self._save_brief)
         layout.addWidget(save)
+        self.generate_brief_button = QPushButton("从现有项目生成故事意向")
+        self.generate_brief_button.clicked.connect(
+            lambda: self._start_task(self._generate_brief_from_existing())
+        )
+        layout.addWidget(self.generate_brief_button)
         layout.addWidget(QLabel("故事提案"))
         self.proposal_label = QLabel("尚未生成")
         self.proposal_label.setWordWrap(True)
@@ -201,6 +206,9 @@ class QuickStoryView(QWidget):
         self._application = application
         planning = load_planning(application.project_dir)
         self._set_brief(planning.story_brief or StoryBrief())
+        self.generate_brief_button.setVisible(
+            not application.story_designer.is_empty_project()
+        )
         self.ending_edit.setText(planning.provisional_destination)
         self.adjust_edit.clear()
         proposal = planning.active_draft if hasattr(planning.active_draft, "proposal") else planning.approved_proposal
@@ -210,6 +218,34 @@ class QuickStoryView(QWidget):
             self._story_patch_preview = planning.active_draft
             self._show_story_patch()
         self._show_bootstrap(planning.active_draft if isinstance(planning.active_draft, ActiveBootstrapDraft) else None)
+
+    def refresh_brief(self) -> None:
+        if self._application is None:
+            return
+        planning = load_planning(self._application.project_dir)
+        self._set_brief(planning.story_brief or StoryBrief())
+        self.ending_edit.setText(planning.provisional_destination)
+        self.generate_brief_button.setVisible(
+            not self._application.story_designer.is_empty_project()
+        )
+
+    async def _generate_brief_from_existing(self) -> None:
+        application = self._application
+        if application is None:
+            return
+        try:
+            brief = await application.story_designer.generate_brief_from_existing()
+        except ProviderConfigurationError as error:
+            if self._application is application:
+                self._provider_error(str(error), self._generate_brief_from_existing)
+            return
+        except (StoryDesignerProviderError, OperationBlockedError) as error:
+            if self._application is application:
+                self._provider_error(f"生成失败：{error}", self._generate_brief_from_existing)
+            return
+        if self._application is application:
+            self._set_brief(brief)
+            self.approved_brief_label.setText("AI 生成的故事意向草稿：保存后生效")
 
     def refresh_quick_projection(self) -> None:
         """Refresh the compact post-bootstrap projection from canonical storage."""

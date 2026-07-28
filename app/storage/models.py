@@ -370,15 +370,18 @@ def parse_generation_read_points(generated_with: dict) -> GenerationReadPoints:
 class SceneGenerationRecord(BaseModel):
     """Stored alongside prose for traceability."""
     scene_id: str
+    source_chapter_id: str = ""
     revision_id: str = Field(default_factory=lambda: str(uuid4()))
     revision_number: int = 1
     scene_order: int = 0
     generated_from_checkpoint_id: str = ""
     generated_with: dict[str, dict] = Field(default_factory=dict)
+    source_context_fingerprint: str = ""
     status: Literal["draft", "current", "superseded", "stale"] = "current"
     generation_mode: str = "standard"
     scene_plan: dict = Field(default_factory=dict)
     character_intents: dict[str, dict] = Field(default_factory=dict)
+    generation_trace: list[dict] = Field(default_factory=list)
     draft_text: str = ""
     review: Optional[dict] = None
     final_text: str = ""
@@ -397,6 +400,10 @@ class SceneGenerationRecord(BaseModel):
     target_chinese_characters: int = 3000
     prose_chinese_characters: int = 0
     length_warning: str = ""
+    stale_input: bool = False
+    stale_input_reviewed: bool = False
+    stale_reason: str = ""
+    cancelled: bool = False
 
 
 # ── Memory System ──────────────────────────────────────────────────────────

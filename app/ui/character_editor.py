@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import logging
 from pathlib import Path
 
@@ -80,6 +81,7 @@ class CharacterEditorView(QWidget):
         layout_store: EditorLayoutStore | None = None,
     ) -> None:
         super().__init__(parent)
+        self._save_handler: Callable[[Callable[[], bool]], bool] | None = None
         self._project_dir: Path | None = None
         self._application: CharacterApplicationService | None = None
         self._characters: dict[str, Character] = {}  # id -> Character
@@ -1235,6 +1237,11 @@ class CharacterEditorView(QWidget):
 
     def save_current_character(self) -> bool:
         """Persist the current Character Definition, if changed."""
+        if self._save_handler is not None:
+            return self._save_handler(self._save_current_character)
+        return self._save_current_character()
+
+    def _save_current_character(self) -> bool:
         if self._project_dir is None or self._current_id is None:
             return True
         if not self._core_dirty:
@@ -1269,6 +1276,11 @@ class CharacterEditorView(QWidget):
         except Exception as e:
             QMessageBox.warning(self, "保存失败", str(e))
             return False
+
+    def set_save_handler(
+        self, handler: Callable[[Callable[[], bool]], bool] | None
+    ) -> None:
+        self._save_handler = handler
 
     def _on_save(self) -> None:
         self.save_current_character()

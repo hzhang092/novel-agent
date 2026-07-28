@@ -7,6 +7,8 @@ User checkpoint after Planner before Character Intents + Writer run.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -65,6 +67,7 @@ class GenerationResult:
     state_changes: list[dict] = field(default_factory=list)
     scene_summary: dict | None = None
     generated_with: dict[str, dict] = field(default_factory=dict)
+    source_context_fingerprint: str = ""
     target_chinese_characters: int = 3000
     length_warning: str = ""
 
@@ -105,6 +108,9 @@ class ScenePipeline:
         self._reviewer = ReviewerAgent()
         self._fact_extractor = FactExtractorAgent()
         self._state_updater = StateUpdaterAgent()
+        self.source_revisions: dict[str, dict] = {}
+        self.source_context_fingerprint = ""
+        self.partial_result: GenerationResult | None = None
 
     def assemble_context(self, project_dir: Path, scene_id: str) -> dict:
         """Build the context dict via RetrievalEngine."""
@@ -131,10 +137,13 @@ class ScenePipeline:
         then a final (None, result) after completion (or early abort).
         """
         result = GenerationResult(scene_id=scene_id)
+        self.partial_result = result
         pipeline_start = time.monotonic()
         tracker = TokenTracker.get()
         # ── Step 1: Assemble context ──
         context = self.assemble_context(project_dir, scene_id)
+        result.source_context_fingerprint = generation_context_fingerprint(context)
+        self.source_context_fingerprint = result.source_context_fingerprint
         target = target_characters or _target_for_scene(project_dir, scene_id)
         context["target_chinese_characters"] = target
         context["revision_instruction"] = revision_instruction
@@ -144,6 +153,7 @@ class ScenePipeline:
             "characters": context.get("read_points", {}),
             "bible_elements": context.get("world_element_read_points", {}),
         }
+        self.source_revisions = result.generated_with
 
         # ── Step 2: Planner ──
         planner_trace = AgentTraceEntry(agent_name="Scene Planner", stage="planner")
@@ -463,6 +473,13 @@ def _target_for_scene(project_dir: Path, scene_id: str) -> int:
             if any(scene.id == scene_id for scene in chapter.scenes):
                 return resolve_chapter_target(project, chapter)
     return project.chapter_length.resolved_target
+
+
+def generation_context_fingerprint(context: dict) -> str:
+    payload = json.dumps(
+        context, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _count_trace_tokens(trace: list[AgentTraceEntry]) -> int:

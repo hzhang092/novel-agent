@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import logging
 from collections import Counter
 from pathlib import Path
@@ -64,6 +65,7 @@ class BibleEditorView(QWidget):
         self._style_dirty = False
         self._populating = False
         self._last_dirty = False
+        self._save_handler: Callable[[Callable[[], bool]], bool] | None = None
         self._layout_store: EditorLayoutStore | None = None
         self._style_sections: dict[str, CollapsibleSection] = {}
         self._setup_ui()
@@ -532,6 +534,11 @@ class BibleEditorView(QWidget):
     # ── Actions ────────────────────────────────────────────────────────────
 
     def save_all(self) -> bool:
+        if self._save_handler is not None:
+            return self._save_handler(self._save_all)
+        return self._save_all()
+
+    def _save_all(self) -> bool:
         if self._project_dir is None:
             return True
         if not self._world_tab.save_all():
@@ -552,6 +559,13 @@ class BibleEditorView(QWidget):
         self._update_aggregate_dirty_state()
         self.saved.emit()
         return True
+
+    def set_save_handler(
+        self, handler: Callable[[Callable[[], bool]], bool] | None
+    ) -> None:
+        self._save_handler = handler
+        self._world_tab.set_save_handler(handler)
+        self._character_tab.set_save_handler(handler)
 
     def _on_save(self) -> None:
         self.save_all()

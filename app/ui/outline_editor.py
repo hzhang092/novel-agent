@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
@@ -60,6 +61,7 @@ class OutlineEditorView(QWidget):
         self._application: OutlineApplicationService | None = None
         self._volumes: list = []
         self._selected_node_id: str | None = None
+        self._save_handler: Callable[[Callable[[], bool]], bool] | None = None
         self._setup_ui()
 
     def load_project_dir(self, project_dir: Path) -> None:
@@ -87,12 +89,22 @@ class OutlineEditorView(QWidget):
 
     def save(self) -> bool:
         """Gather the current form and persist the outline."""
+        if self._save_handler is not None:
+            return self._save_handler(self._save)
+        return self._save()
+
+    def _save(self) -> bool:
         if self._project_dir is None:
             return False
         self._gather_current_form()
         self._volumes = list(self._application.save_outline(self._volumes))
         self.saved.emit()
         return True
+
+    def set_save_handler(
+        self, handler: Callable[[Callable[[], bool]], bool] | None
+    ) -> None:
+        self._save_handler = handler
 
     def refresh_world_elements(self) -> None:
         """Reload Story Bible elements used by scene forms."""

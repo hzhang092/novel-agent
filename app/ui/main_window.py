@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import weakref
+from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import QSignalBlocker, Qt, QUrl
@@ -144,6 +146,15 @@ class MainWindow(QMainWindow):
         self._outline_view = OutlineEditorView()
         self._quick_outline_view = QuickOutlineView()
         self._workspace_view = SceneWorkspaceView()
+        self._deep_save_in_progress = False
+        window_ref = weakref.ref(self)
+
+        def guard_deep_save(save: Callable[[], bool]) -> bool:
+            window = window_ref()
+            return window.guard_deep_save(save) if window is not None else save()
+
+        self._bible_view.set_save_handler(guard_deep_save)
+        self._outline_view.set_save_handler(guard_deep_save)
         self._views: dict[str, QWidget] = {
             "dashboard": self._dashboard_view,
             "story": self._quick_story_view,
@@ -389,9 +400,18 @@ class MainWindow(QMainWindow):
             and current == "outline"
             and self._outline_view.is_loaded
         ):
-            self._outline_view.save()
+            if not self._save_deep_outline():
+                blocker = QSignalBlocker(self._experience_switch)
+                self._experience_switch.setCurrentIndex(
+                    self._experience_switch.findData(self._experience_mode)
+                )
+                del blocker
+                return
             self._quick_outline_view.refresh()
         self._experience_mode = mode
+        if mode == "quick" and self._application is not None:
+            self._application.story_designer.ensure_quick_brief()
+            self._quick_story_view.refresh_brief()
         if self._editor_layout_store is not None:
             self._editor_layout_store.layout.experience_mode = mode
             self._editor_layout_store.save()
@@ -433,7 +453,11 @@ class MainWindow(QMainWindow):
             and key != "outline"
             and self._outline_view.is_loaded
         ):
-            self._outline_view.save()
+            if not self._save_deep_outline():
+                blocker = QSignalBlocker(self.sidebar)
+                self.sidebar.setCurrentRow(self._previous_tab_index)
+                del blocker
+                return
 
         # Wire event bus to Bible Editor's character editor when navigating to Bible
         if key == "bible":
@@ -479,6 +503,38 @@ class MainWindow(QMainWindow):
             self._bible_view.reload()
             return True
         return False
+
+    def _confirm_bootstrap_discard(self) -> bool:
+        """Warn once before a Deep canonical save clears a bootstrap draft."""
+        if self._application is None or not self._application.story_designer.has_unapproved_bootstrap():
+            return True
+        reply = QMessageBox.question(
+            self,
+            "未采用的故事启动包",
+            "深度创作的保存会丢弃未采用的故事启动包，但会保留故事意向和已采用的故事提案。继续吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return False
+        return True
+
+    def _save_deep_outline(self) -> bool:
+        return self._outline_view.save()
+
+    def guard_deep_save(self, save: Callable[[], bool]) -> bool:
+        if self._deep_save_in_progress:
+            return save()
+        if not self._confirm_bootstrap_discard():
+            return False
+        self._deep_save_in_progress = True
+        try:
+            saved = save()
+        finally:
+            self._deep_save_in_progress = False
+        if saved and self._application is not None:
+            self._application.story_designer.discard_unapproved_bootstrap()
+        return saved
 
     def _on_new_project(self) -> None:
         from PySide6.QtCore import QSettings
@@ -828,6 +884,13 @@ class MainWindow(QMainWindow):
 
     def _show_quick_revision(self, record) -> None:
         review = record.review or {}
+        if self._application is not None:
+            chapter_id = self._find_chapter_for_scene(record.scene_id) or ""
+            self._application.scene_workflow.restore_draft(record, chapter_id)
+            if self._application.scene_workflow.state.artifacts:
+                self._workspace_view.update_trace(
+                    self._application.scene_workflow.state.artifacts
+                )
         self._workspace_view.set_quick_revision_metadata(
             record.scene_id,
             record.revision_id,
@@ -840,6 +903,16 @@ class MainWindow(QMainWindow):
                 else record.state_changes_raw
             ),
         )
+        if record.stale_input and not record.stale_input_reviewed:
+            self._workspace_view.show_stale_warning()
+        elif review:
+            self._workspace_view.show_review_result(
+                bool(review.get("overall_pass", False)),
+                str(review.get("summary", "")),
+            )
+        else:
+            self._workspace_view.hide_continue_review()
+            self._workspace_view.hide_review_result()
 
     def _on_prose_version_selected(self, version: str) -> None:
         """Load the selected prose version into the editor."""
@@ -1172,13 +1245,37 @@ class MainWindow(QMainWindow):
                 mode, target, record.length_warning
             )
         self._workspace_view.set_prose_text(record.draft_text)
+        if record.stale_input and not record.stale_input_reviewed:
+            self._workspace_view.show_stale_warning()
         self._update_status_bar_tokens()
 
     def _on_continue_review_requested(self) -> None:
         if self._application is None:
             return
+        workflow = self._application.scene_workflow
+        record = workflow.state.draft_record
+        if record is not None and record.stale_input and not record.stale_input_reviewed:
+            self._workspace_view.hide_continue_review()
+            asyncio.ensure_future(self._continue_stale_record(record.revision_id))
+            return
         self._workspace_view.hide_continue_review()
-        asyncio.ensure_future(self._application.scene_workflow.continue_review())
+        asyncio.ensure_future(workflow.continue_review())
+
+    async def _continue_stale_record(self, revision_id: str) -> None:
+        if self._application is None:
+            return
+        try:
+            record = await self._application.scene_workflow.continue_stale(revision_id)
+        except Exception:
+            logger.exception("Could not continue stale scene revision %s", revision_id)
+            self._workspace_view.show_stale_warning()
+            self._workspace_view.set_status("复核失败，请重试")
+            return
+        review = record.review or {}
+        self._workspace_view.show_review_result(
+            bool(review.get("overall_pass")), review.get("summary", "")
+        )
+        self._workspace_view.set_status("已复核旧设定，可继续发布或重新生成")
 
     def _on_approval_batch_approved(
         self,

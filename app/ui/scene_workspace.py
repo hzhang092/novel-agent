@@ -366,6 +366,7 @@ class SceneWorkspaceView(QWidget):
     def hide_continue_review(self) -> None:
         """Hide the continue-after-review action."""
         self._continue_review_btn.hide()
+        self._quick_chapter.show_review(True, "")
 
     def begin_generation(self, waiting_message: str = "正在组装上下文...") -> None:
         """Reset the workspace and enter generation state."""
@@ -433,6 +434,13 @@ class SceneWorkspaceView(QWidget):
             self._continue_review_btn.show()
         self._has_review = True
         self._quick_chapter.show_review(passed, summary)
+        self._review_bar.setVisible(self._experience_mode == "deep")
+
+    def show_stale_warning(self) -> None:
+        self._review_label.setText("⚠️ 基于旧设定 — 请复核后继续，或重新生成")
+        self._review_label.setStyleSheet("color: #f39c12; font-size: 12px;")
+        self._continue_review_btn.show()
+        self._quick_chapter.show_review(False, "基于旧设定，请复核后继续或重新生成")
         self._review_bar.setVisible(self._experience_mode == "deep")
 
     def hide_review_result(self) -> None:

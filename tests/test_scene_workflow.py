@@ -271,6 +271,12 @@ async def test_workflow_owns_pipeline_draft_and_memory_review(tmp_path, monkeypa
             closed.append(self)
 
     class Pipeline:
+        def assemble_context(self, *_args):
+            return {
+                "read_points": {"hero": {"checkpoint_id": "cp-1"}},
+                "world_element_read_points": {},
+            }
+
         async def generate_stream(self, *_args, **_kwargs):
             yield "first ", None
             yield None, GenerationResult(
