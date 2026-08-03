@@ -74,7 +74,9 @@ class SceneWorkspaceView(QWidget):
         layout.setSpacing(6)
 
         # ── Toolbar ──
-        toolbar = QHBoxLayout()
+        self._deep_toolbar = QWidget()
+        toolbar = QHBoxLayout(self._deep_toolbar)
+        toolbar.setContentsMargins(0, 0, 0, 0)
 
         self._generate_btn = QPushButton("生成")
         self._generate_btn.setEnabled(False)
@@ -108,7 +110,7 @@ class SceneWorkspaceView(QWidget):
         toolbar.addWidget(self._status_label)
 
         toolbar.addStretch()
-        layout.addLayout(toolbar)
+        layout.addWidget(self._deep_toolbar)
 
         self._quick_chapter = QuickChapterView()
         for source, target in (
@@ -228,6 +230,7 @@ class SceneWorkspaceView(QWidget):
         """Switch presentation while preserving the shared editor and run state."""
         self._experience_mode = "quick" if mode == "quick" else "deep"
         quick = self._experience_mode == "quick"
+        self._deep_toolbar.setVisible(not quick)
         self._quick_chapter.setVisible(quick)
         self._left_pane.setVisible(not quick)
         self._right_pane.setVisible(not quick)
@@ -461,6 +464,7 @@ class SceneWorkspaceView(QWidget):
         """Hide the review result bar."""
         self._review_bar.hide()
         self._has_review = False
+        self._quick_chapter.show_review(True, "")
 
     def show_fact_approval(
         self,

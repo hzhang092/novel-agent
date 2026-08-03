@@ -35,7 +35,6 @@ from app.storage.project_files import (
     load_planning,
     load_project,
     load_all_volumes,
-    load_all_characters,
     load_canon_facts,
     list_character_ids,
     save_character,
@@ -91,19 +90,6 @@ class StoryDesignerService:
         if isinstance(planning.active_draft, ActiveBootstrapDraft):
             planning.active_draft = None
             save_planning(self.project_dir, planning)
-
-    async def generate_brief_from_existing(self) -> StoryBrief:
-        """Generate an editable Brief draft without persisting planning data."""
-        if self.is_empty_project():
-            raise OperationBlockedError("An empty project starts its Brief directly")
-        if not self.run_guard.acquire("story_designer"):
-            raise OperationBlockedError("Another project generation is already active")
-        try:
-            return await self._generate_with_provider(
-                _brief_messages(self.project_dir), StoryBrief
-            )
-        finally:
-            self.run_guard.release("story_designer")
 
     async def generate_proposal(self, instruction: str = "") -> ActiveProposalDraft:
         return await self._replace_draft(base_revision=None, instruction=instruction)
@@ -389,39 +375,6 @@ def _proposal_messages(
             "content": json.dumps(
                 {"story_brief": brief.model_dump(), "current_draft": draft.model_dump() if draft else None,
                  "adjustment": instruction},
-                ensure_ascii=False,
-            ),
-        },
-    ]
-
-
-def _brief_messages(project_dir: Path) -> list[dict[str, str]]:
-    project = load_project(project_dir)
-    bible = WorldBibleService(project_dir).load()
-    return [
-        {
-            "role": "system",
-            "content": (
-                "You are Story Designer. Infer an editable StoryBrief from the existing project. "
-                "Return only StoryBrief fields. Do not alter canonical story data, create a proposal, "
-                "or create a bootstrap. Preserve uncertainty as empty fields."
-            ),
-        },
-        {
-            "role": "user",
-            "content": json.dumps(
-                {
-                    "project": project.model_dump(mode="json"),
-                    "world_bible": bible.model_dump(mode="json"),
-                    "characters": [
-                        character.model_dump(mode="json")
-                        for character in load_all_characters(project_dir)
-                    ],
-                    "outline": [
-                        volume.model_dump(mode="json")
-                        for volume in load_all_volumes(project_dir)
-                    ],
-                },
                 ensure_ascii=False,
             ),
         },

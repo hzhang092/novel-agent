@@ -47,6 +47,32 @@ def test_companion_shows_plan_review_memory_and_advanced_information(qtbot):
     assert not hasattr(view, "prose_edit")
 
 
+def test_revision_review_and_memory_sections_are_hidden_until_relevant(qtbot):
+    view = QuickChapterView()
+    qtbot.addWidget(view)
+
+    assert view.revision_section.isHidden()
+    assert view.prose_section.isHidden()
+    assert view.review_section.isHidden()
+    assert view.memory_section.isHidden()
+    assert view.approval_section.isHidden()
+
+    view.set_revisions(["v1"], "v1", "")
+    assert not view.revision_section.isHidden()
+    assert not view.prose_section.isHidden()
+    assert not view.approval_section.isHidden()
+
+    view.show_review(False, "需要复核")
+    view.show_memory([{"text": "事实"}], [])
+    assert not view.review_section.isHidden()
+    assert not view.memory_section.isHidden()
+
+    view.show_review(True, "")
+    view.show_memory([], [])
+    assert view.review_section.isHidden()
+    assert view.memory_section.isHidden()
+
+
 def test_plan_adjustment_preserves_hidden_fields_and_cancel_restores(qtbot):
     view = QuickChapterView()
     qtbot.addWidget(view)

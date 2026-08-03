@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
-
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QFormLayout,
     QHBoxLayout,
@@ -45,8 +42,6 @@ class QuickOutlineView(QWidget):
         self._service = None
         self._cards = {}
         self._selected_id = ""
-        self._replan_preview = None
-        self._task = None
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("快速大纲"))
@@ -78,32 +73,9 @@ class QuickOutlineView(QWidget):
             actions.addWidget(button)
         layout.addLayout(actions)
 
-        self.drift_label = QLabel()
-        self.drift_label.setWordWrap(True)
-        layout.addWidget(self.drift_label)
-
-        layout.addWidget(QLabel("安全重规划"))
-        self.replan_instruction = QLineEdit()
-        self.replan_instruction.setPlaceholderText("只影响未发布章节的调整说明")
-        layout.addWidget(self.replan_instruction)
-        replan_actions = QHBoxLayout()
-        self.replan_button = QPushButton("生成重规划")
-        self.confirm_published_button = QCheckBox("确认影响已发布章节")
-        self.apply_replan_button = QPushButton("应用重规划")
-        self.replan_button.clicked.connect(self._generate_replan)
-        self.apply_replan_button.clicked.connect(self._apply_replan)
-        replan_actions.addWidget(self.replan_button)
-        replan_actions.addWidget(self.confirm_published_button)
-        replan_actions.addWidget(self.apply_replan_button)
-        layout.addLayout(replan_actions)
-        self.replan_label = QLabel()
-        self.replan_label.setWordWrap(True)
-        layout.addWidget(self.replan_label)
-
         layout.addStretch()
 
     def bind_application(self, service) -> None:
-        self.cancel_generation()
         self._service = service
         self.refresh()
 
@@ -126,10 +98,6 @@ class QuickOutlineView(QWidget):
             self.select_chapter(selected)
         elif self._cards:
             self.select_chapter(next(iter(self._cards)))
-        drift = self._service.brief_drift()
-        self.drift_label.setText(
-            "Brief 漂移：" + ("、".join(drift.changed_fields) if drift.changed_fields else "无")
-        )
 
     def select_chapter(self, chapter_id: str) -> bool:
         index = self.card_list.findData(chapter_id)
@@ -143,10 +111,6 @@ class QuickOutlineView(QWidget):
     @property
     def selected_chapter_id(self) -> str:
         return self._selected_id
-
-    def cancel_generation(self) -> None:
-        if self._task is not None and not self._task.done():
-            self._task.cancel()
 
     def _on_card_changed(self, index: int) -> None:
         chapter_id = self.card_list.itemData(index)
@@ -189,48 +153,3 @@ class QuickOutlineView(QWidget):
             return
         self._cards[card.id] = card
         self.refresh()
-
-    def _generate_replan(self) -> None:
-        if self._service is not None:
-            self._start_task(self._run_replan())
-
-    async def _run_replan(self) -> None:
-        try:
-            preview = await self._service.generate_replan(
-                self.replan_instruction.text().strip()
-            )
-        except _PLANNING_ERRORS as error:
-            self.replan_label.setText(f"重规划失败：{error}")
-            return
-        self._replan_preview = preview
-        published = getattr(preview, "published_chapter_ids", [])
-        impact = f"；已发布影响：{'、'.join(published)}，需额外确认" if published else ""
-        downstream = getattr(preview, "downstream_review_chapter_ids", [])
-        review = f"；需复核正文：{'、'.join(downstream)}" if downstream else ""
-        self.replan_label.setText(
-            "变更：" + "；".join(preview.changes) + "\n影响：" + "；".join(preview.consequences) + impact + review
-        )
-
-    def _apply_replan(self) -> None:
-        if self._service is None or self._replan_preview is None:
-            return
-        published = bool(getattr(self._replan_preview, "published_chapter_ids", []))
-        if published and not self.confirm_published_button.isChecked():
-            self.replan_label.setText(self.replan_label.text() + "\n请先确认已发布章节影响。")
-            return
-        try:
-            self._service.apply_replan(
-                self._replan_preview,
-                confirm_published=self.confirm_published_button.isChecked(),
-            )
-        except _PLANNING_ERRORS as error:
-            self.replan_label.setText(f"应用失败：{error}")
-            return
-        self._replan_preview = None
-        self.refresh()
-
-    def _start_task(self, coroutine) -> None:
-        if self._task is None or self._task.done():
-            self._task = asyncio.ensure_future(coroutine)
-        else:
-            coroutine.close()

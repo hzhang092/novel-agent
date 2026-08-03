@@ -1,13 +1,8 @@
-import asyncio
-
-import pytest
-
 from app.storage.models import (
     ChapterCardEditPreview,
     ChapterCardProjection,
     ChapterCardStatus,
     QuickStoryProjection,
-    ReplanPreview,
     StoryArcProjection,
 )
 from app.ui.quick_outline_view import QuickOutlineView
@@ -48,18 +43,6 @@ class FakeQuickPlanning:
         self.card = self.card.model_copy(update={"title": preview.title, "summary": preview.summary, "ending_hook": preview.ending_hook})
         return self.card
 
-    def brief_drift(self):
-        self.calls.append(("brief_drift",))
-        return type("Drift", (), {"changed_fields": ["premise", "tone_tags"]})()
-
-    async def generate_replan(self, instruction=""):
-        self.calls.append(("generate_replan", instruction))
-        return ReplanPreview(future_chapter_ids=["chapter-1"], changes=["第 1 章概要"], consequences=["影响后续节奏"])
-
-    def apply_replan(self, preview, *, confirm_published=False):
-        self.calls.append(("apply_replan", confirm_published))
-        return preview
-
 def test_quick_outline_renders_cards_and_emits_canonical_scene(qtbot):
     view = QuickOutlineView()
     qtbot.addWidget(view)
@@ -95,17 +78,12 @@ def test_quick_outline_edits_only_card_fields_and_requests_deep_outline(qtbot):
     assert requested == ["chapter-1"]
 
 
-@pytest.mark.asyncio
-async def test_quick_outline_shows_replan_without_later_arc_action(qtbot):
+def test_quick_outline_hides_brief_drift_and_replanning_controls(qtbot):
     view = QuickOutlineView()
     qtbot.addWidget(view)
     service = FakeQuickPlanning()
     view.bind_application(service)
 
-    assert "premise" in view.drift_label.text()
-    view.replan_instruction.setText("调整未来冲突")
-    view.replan_button.click()
-    await asyncio.sleep(0)
-    assert "第 1 章概要" in view.replan_label.text()
-    view.apply_replan_button.click()
-    assert not any("规划下一" in button.text() for button in view.findChildren(type(view.save_button)))
+    assert not hasattr(view, "drift_label")
+    assert not hasattr(view, "replan_button")
+    assert not any("重规划" in button.text() for button in view.findChildren(type(view.save_button)))

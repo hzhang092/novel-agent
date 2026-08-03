@@ -96,15 +96,19 @@ class QuickChapterView(QWidget):
         actions.addWidget(self.adjust_button)
         layout.addLayout(actions)
 
-        revision_row = QHBoxLayout()
+        self.revision_section = QWidget()
+        layout.addWidget(self.revision_section)
+        revision_row = QHBoxLayout(self.revision_section)
         self.revision_combo = QComboBox()
         self.revision_combo.currentTextChanged.connect(self._select_revision)
         self.published_label = QLabel()
         revision_row.addWidget(QLabel("修订"))
         revision_row.addWidget(self.revision_combo)
         revision_row.addWidget(self.published_label)
-        layout.addLayout(revision_row)
 
+        self.prose_section = QWidget()
+        layout.addWidget(self.prose_section)
+        prose_layout = QVBoxLayout(self.prose_section)
         prose_actions = QHBoxLayout()
         self.save_button = QPushButton("保存")
         self.regenerate_button = QPushButton("重新生成")
@@ -112,7 +116,7 @@ class QuickChapterView(QWidget):
         self.regenerate_button.clicked.connect(self.regenerate_requested.emit)
         prose_actions.addWidget(self.save_button)
         prose_actions.addWidget(self.regenerate_button)
-        layout.addLayout(prose_actions)
+        prose_layout.addLayout(prose_actions)
         self.revision_instruction_edit = QLineEdit()
         self.revision_instruction_edit.setPlaceholderText("修订指令")
         self.revision_instruction_button = QPushButton("提交修订指令")
@@ -121,13 +125,16 @@ class QuickChapterView(QWidget):
                 self.revision_instruction_edit.text().strip()
             )
         )
-        layout.addWidget(self.revision_instruction_edit)
-        layout.addWidget(self.revision_instruction_button)
+        prose_layout.addWidget(self.revision_instruction_edit)
+        prose_layout.addWidget(self.revision_instruction_button)
 
-        layout.addWidget(QLabel("审查"))
+        self.review_section = QWidget()
+        layout.addWidget(self.review_section)
+        review_layout = QVBoxLayout(self.review_section)
+        review_layout.addWidget(QLabel("审查"))
         self.review_summary_label = QLabel()
         self.review_summary_label.setWordWrap(True)
-        layout.addWidget(self.review_summary_label)
+        review_layout.addWidget(self.review_summary_label)
         review_actions = QHBoxLayout()
         self.ai_fix_button = QPushButton("AI 修复")
         self.details_button = QPushButton("详情")
@@ -137,31 +144,36 @@ class QuickChapterView(QWidget):
         self.override_button.clicked.connect(self.override_requested.emit)
         for button in (self.ai_fix_button, self.details_button, self.override_button):
             review_actions.addWidget(button)
-        layout.addLayout(review_actions)
+        review_layout.addLayout(review_actions)
         for button in (self.ai_fix_button, self.details_button, self.override_button):
             button.hide()
 
-        layout.addWidget(QLabel("记忆确认"))
+        self.memory_section = QWidget()
+        layout.addWidget(self.memory_section)
+        memory_layout = QVBoxLayout(self.memory_section)
+        memory_layout.addWidget(QLabel("记忆确认"))
+        self.memory_label = QLabel()
+        self.memory_label.setWordWrap(True)
+        memory_layout.addWidget(self.memory_label)
         self.memory_layout = QVBoxLayout()
-        layout.addLayout(self.memory_layout)
+        memory_layout.addLayout(self.memory_layout)
         self.fact_checks: list[QCheckBox] = []
         self.change_checks: list[QCheckBox] = []
 
-        approval_actions = QHBoxLayout()
+        self.approval_section = QWidget()
+        layout.addWidget(self.approval_section)
+        approval_actions = QHBoxLayout(self.approval_section)
         self.approve_button = QPushButton("批准本章")
         self.approve_next_button = QPushButton("批准并进入下一章")
         self.approve_button.clicked.connect(self.approve_requested.emit)
         self.approve_next_button.clicked.connect(self.approve_next_requested.emit)
         approval_actions.addWidget(self.approve_button)
         approval_actions.addWidget(self.approve_next_button)
-        layout.addLayout(approval_actions)
-
         layout.addWidget(QLabel("高级信息"))
         self.context_label = QLabel()
         self.review_label = QLabel()
-        self.memory_label = QLabel()
         self.status_label = QLabel()
-        for label in (self.context_label, self.review_label, self.memory_label, self.status_label):
+        for label in (self.context_label, self.review_label, self.status_label):
             label.setWordWrap(True)
             layout.addWidget(label)
         advanced_actions = QHBoxLayout()
@@ -179,6 +191,14 @@ class QuickChapterView(QWidget):
             advanced_actions.addWidget(button)
         layout.addLayout(advanced_actions)
         layout.addStretch()
+        for section in (
+            self.revision_section,
+            self.prose_section,
+            self.review_section,
+            self.memory_section,
+            self.approval_section,
+        ):
+            section.hide()
 
     @property
     def selected_revision(self) -> str:
@@ -220,6 +240,7 @@ class QuickChapterView(QWidget):
         return True
 
     def show_review(self, passed: bool, summary: str) -> None:
+        self.review_section.setVisible(bool(summary))
         self.review_summary_label.setText(
             (("审查通过：" if passed else "关键问题：") + summary) if summary else ""
         )
@@ -230,6 +251,7 @@ class QuickChapterView(QWidget):
     def show_memory(self, facts: list[Any], changes: list[Any]) -> None:
         self._set_memory(facts, changes)
         self.memory_label.setText(f"{len(facts)} 个事实，{len(changes)} 个状态变化待确认")
+        self.memory_section.setVisible(bool(facts or changes))
 
     def set_status(self, status: str) -> None:
         self.status_label.setText(status)
@@ -242,6 +264,10 @@ class QuickChapterView(QWidget):
     ) -> None:
         self._set_revisions(revisions, selected)
         self.published_label.setText(f"已发布：{published}" if published else "未发布")
+        visible = bool(revisions)
+        self.revision_section.setVisible(visible)
+        self.prose_section.setVisible(visible)
+        self.approval_section.setVisible(visible)
 
     def set_length(self, mode: str, target_chinese_characters: int, warning: str = "") -> None:
         self._set_length(mode, target_chinese_characters)

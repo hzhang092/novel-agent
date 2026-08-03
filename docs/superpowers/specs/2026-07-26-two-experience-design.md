@@ -149,7 +149,7 @@ An accepted generated title updates `Project.title` immediately. It never silent
 ### 5.3 Existing and blank projects
 
 - An existing project without guided-planning data opens normally. Quick Creation projects the existing canonical data immediately.
-- Quick may offer **Generate Story Brief from existing project**. The result is an editable draft, never a required or automatic artifact.
+- The first Quick release does not offer **Generate Story Brief from existing project**. Existing projects still open and remain usable without guided-planning artifacts.
 - Switching an empty blank project to Quick starts Story Brief in the same folder.
 - If an unapproved Story Bootstrap exists and the author switches to Deep, Deep may inspect it. The first canonical Deep save warns that it will discard the active bootstrap draft. Story Brief and an approved Story Proposal remain.
 - Full Story Bootstrap is available only when the project has no canonical story content. Existing projects receive targeted patches instead; there is no bootstrap merge system.
@@ -205,6 +205,8 @@ If the Brief changes afterward:
 - Display-only title corrections do not cause review status.
 
 There is no continuous semantic-drift AI in this release. A later manual **Check direction** action may be added separately.
+
+The first Quick release does not expose Brief drift notices or full replan controls. These remain deferred maintenance surfaces.
 
 ## 7. Story Proposal
 
@@ -361,11 +363,10 @@ The Story destination supports:
 
 - Story Brief.
 - Approved Story Proposal summary and explicit revision.
-- Simple cards for main characters and core setting.
-- Natural-language, reviewable patches for routine character and setting changes.
-- Planning drift and review notices.
+- A compact projection of main characters and core setting.
+- Explicit **Advanced Information** links to the corresponding Deep Creation locations.
 
-Advanced relationships, arbitrary character fields, detailed power systems, and direct event/state history editing switch to the corresponding Deep Creation location.
+Routine natural-language character, setting, and canonical story patches, advanced relationships, arbitrary character fields, detailed power systems, and direct event/state history editing switch to the corresponding Deep Creation location or remain deferred maintenance work.
 
 ```text
 ┌ 故事 ─────────────────────────────────────────────┐
@@ -388,9 +389,10 @@ Advanced relationships, arbitrary character fields, detailed power systems, and 
 Quick Outline shows Story Arc groups and Chapter Cards. Manual card editing exposes only title, summary, and ending hook.
 
 Deep-only fields such as POV, participants, goal, conflict, beats, and
-constraints remain unchanged. Quick does not infer hidden-field updates or
-block generation from title, summary, or ending-hook text. Authors may edit
-those advanced fields explicitly in Deep Creation.
+constraints remain unchanged. Quick does not expose Brief drift or full
+replanning controls, infer hidden-field updates, or block generation from
+title, summary, or ending-hook text. Authors may edit those advanced fields
+explicitly in Deep Creation.
 
 ```text
 第一故事阶段：剑仙入世                         10 / 12
@@ -557,6 +559,8 @@ Quick uses configured defaults and hides provider/model routing in normal creati
 - Otherwise show a neutral warning that cloud use may incur charges.
 - Story Designer has one dedicated proposal/bootstrap/replan route, visible in advanced Settings and hidden in normal Quick flow.
 
+The first-release Quick UI keeps the proposal and bootstrap checkpoints, first-arc card selection, plan approval or adjustment, prose generation and revision, review, memory approval, and publication path. It shows only the current creation stage in Story, hides the Deep generation toolbar while writing in Quick, and shows revision, review, memory, and publication controls only when their existing state is relevant. A simple scroll container is sufficient when those controls exceed the available height.
+
 ## 14. Application architecture
 
 ```mermaid
@@ -637,6 +641,7 @@ Planning and canonical edits affect downstream work without destructive rewritin
 
 - A story-affecting Chapter Card or advanced outline change marks that chapter and later prose-bearing chapters **需要复核**.
 - A Story Brief replan defaults to unwritten future chapters.
+- In the first release, Brief drift notices and full replanning are deferred from normal Quick UI; any retained maintenance path must continue to preserve these non-destructive propagation rules.
 - A proposed patch touching published chapters is shown separately with its downstream review impact.
 - Future unwritten chapters use the revised outline after approval.
 - Existing Published Scene Revisions remain selected until the author explicitly replaces them.
@@ -690,6 +695,9 @@ There is no migration for multi-scene chapters or an older guided-planning schem
 - Provider fallback.
 - Multi-call stitched long chapters.
 - Later-arc planning in Quick Creation.
+- Generate Story Brief from an existing project in normal Quick UI.
+- Routine natural-language canonical story, character, and setting patches in normal Quick UI.
+- Brief drift notices and full replan controls in normal Quick UI.
 - A second engine, pipeline, or simplified canonical data model.
 - Polished visual design or Figma assets; this spec’s Markdown wireframes are sufficient for implementation.
 

@@ -105,45 +105,6 @@ def _bootstrap_planning():
     )
 
 
-@pytest.mark.asyncio
-async def test_existing_project_can_generate_an_editable_brief_without_saving_it(tmp_path):
-    project_dir = _existing_project(tmp_path)
-    generated = StoryBrief(premise="从旧世界里找出新的秘密")
-    service = StoryDesignerService(
-        project_dir,
-        provider_factory=lambda: MockProvider(structured_response=generated),
-    )
-
-    draft = await service.generate_brief_from_existing()
-
-    assert draft.premise == generated.premise
-    planning = load_planning(project_dir)
-    assert planning.story_brief is None
-    assert planning.approved_proposal is None
-    assert load_project(project_dir).title == "已有故事"
-
-
-@pytest.mark.asyncio
-async def test_quick_story_view_keeps_generated_existing_brief_editable_until_save(
-    tmp_path, qtbot
-):
-    project_dir = _existing_project(tmp_path)
-    application = build_project_application(project_dir)
-    application.story_designer._provider_factory = lambda: MockProvider(
-        structured_response=StoryBrief(premise="可编辑方向")
-    )
-    view = QuickStoryView()
-    qtbot.addWidget(view)
-    view.bind_application(application)
-
-    await view._generate_brief_from_existing()
-
-    assert view.premise_edit.toPlainText() == "可编辑方向"
-    assert load_planning(project_dir).story_brief is None
-    view._save_brief()
-    assert load_planning(project_dir).story_brief.premise == "可编辑方向"
-
-
 def test_switching_blank_project_to_quick_starts_brief_in_the_same_folder(
     tmp_path, qtbot
 ):

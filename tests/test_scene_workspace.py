@@ -140,6 +140,32 @@ def test_quick_mode_is_a_compact_layer_over_the_same_workspace_state(qtbot):
     assert workspace.prose_text() == "shared draft"
 
 
+def test_quick_mode_hides_the_deep_generation_toolbar(qtbot):
+    workspace = SceneWorkspaceView()
+    qtbot.addWidget(workspace)
+    workspace.set_scene("scene-1", "chapter-1")
+
+    workspace.set_experience_mode("quick")
+    assert workspace._deep_toolbar.isHidden()
+    assert workspace.prose_text() == ""
+
+    workspace.set_experience_mode("deep")
+    assert not workspace._deep_toolbar.isHidden()
+
+
+def test_new_generation_clears_the_previous_quick_review(qtbot):
+    workspace = SceneWorkspaceView()
+    qtbot.addWidget(workspace)
+    quick = workspace.findChild(QuickChapterView)
+    workspace.set_scene("scene-1", "chapter-1")
+    workspace.show_review_result(False, "旧问题")
+    assert not quick.review_section.isHidden()
+
+    workspace.begin_generation()
+
+    assert quick.review_section.isHidden()
+
+
 def test_workspace_forwards_quick_plan_apply_and_cancel(qtbot):
     workspace = SceneWorkspaceView()
     qtbot.addWidget(workspace)
