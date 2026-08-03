@@ -220,7 +220,6 @@ class ChapterOutline(BaseModel):
     scenes: list[SceneOutline] = Field(default_factory=list)
     target_word_count: int = 3000
     chapter_length_override: "ChapterLength | None" = None
-    generation_blocked: bool = False
     needs_review: bool = False
 
 
@@ -281,20 +280,12 @@ class QuickStoryProjection(BaseModel):
     core_setting: WorldOverview = Field(default_factory=WorldOverview)
 
 
-class HiddenFieldPatch(BaseModel):
-    path: str
-    old_value: object
-    new_value: object
-    reason: str
-
-
 class ChapterCardEditPreview(BaseModel):
     chapter_id: str
     changed_fields: list[str] = Field(default_factory=list)
     title: str
     summary: str
     ending_hook: str
-    advanced_patch: list[HiddenFieldPatch] = Field(default_factory=list)
 
 
 class StoryBriefDrift(BaseModel):

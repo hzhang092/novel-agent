@@ -45,7 +45,6 @@ class QuickOutlineView(QWidget):
         self._service = None
         self._cards = {}
         self._selected_id = ""
-        self._card_preview = None
         self._replan_preview = None
         self._task = None
 
@@ -79,20 +78,6 @@ class QuickOutlineView(QWidget):
             actions.addWidget(button)
         layout.addLayout(actions)
 
-        self.advanced_label = QLabel()
-        self.advanced_label.setWordWrap(True)
-        layout.addWidget(self.advanced_label)
-        advanced_actions = QHBoxLayout()
-        self.apply_advanced_button = QPushButton("全部应用")
-        self.save_card_only_button = QPushButton("仅保存卡片")
-        self.cancel_advanced_button = QPushButton("取消")
-        self.apply_advanced_button.clicked.connect(lambda: self._apply_card_edit(True))
-        self.save_card_only_button.clicked.connect(lambda: self._apply_card_edit(False))
-        self.cancel_advanced_button.clicked.connect(self._cancel_card_edit)
-        for button in (self.apply_advanced_button, self.save_card_only_button, self.cancel_advanced_button):
-            advanced_actions.addWidget(button)
-        layout.addLayout(advanced_actions)
-
         self.drift_label = QLabel()
         self.drift_label.setWordWrap(True)
         layout.addWidget(self.drift_label)
@@ -122,7 +107,6 @@ class QuickOutlineView(QWidget):
         self.next_arc_label.setWordWrap(True)
         layout.addWidget(self.next_arc_label)
         layout.addStretch()
-        self._set_advanced_buttons(False)
 
     def bind_application(self, service) -> None:
         self.cancel_generation()
@@ -200,51 +184,18 @@ class QuickOutlineView(QWidget):
         if self._service is None or not self._selected_id:
             return
         try:
-            self._card_preview = self._service.preview_card_edit(
+            preview = self._service.preview_card_edit(
                 self._selected_id,
                 title=self.title_edit.text(),
                 summary=self.summary_edit.toPlainText(),
                 ending_hook=self.ending_hook_edit.text(),
             )
+            card = self._service.apply_card_edit(preview)
         except _PLANNING_ERRORS as error:
-            self.advanced_label.setText(f"检查失败：{error}")
-            return
-        if self._card_preview.advanced_patch:
-            reasons = "；".join(patch.reason for patch in self._card_preview.advanced_patch)
-            self.advanced_label.setText(f"检测到高级字段变更：{reasons}。请选择应用方式。")
-            self._set_advanced_buttons(True)
-        else:
-            self._apply_card_edit(False)
-
-    def _apply_card_edit(self, accept_advanced: bool) -> None:
-        if self._service is None or self._card_preview is None:
-            return
-        had_advanced_patch = bool(self._card_preview.advanced_patch)
-        try:
-            card = self._service.apply_card_edit(
-                self._card_preview, accept_advanced=accept_advanced
-            )
-        except _PLANNING_ERRORS as error:
-            self.advanced_label.setText(f"保存失败：{error}")
+            self.status_label.setText(f"保存失败：{error}")
             return
         self._cards[card.id] = card
-        self._card_preview = None
-        self.advanced_label.setText(
-            "仅保存卡片：已阻止生成，请先处理高级字段。"
-            if had_advanced_patch and not accept_advanced
-            else "已保存"
-        )
-        self._set_advanced_buttons(False)
         self.refresh()
-
-    def _cancel_card_edit(self) -> None:
-        self._card_preview = None
-        self.advanced_label.clear()
-        self._set_advanced_buttons(False)
-
-    def _set_advanced_buttons(self, enabled: bool) -> None:
-        for button in (self.apply_advanced_button, self.save_card_only_button, self.cancel_advanced_button):
-            button.setEnabled(enabled)
 
     def _generate_replan(self) -> None:
         if self._service is not None:

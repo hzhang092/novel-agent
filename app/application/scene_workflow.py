@@ -118,15 +118,12 @@ class SceneWorkflow:
         plan_patch: ScenePlanPatch | dict | None = None,
         target_characters: int | None = None,
     ) -> None:
-        from app.application.quick_planning import QuickPlanningService
-
         if prose_instruction_requires_plan_patch(instruction) and plan_patch is None:
             raise OperationBlockedError("该修改会改变事件、角色或钩子，请先提交计划补丁")
         if plan_patch is not None and approved_plan is None:
             raise OperationBlockedError("计划补丁需要基于已批准的章节计划")
         if plan_patch is not None:
             approved_plan = _apply_plan_patch(approved_plan, plan_patch)
-        QuickPlanningService(self.project_dir).assert_generation_allowed(chapter_id)
         _remember_active_chapter(self.project_dir, chapter_id)
         if not self.run_guard.acquire("scene_workflow"):
             raise OperationBlockedError("Another project generation is already active")

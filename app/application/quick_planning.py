@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 import zlib
 from collections.abc import Callable
 from pathlib import Path
@@ -23,7 +22,6 @@ from app.storage.models import (
     ChapterCardStatus,
     ChapterOutline,
     CharacterTier,
-    HiddenFieldPatch,
     LaterArcPlan,
     QuickCharacterProjection,
     QuickStoryProjection,
@@ -115,44 +113,21 @@ class QuickPlanningService:
             if value is not None:
                 values[key] = value
         changed = [field for field in values if values[field] != {"title": chapter.title, "summary": chapter.summary, "ending_hook": scene.ending_hook}[field]]
-        patches = self._contradictions(scene, values["summary"], values["ending_hook"])
         return ChapterCardEditPreview(
             chapter_id=chapter_id,
             changed_fields=changed,
             title=values["title"],
             summary=values["summary"],
             ending_hook=values["ending_hook"],
-            advanced_patch=patches,
         )
 
-    def apply_card_edit(
-        self, preview: ChapterCardEditPreview, *, accept_advanced: bool = False
-    ) -> ChapterCardProjection:
+    def apply_card_edit(self, preview: ChapterCardEditPreview) -> ChapterCardProjection:
         chapter = self._chapter(preview.chapter_id).model_copy(deep=True)
         scene = self._scene(chapter)
         chapter.title, chapter.summary = preview.title, preview.summary
-        if accept_advanced:
-            for patch in preview.advanced_patch:
-                field = patch.path.rsplit("/", 1)[-1]
-                if field in {
-                    "participating_character_ids",
-                    "pov_character_id",
-                    "scene_goal",
-                    "conflict",
-                    "required_plot_beats",
-                    "constraints",
-                }:
-                    setattr(scene, field, patch.new_value)
-            chapter.generation_blocked = False
-        elif preview.advanced_patch:
-            chapter.generation_blocked = True
         scene.ending_hook = preview.ending_hook
         self._save_chapter(chapter)
         return self._card(chapter)
-
-    def assert_generation_allowed(self, chapter_id: str) -> None:
-        if self._chapter(chapter_id).generation_blocked:
-            raise OperationBlockedError("Resolve the hidden Chapter Card contradiction before generation")
 
     def save_brief(self, brief: StoryBrief) -> StoryBrief:
         return self._designer.save_brief(brief)
@@ -422,56 +397,6 @@ class QuickPlanningService:
                 or load_scene_prose(self.project_dir, chapter.id, scene.id)
             )
         )
-
-    def _contradictions(self, scene, summary: str, ending_hook: str) -> list[HiddenFieldPatch]:
-        characters = load_all_characters(self.project_dir)
-        known = {character.core.name: character.core.id for character in characters}
-        participants = list(scene.participating_character_ids)
-        patches = []
-        text = f"{summary}\n{ending_hook}"
-        for name, character_id in known.items():
-            if name in text and character_id not in participants:
-                patches.append(HiddenFieldPatch(
-                    path="/scenes/0/participating_character_ids",
-                    old_value=participants,
-                    new_value=participants + [character_id],
-                    reason=f"章节卡内容提到了 {name}，但场景没有参与角色",
-                ))
-                participants.append(character_id)
-            if (
-                character_id != scene.pov_character_id
-                and re.search(rf"(?:POV|视角)\s*[:：]?\s*{re.escape(name)}", text, re.I)
-            ):
-                patches.append(HiddenFieldPatch(
-                    path="/scenes/0/pov_character_id",
-                    old_value=scene.pov_character_id,
-                    new_value=character_id,
-                    reason=f"章节卡指定了 {name} 视角，但场景 POV 不同",
-                ))
-        labeled = {
-            "scene_goal": ("目标", scene.scene_goal, False),
-            "conflict": ("冲突", scene.conflict, False),
-            "required_plot_beats": ("关键事件|节拍", scene.required_plot_beats, True),
-            "constraints": ("限制|约束", scene.constraints, True),
-        }
-        for field, (label, old_value, is_list) in labeled.items():
-            match = re.search(rf"(?:{label})\s*[:：]\s*([^；。\n]+)", text)
-            if not match:
-                continue
-            value = match.group(1).strip()
-            new_value = (
-                [item.strip() for item in re.split(r"[、,，]", value) if item.strip()]
-                if is_list
-                else value
-            )
-            if new_value != old_value:
-                patches.append(HiddenFieldPatch(
-                    path=f"/scenes/0/{field}",
-                    old_value=old_value,
-                    new_value=new_value,
-                    reason=f"章节卡中的{label.split('|')[0]}与场景高级字段不同",
-                ))
-        return patches
 
     def _mark_affected_chapters(self, preview: ReplanPreview) -> None:
         chapters = [chapter for volume in load_all_volumes(self.project_dir) for chapter in volume.chapters]

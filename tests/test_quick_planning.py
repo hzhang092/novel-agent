@@ -113,35 +113,30 @@ def test_story_arc_and_card_are_canonical_projections_with_derived_status(tmp_pa
     assert not any(project_dir.glob("**/*quick*"))
 
 
-def test_card_edit_preserves_hidden_scene_fields_and_reports_known_contradiction(tmp_path):
+def test_card_edit_changes_only_title_summary_and_hook(tmp_path):
     project_dir = project_with_outline(tmp_path)
     service = QuickPlanningService(project_dir)
 
     preview = service.preview_card_edit(
         "chapter-1",
         title="屋顶追踪",
-        summary="顾承渊在屋顶寻找线索",
+        summary="顾承渊在屋顶寻找线索。目标：逃离；冲突：追兵；节拍：夺门、坠落",
         ending_hook="印记熄灭",
     )
 
     assert preview.changed_fields == ["title", "summary", "ending_hook"]
-    assert preview.advanced_patch[0].path == "/scenes/0/participating_character_ids"
-    service.apply_card_edit(preview, accept_advanced=False)
+    service.apply_card_edit(preview)
 
     chapter = load_all_volumes(project_dir)[0].chapters[0]
     assert chapter.title == "屋顶追踪"
+    assert chapter.summary == "顾承渊在屋顶寻找线索。目标：逃离；冲突：追兵；节拍：夺门、坠落"
     assert chapter.scenes[0].ending_hook == "印记熄灭"
     assert chapter.scenes[0].pov_character_id == "hero"
-    assert chapter.generation_blocked is True
-
-    with pytest.raises(OperationBlockedError):
-        service.assert_generation_allowed("chapter-1")
-    from app.application.scene_workflow import SceneWorkflow, SceneWorkflowObserver
-
-    with pytest.raises(OperationBlockedError):
-        SceneWorkflow(project_dir).start(
-            "scene-1", "chapter-1", SceneWorkflowObserver()
-        )
+    assert chapter.scenes[0].participating_character_ids == ["hero"]
+    assert chapter.scenes[0].scene_goal == "找到线索"
+    assert chapter.scenes[0].conflict == "追兵出现"
+    assert chapter.scenes[0].required_plot_beats == []
+    assert getattr(chapter, "generation_blocked", False) is False
 
 
 def test_brief_drift_is_deterministic_and_does_not_write_canon(tmp_path):
@@ -198,26 +193,6 @@ def test_unpublished_prose_stays_draft_and_future_replan_target(tmp_path):
 
     assert service.chapter_card("chapter-1").status is ChapterCardStatus.DRAFT
     assert service.preview_replan().future_chapter_ids == ["chapter-1"]
-
-
-def test_labeled_hidden_fields_require_an_advanced_patch(tmp_path):
-    project_dir = project_with_outline(tmp_path)
-    service = QuickPlanningService(project_dir)
-
-    preview = service.preview_card_edit(
-        "chapter-1",
-        summary="目标：逃离屋顶；冲突：顾承渊阻拦；节拍：夺门、坠落",
-    )
-
-    paths = {patch.path for patch in preview.advanced_patch}
-    assert "/scenes/0/scene_goal" in paths
-    assert "/scenes/0/conflict" in paths
-    assert "/scenes/0/required_plot_beats" in paths
-    service.apply_card_edit(preview, accept_advanced=True)
-    scene = load_all_volumes(project_dir)[0].chapters[0].scenes[0]
-    assert scene.scene_goal == "逃离屋顶"
-    assert scene.conflict == "顾承渊阻拦"
-    assert scene.required_plot_beats == ["夺门", "坠落"]
 
 
 def test_quick_projection_rejects_multi_scene_chapters(tmp_path):

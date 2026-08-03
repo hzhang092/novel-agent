@@ -403,17 +403,10 @@ Advanced relationships, arbitrary character fields, detailed power systems, and 
 
 Quick Outline shows Story Arc groups and Chapter Cards. Manual card editing exposes only title, summary, and ending hook.
 
-Deep-only fields remain unchanged. If the requested edit creates a known contradiction with POV, participants, goal, conflict, beats, or constraints, show a separate advanced-field patch:
-
-```text
-这个修改还需要更新：
-• POV：顾承渊 → 沈青璃
-• 参与角色：加入沈青璃
-
-[应用全部] [只保存章节卡] [取消]
-```
-
-If the author rejects the required advanced patch and the contradiction remains, block generation for that chapter until it is resolved.
+Deep-only fields such as POV, participants, goal, conflict, beats, and
+constraints remain unchanged. Quick does not infer hidden-field updates or
+block generation from title, summary, or ending-hook text. Authors may edit
+those advanced fields explicitly in Deep Creation.
 
 ```text
 第一故事阶段：剑仙入世                         10 / 12

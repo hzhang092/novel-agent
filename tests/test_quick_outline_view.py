@@ -6,7 +6,6 @@ from app.storage.models import (
     ChapterCardEditPreview,
     ChapterCardProjection,
     ChapterCardStatus,
-    HiddenFieldPatch,
     QuickStoryProjection,
     ReplanPreview,
     StoryArcProjection,
@@ -42,13 +41,10 @@ class FakeQuickPlanning:
         self.calls.append(("preview_card_edit", chapter_id, edits or kwargs))
         values = {"title": self.card.title, "summary": self.card.summary, "ending_hook": self.card.ending_hook}
         values.update(edits or kwargs)
-        preview = ChapterCardEditPreview(chapter_id=chapter_id, changed_fields=list(values), **values)
-        if getattr(self, "advanced", False):
-            preview.advanced_patch = [HiddenFieldPatch(path="/scene/pov", old_value="旧", new_value="新", reason="需要高级确认")]
-        return preview
+        return ChapterCardEditPreview(chapter_id=chapter_id, changed_fields=list(values), **values)
 
-    def apply_card_edit(self, preview, *, accept_advanced=False):
-        self.calls.append(("apply_card_edit", preview.chapter_id, accept_advanced))
+    def apply_card_edit(self, preview):
+        self.calls.append(("apply_card_edit", preview.chapter_id))
         self.card = self.card.model_copy(update={"title": preview.title, "summary": preview.summary, "ending_hook": preview.ending_hook})
         return self.card
 
@@ -106,22 +102,6 @@ def test_quick_outline_edits_only_card_fields_and_requests_deep_outline(qtbot):
     assert any(call[0] == "preview_card_edit" for call in service.calls)
     assert any(call[0] == "apply_card_edit" for call in service.calls)
     assert requested == ["chapter-1"]
-
-
-def test_quick_outline_requires_explicit_choice_for_advanced_patch(qtbot):
-    view = QuickOutlineView()
-    qtbot.addWidget(view)
-    service = FakeQuickPlanning()
-    service.advanced = True
-    view.bind_application(service)
-    view.save_button.click()
-
-    assert "高级字段" in view.advanced_label.text()
-    assert view.apply_advanced_button.isEnabled()
-    assert view.save_card_only_button.isEnabled()
-    view.save_card_only_button.click()
-    assert "阻止生成" in view.advanced_label.text()
-    assert any(call[0] == "apply_card_edit" and call[2] is False for call in service.calls)
 
 
 @pytest.mark.asyncio
