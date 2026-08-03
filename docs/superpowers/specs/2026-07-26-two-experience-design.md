@@ -283,25 +283,9 @@ The commit is all-or-nothing. On failure, canonical files remain at their pre-ap
 
 ## 9. Planning expansion and replanning
 
-Only the first Story Arc is expanded during bootstrap. Later arcs are planned on demand.
-
-When two approved chapters remain in the current expanded arc, show:
-
-```text
-[规划下一个故事阶段]
-```
-
-This action generates a reviewable draft. It never auto-generates or auto-commits.
-
-Later-arc planning reads:
-
-1. Current canonical Story Bible and Writing Style.
-2. Current character definitions and states.
-3. Published chapter summaries, open threads, and continuity state.
-4. Approved Story Arc summaries.
-5. Story Brief and Story Proposal as direction.
-
-Canon is truth when it conflicts with the Brief or Proposal. Story Designer reports the conflict instead of silently overriding canon.
+Only the first Story Arc is expanded during bootstrap. Later-arc planning is
+deferred from the first Quick release; authors can extend the canonical
+`VolumeOutline` in Deep Creation.
 
 Planning history is intentionally small:
 
@@ -416,8 +400,6 @@ those advanced fields explicitly in Deep Creation.
 │ 结尾：袭击者身上出现仙门印记。             │
 │ 状态：待写                       [编辑]      │
 └────────────────────────────────────────────┘
-
-[规划下一个故事阶段]
 ```
 
 ### 11.3 写章节
@@ -707,6 +689,7 @@ There is no migration for multi-scene chapters or an older guided-planning schem
 - Bootstrap merging into non-empty projects.
 - Provider fallback.
 - Multi-call stitched long chapters.
+- Later-arc planning in Quick Creation.
 - A second engine, pipeline, or simplified canonical data model.
 - Polished visual design or Figma assets; this spec’s Markdown wireframes are sufficient for implementation.
 

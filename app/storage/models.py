@@ -322,27 +322,11 @@ class ReplanPreview(BaseModel):
     operations: list[dict] = Field(default_factory=list)
 
 
-class LaterArcPlan(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    kind: Literal["later_arc"] = "later_arc"
-    base_revision: int = Field(default=1, ge=1)
-    title: str
-    summary: str
-    chapters: list[ChapterOutline] = Field(default_factory=list)
-    direction_conflicts: list[str] = Field(default_factory=list)
-    changes: list[str] = Field(default_factory=list)
-    consequences: list[str] = Field(default_factory=list)
-
-
 class ActiveReplanDraft(ReplanPreview):
     pass
 
 
 class ActiveStoryPatchDraft(StoryPatchPreview):
-    pass
-
-
-class ActiveLaterArcDraft(LaterArcPlan):
     pass
 
 
@@ -645,7 +629,6 @@ ActivePlanningDraft = Annotated[
         ActiveBootstrapDraft,
         ActiveStoryPatchDraft,
         ActiveReplanDraft,
-        ActiveLaterArcDraft,
     ],
     Field(discriminator="kind"),
 ]

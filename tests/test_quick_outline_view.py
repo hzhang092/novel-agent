@@ -60,15 +60,6 @@ class FakeQuickPlanning:
         self.calls.append(("apply_replan", confirm_published))
         return preview
 
-    def can_plan_next_arc(self, volume_id=None):
-        self.calls.append(("can_plan_next_arc", volume_id))
-        return True
-
-    async def generate_later_arc(self, volume_id=None):
-        self.calls.append(("generate_later_arc", volume_id))
-        return type("LaterArc", (), {"title": "第二卷", "summary": "新的旅程", "direction_conflicts": [], "changes": ["新增第二卷"]})()
-
-
 def test_quick_outline_renders_cards_and_emits_canonical_scene(qtbot):
     view = QuickOutlineView()
     qtbot.addWidget(view)
@@ -105,7 +96,7 @@ def test_quick_outline_edits_only_card_fields_and_requests_deep_outline(qtbot):
 
 
 @pytest.mark.asyncio
-async def test_quick_outline_shows_drift_replan_and_unapplied_later_arc(qtbot):
+async def test_quick_outline_shows_replan_without_later_arc_action(qtbot):
     view = QuickOutlineView()
     qtbot.addWidget(view)
     service = FakeQuickPlanning()
@@ -117,7 +108,4 @@ async def test_quick_outline_shows_drift_replan_and_unapplied_later_arc(qtbot):
     await asyncio.sleep(0)
     assert "第 1 章概要" in view.replan_label.text()
     view.apply_replan_button.click()
-    view.next_arc_button.click()
-    await asyncio.sleep(0)
-    assert "第二卷" in view.next_arc_label.text()
-    assert not any(call[0] == "apply_later_arc" for call in service.calls)
+    assert not any("规划下一" in button.text() for button in view.findChildren(type(view.save_button)))

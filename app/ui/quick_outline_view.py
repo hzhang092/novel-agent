@@ -100,12 +100,6 @@ class QuickOutlineView(QWidget):
         self.replan_label.setWordWrap(True)
         layout.addWidget(self.replan_label)
 
-        self.next_arc_button = QPushButton("规划下一故事弧")
-        self.next_arc_button.clicked.connect(self._generate_later_arc)
-        layout.addWidget(self.next_arc_button)
-        self.next_arc_label = QLabel()
-        self.next_arc_label.setWordWrap(True)
-        layout.addWidget(self.next_arc_label)
         layout.addStretch()
 
     def bind_application(self, service) -> None:
@@ -136,7 +130,6 @@ class QuickOutlineView(QWidget):
         self.drift_label.setText(
             "Brief 漂移：" + ("、".join(drift.changed_fields) if drift.changed_fields else "无")
         )
-        self.next_arc_button.setEnabled(bool(self._service.can_plan_next_arc()))
 
     def select_chapter(self, chapter_id: str) -> bool:
         index = self.card_list.findData(chapter_id)
@@ -235,21 +228,6 @@ class QuickOutlineView(QWidget):
             return
         self._replan_preview = None
         self.refresh()
-
-    def _generate_later_arc(self) -> None:
-        if self._service is not None:
-            self._start_task(self._run_later_arc())
-
-    async def _run_later_arc(self) -> None:
-        try:
-            draft = await self._service.generate_later_arc()
-        except _PLANNING_ERRORS as error:
-            self.next_arc_label.setText(f"规划失败：{error}")
-            return
-        conflicts = "；冲突：" + "；".join(draft.direction_conflicts) if draft.direction_conflicts else ""
-        self.next_arc_label.setText(
-            f"待审核草稿：{draft.title}\n{draft.summary}{conflicts}\n" + "；".join(draft.changes)
-        )
 
     def _start_task(self, coroutine) -> None:
         if self._task is None or self._task.done():

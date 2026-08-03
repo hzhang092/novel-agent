@@ -14,7 +14,6 @@ from app.application.story_bible import StoryBibleApplicationService
 from app.application.story_designer import StoryDesignerService
 from app.providers.base import LLMProvider
 from app.storage.models import (
-    ActiveLaterArcDraft,
     ActiveReplanDraft,
     ActiveStoryPatchDraft,
     ChapterCardEditPreview,
@@ -22,7 +21,6 @@ from app.storage.models import (
     ChapterCardStatus,
     ChapterOutline,
     CharacterTier,
-    LaterArcPlan,
     QuickCharacterProjection,
     QuickStoryProjection,
     ReplanPreview,
@@ -276,55 +274,6 @@ class QuickPlanningService:
             self._mark_affected_chapters(preview)
         self._clear_active_draft(ActiveReplanDraft)
         return preview
-
-    def can_plan_next_arc(self, volume_id: str | None = None) -> bool:
-        volumes = load_all_volumes(self.project_dir)
-        if not volumes:
-            return False
-        volume = next((item for item in volumes if item.id == volume_id), volumes[-1])
-        approved = sum(self._has_published_prose(chapter) for chapter in volume.chapters)
-        return bool(volume.chapters) and len(volume.chapters) - approved <= 2
-
-    async def generate_later_arc(self, volume_id: str | None = None) -> ActiveLaterArcDraft:
-        if not self.can_plan_next_arc(volume_id):
-            raise OperationBlockedError("Plan the next story arc only when two approved chapters remain")
-        base_revision = self._canon_revision()
-        projection = self.story_projection()
-        planning = load_planning(self.project_dir)
-        response = await self._designer.generate_structured(
-            self._later_arc_messages(projection, planning), LaterArcPlan
-        )
-        draft = ActiveLaterArcDraft.model_validate(response.model_dump())
-        if base_revision != self._canon_revision():
-            raise ConcurrentModificationError("The story changed while planning the next arc")
-        draft.base_revision = base_revision
-        planning = load_planning(self.project_dir)
-        planning.active_draft = draft
-        save_planning(self.project_dir, planning)
-        return draft
-
-    async def plan_next_arc(self, volume_id: str | None = None) -> ActiveLaterArcDraft:
-        return await self.generate_later_arc(volume_id)
-
-    def apply_later_arc(self, draft: LaterArcPlan) -> None:
-        self._assert_current_draft(draft, ActiveLaterArcDraft)
-        planning = load_planning(self.project_dir)
-        from app.storage.models import VolumeOutline
-
-        volumes = load_all_volumes(self.project_dir)
-        volume = VolumeOutline(
-            story_id=volumes[-1].story_id if volumes else "",
-            title=draft.title,
-            summary=draft.summary,
-            chapters=draft.chapters,
-        )
-        for chapter in volume.chapters:
-            chapter.volume_id = volume.id
-            for scene in chapter.scenes:
-                scene.chapter_id = chapter.id
-        save_volume_outline(self.project_dir, volume)
-        planning.active_draft = None
-        save_planning(self.project_dir, planning)
 
     def _card(
         self, chapter: ChapterOutline, volume_id: str | None = None
@@ -634,9 +583,5 @@ class QuickPlanningService:
         base: ReplanPreview, published: list[str], instruction: str
     ) -> list[dict[str, str]]:
         return [{"role": "system", "content": "Return only ReplanPreview. Keep current canon as truth. Default operations to future unpublished chapters. Put every proposed published-chapter target in published_chapter_ids for separate confirmation."}, {"role": "user", "content": json.dumps({"base": base.model_dump(), "published_chapter_ids": published, "instruction": instruction}, ensure_ascii=False)}]
-
-    def _later_arc_messages(self, projection: QuickStoryProjection, planning) -> list[dict[str, str]]:
-        return [{"role": "system", "content": "Return only LaterArcPlan. Current canon is truth. Report any direction conflicts with Story Brief or Story Proposal instead of overriding canon."}, {"role": "user", "content": json.dumps({"current_canon": self._canon_payload(), "quick_projection": projection.model_dump(mode="json"), "planning": planning.model_dump(mode="json")}, ensure_ascii=False)}]
-
 
 BriefDrift = StoryBriefDrift

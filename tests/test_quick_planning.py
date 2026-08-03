@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from app.application.errors import ConcurrentModificationError, OperationBlockedError
@@ -16,7 +14,6 @@ from app.storage.models import (
     CharacterCore,
     CharacterState,
     CharacterTier,
-    LaterArcPlan,
     Project,
     ReplanPreview,
     SceneGenerationRecord,
@@ -33,13 +30,6 @@ from app.storage.project_files import (
     save_scene_prose,
     save_volume_outline,
 )
-
-
-class CapturingMockProvider(MockProvider):
-    async def generate_structured(self, messages, schema, temperature=0.3):
-        self.messages = messages
-        return await super().generate_structured(messages, schema, temperature)
-
 
 def project_with_outline(tmp_path, *, published: bool = False):
     project_dir = create_project(tmp_path, Project(title="测试小说"))
@@ -250,51 +240,13 @@ def test_story_change_marks_published_downstream_chapters_but_title_fix_does_not
     assert clean_service.chapter_card("chapter-1").status is ChapterCardStatus.APPROVED
 
 
-def test_replan_defaults_to_unpublished_chapters_and_later_arc_stays_a_draft(tmp_path):
+def test_replan_defaults_to_unpublished_chapters(tmp_path):
     project_dir = project_with_outline(tmp_path, published=True)
-    service = QuickPlanningService(
-        project_dir,
-        provider_factory=lambda: MockProvider(
-            structured_response=LaterArcPlan(title="后续", summary="继续", chapters=[])
-        ),
-    )
+    service = QuickPlanningService(project_dir)
 
     replan = service.preview_replan()
     assert replan.future_chapter_ids == []
     assert replan.published_chapter_ids == []
-
-    assert service.can_plan_next_arc("arc-1")
-
-
-@pytest.mark.asyncio
-async def test_later_arc_planning_persists_conflict_as_reviewable_draft(tmp_path):
-    project_dir = project_with_outline(tmp_path, published=True)
-    provider = CapturingMockProvider(
-        structured_response=LaterArcPlan(
-            title="后续阶段",
-            summary="当前 canon 继续",
-            direction_conflicts=["Brief 想要离开城市，但当前 canon 仍要求追查印记"],
-        )
-    )
-    service = QuickPlanningService(project_dir, provider_factory=lambda: provider)
-
-    draft = await service.generate_later_arc("arc-1")
-
-    assert draft.direction_conflicts
-    assert load_planning(project_dir).active_draft == draft
-    assert len(load_all_volumes(project_dir)) == 1
-    prompt = json.loads(provider.messages[-1]["content"])
-    assert {"bible", "style", "characters", "outline", "summaries", "canon_facts"} <= set(
-        prompt["current_canon"]
-    )
-    tampered = draft.model_copy(update={"title": "偷偷改写"})
-    with pytest.raises(ConcurrentModificationError):
-        service.apply_later_arc(tampered)
-    service.apply_later_arc(draft)
-    volumes = load_all_volumes(project_dir)
-    assert len(volumes) == 2
-    assert volumes[1].story_id == "story-1"
-
 
 @pytest.mark.asyncio
 async def test_generated_replan_separates_published_changes_and_rejects_stale_base(tmp_path):
