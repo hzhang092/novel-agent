@@ -151,17 +151,6 @@ class StoryDesignerService:
             and self._is_empty_project()
         )
 
-    async def generate_structured(
-        self, messages: list[dict[str, str]], schema: type[BaseModel]
-    ) -> BaseModel:
-        """Use Story Designer's configured structured-provider route for planning drafts."""
-        if not self.run_guard.acquire("story_designer"):
-            raise OperationBlockedError("Another project generation is already active")
-        try:
-            return await self._generate_with_provider(messages, schema)
-        finally:
-            self.run_guard.release("story_designer")
-
     async def _generate_with_provider(
         self, messages: list[dict[str, str]], schema: type[BaseModel]
     ) -> BaseModel:

@@ -194,7 +194,8 @@ An ongoing serial still records a provisional long-term destination. It is direc
 
 Story Brief has a revision. Approved planning records the Brief revision it used.
 
-If the Brief changes afterward:
+The first Quick release does not compare Brief revisions, show drift notices,
+or offer replanning. A future maintenance flow must:
 
 - Do not rewrite canon, outline, or prose.
 - Show deterministic version drift with the specific changed fields.
@@ -204,9 +205,8 @@ If the Brief changes afterward:
 - Changed chapters and later prose-bearing chapters are marked **需要复核** when story meaning changes.
 - Display-only title corrections do not cause review status.
 
-There is no continuous semantic-drift AI in this release. A later manual **Check direction** action may be added separately.
-
-The first Quick release does not expose Brief drift notices or full replan controls. These remain deferred maintenance surfaces.
+There is no continuous semantic-drift AI in this release. A later manual
+**Check direction** action may be added separately.
 
 ## 7. Story Proposal
 
@@ -292,7 +292,7 @@ deferred from the first Quick release; authors can extend the canonical
 Planning history is intentionally small:
 
 - One approved Story Proposal.
-- One resumable active proposal or bootstrap/planning draft.
+- One resumable active proposal or bootstrap draft.
 - Revision metadata required for drift and optimistic concurrency.
 
 Unapproved planning variants are not retained permanently. Scene Revision history remains unchanged.
@@ -557,7 +557,7 @@ Quick uses configured defaults and hides provider/model routing in normal creati
 - Show a currency cost estimate only when the provider supplies trusted pricing metadata.
 - Never require the author to enter token prices.
 - Otherwise show a neutral warning that cloud use may incur charges.
-- Story Designer has one dedicated proposal/bootstrap/replan route, visible in advanced Settings and hidden in normal Quick flow.
+- Story Designer has one dedicated proposal/bootstrap route, hidden behind the staged Quick flow.
 
 The first-release Quick UI keeps the proposal and bootstrap checkpoints, first-arc card selection, plan approval or adjustment, prose generation and revision, review, memory approval, and publication path. It shows only the current creation stage in Story, hides the Deep generation toolbar while writing in Quick, and shows revision, review, memory, and publication controls only when their existing state is relevant. A simple scroll container is sufficient when those controls exceed the available height.
 
@@ -640,9 +640,8 @@ Story Designer:
 Planning and canonical edits affect downstream work without destructive rewriting:
 
 - A story-affecting Chapter Card or advanced outline change marks that chapter and later prose-bearing chapters **需要复核**.
-- A Story Brief replan defaults to unwritten future chapters.
-- In the first release, Brief drift notices and full replanning are deferred from normal Quick UI; any retained maintenance path must continue to preserve these non-destructive propagation rules.
-- A proposed patch touching published chapters is shown separately with its downstream review impact.
+- Story Brief drift notices and full replanning are deferred from the first release.
+- A future replanning implementation must default to unwritten chapters and separately confirm published-chapter changes.
 - Future unwritten chapters use the revised outline after approval.
 - Existing Published Scene Revisions remain selected until the author explicitly replaces them.
 - Existing stale-scene and revision publication rules remain authoritative.
@@ -677,7 +676,6 @@ There is no migration for multi-scene chapters or an older guided-planning schem
 | Structured patches | Stale base revision is rejected; unchanged/manual fields survive an accepted patch. |
 | Chapter projection | Card fields and statuses derive from existing outline/revision data. |
 | Publication | Save remains non-canonical; approval publishes the exact revision plus selected memory atomically. |
-| Planning drift | Brief revision changes create deterministic notices and never rewrite canon/prose. |
 | Stale run | Output is preserved as a draft, labeled old-context, and blocked from ordinary publication. |
 | Provider behavior | No silent fallback; no user-entered pricing requirement. |
 | Existing project | Opens in Deep by default and works in Quick without requiring generated planning artifacts. |

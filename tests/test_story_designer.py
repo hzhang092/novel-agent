@@ -7,7 +7,8 @@ from app.application.story_designer import StoryDesignerService
 from app.providers.base import MockProvider
 from app.storage.bible_models import TerminologyElement, WorldOverview
 from app.storage.models import (
-    ActiveStoryPatchDraft,
+    ActiveBootstrapDraft,
+    ActiveProposalDraft,
     BootstrapPatchPreview,
     CanonFact,
     ChapterLength,
@@ -150,19 +151,15 @@ async def test_proposal_does_not_replace_a_different_active_draft(tmp_path):
     service = StoryDesignerService(project_dir, provider_factory=lambda: provider)
     service.save_brief(brief())
     planning = load_planning(project_dir)
-    foreign_draft = ActiveStoryPatchDraft(
-        operations=[
-            {
-                "target": "overview",
-                "field": "geography",
-                "value": "浮空城",
-            }
-        ]
+    foreign_draft = ActiveBootstrapDraft(
+        based_on_brief_revision=1,
+        based_on_proposal_revision=1,
+        bootstrap=bootstrap(),
     )
     planning.active_draft = foreign_draft
     save_planning(project_dir, planning)
 
-    with pytest.raises(OperationBlockedError, match="story_patch"):
+    with pytest.raises(OperationBlockedError, match="bootstrap"):
         await service.generate_proposal()
 
     assert load_planning(project_dir).active_draft == foreign_draft
@@ -527,14 +524,9 @@ async def test_bootstrap_discard_rejects_a_stale_or_mismatched_draft(tmp_path):
 
     assert load_planning(project_dir).active_draft == draft
     planning = load_planning(project_dir)
-    foreign_draft = ActiveStoryPatchDraft(
-        operations=[
-            {
-                "target": "overview",
-                "field": "geography",
-                "value": "浮空城",
-            }
-        ]
+    foreign_draft = ActiveProposalDraft(
+        based_on_brief_revision=1,
+        proposal=proposal(),
     )
     planning.active_draft = foreign_draft
     save_planning(project_dir, planning)

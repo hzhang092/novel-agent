@@ -288,48 +288,6 @@ class ChapterCardEditPreview(BaseModel):
     ending_hook: str
 
 
-class StoryBriefDrift(BaseModel):
-    changed_fields: list[str] = Field(default_factory=list)
-
-
-class StoryPatchOperation(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    target: Literal["character", "overview"]
-    target_id: str = ""
-    field: str
-    value: str | list[str] | None
-
-
-class StoryPatchPreview(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    kind: Literal["story_patch"] = "story_patch"
-    base_revision: int = Field(default=1, ge=1)
-    operations: list[StoryPatchOperation] = Field(min_length=1)
-    changes: list[str] = Field(default_factory=list)
-    consequences: list[str] = Field(default_factory=list)
-
-
-class ReplanPreview(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    kind: Literal["replan"] = "replan"
-    base_revision: int = Field(default=1, ge=1)
-    future_chapter_ids: list[str] = Field(default_factory=list)
-    published_chapter_ids: list[str] = Field(default_factory=list)
-    downstream_review_chapter_ids: list[str] = Field(default_factory=list)
-    changes: list[str] = Field(default_factory=list)
-    consequences: list[str] = Field(default_factory=list)
-    story_affecting: bool = True
-    operations: list[dict] = Field(default_factory=list)
-
-
-class ActiveReplanDraft(ReplanPreview):
-    pass
-
-
-class ActiveStoryPatchDraft(StoryPatchPreview):
-    pass
-
-
 # ── Scene Generation ───────────────────────────────────────────────────────
 
 class GenerationReadPoints(BaseModel):
@@ -627,8 +585,6 @@ ActivePlanningDraft = Annotated[
     Union[
         ActiveProposalDraft,
         ActiveBootstrapDraft,
-        ActiveStoryPatchDraft,
-        ActiveReplanDraft,
     ],
     Field(discriminator="kind"),
 ]
