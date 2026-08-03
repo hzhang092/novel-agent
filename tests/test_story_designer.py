@@ -7,6 +7,7 @@ from app.application.story_designer import StoryDesignerService
 from app.providers.base import MockProvider
 from app.storage.bible_models import TerminologyElement, WorldOverview
 from app.storage.models import (
+    ActiveStoryPatchDraft,
     BootstrapPatchPreview,
     CanonFact,
     ChapterLength,
@@ -23,6 +24,7 @@ from app.storage.models import (
     VolumeOutline,
 )
 from app.storage.project_files import create_project, load_all_volumes, load_planning, load_project, save_canon_facts
+from app.storage.project_files import save_planning
 
 
 def brief() -> StoryBrief:
@@ -139,6 +141,31 @@ async def test_proposal_draft_uses_dedicated_provider_and_replaces_only_active_d
     assert second.revision == 2
     assert load_planning(project_dir).active_draft == second
     assert provider.structured_response is not None
+
+
+@pytest.mark.asyncio
+async def test_proposal_does_not_replace_a_different_active_draft(tmp_path):
+    project_dir = create_project(tmp_path, Project(title="Folder title"))
+    provider = MockProvider(structured_response=proposal())
+    service = StoryDesignerService(project_dir, provider_factory=lambda: provider)
+    service.save_brief(brief())
+    planning = load_planning(project_dir)
+    foreign_draft = ActiveStoryPatchDraft(
+        operations=[
+            {
+                "target": "overview",
+                "field": "geography",
+                "value": "浮空城",
+            }
+        ]
+    )
+    planning.active_draft = foreign_draft
+    save_planning(project_dir, planning)
+
+    with pytest.raises(OperationBlockedError, match="story_patch"):
+        await service.generate_proposal()
+
+    assert load_planning(project_dir).active_draft == foreign_draft
 
 
 @pytest.mark.asyncio
@@ -486,6 +513,36 @@ async def test_bootstrap_blocks_proposal_replacement_and_whole_object_patches(tm
             operations=[{"path": "/arcs/0", "value": {}}],
             changes=["坏变更"], consequences=["坏影响"],
         ))
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_discard_rejects_a_stale_or_mismatched_draft(tmp_path):
+    provider = MockProvider(structured_response=proposal())
+    project_dir, service = await approved_service(tmp_path, provider)
+    provider.structured_response = bootstrap()
+    draft = await service.generate_bootstrap()
+
+    with pytest.raises(ConcurrentModificationError, match="bootstrap draft"):
+        service.discard_unapproved_bootstrap(base_revision=draft.revision + 1)
+
+    assert load_planning(project_dir).active_draft == draft
+    planning = load_planning(project_dir)
+    foreign_draft = ActiveStoryPatchDraft(
+        operations=[
+            {
+                "target": "overview",
+                "field": "geography",
+                "value": "浮空城",
+            }
+        ]
+    )
+    planning.active_draft = foreign_draft
+    save_planning(project_dir, planning)
+
+    with pytest.raises(ConcurrentModificationError, match="bootstrap draft"):
+        service.discard_unapproved_bootstrap(base_revision=draft.revision)
+
+    assert load_planning(project_dir).active_draft == foreign_draft
 
 
 @pytest.mark.asyncio

@@ -9,6 +9,8 @@ from app.application.quick_planning import (
 )
 from app.providers.base import MockProvider
 from app.storage.models import (
+    ActiveReplanDraft,
+    ActiveStoryPatchDraft,
     ChapterOutline,
     Character,
     CharacterCore,
@@ -28,6 +30,7 @@ from app.storage.project_files import (
     load_planning,
     save_scene_generation_record,
     save_scene_prose,
+    save_planning,
     save_volume_outline,
 )
 
@@ -316,3 +319,53 @@ async def test_story_patch_updates_only_routine_fields(tmp_path):
     assert projection.main_characters[0].personality == "更谨慎"
     assert projection.core_setting.geography == "浮空城"
     assert load_character(project_dir, "hero").core.element_relations == []
+
+
+@pytest.mark.asyncio
+async def test_story_patch_does_not_replace_a_different_active_draft(tmp_path):
+    project_dir = project_with_outline(tmp_path)
+    planning = load_planning(project_dir)
+    foreign_draft = ActiveReplanDraft()
+    planning.active_draft = foreign_draft
+    save_planning(project_dir, planning)
+    provider = MockProvider(
+        structured_response=StoryPatchPreview(
+            operations=[
+                {
+                    "target": "overview",
+                    "field": "geography",
+                    "value": "浮空城",
+                }
+            ]
+        )
+    )
+    service = QuickPlanningService(project_dir, provider_factory=lambda: provider)
+
+    with pytest.raises(OperationBlockedError, match="replan"):
+        await service.generate_story_patch("改舞台")
+
+    assert load_planning(project_dir).active_draft == foreign_draft
+
+
+@pytest.mark.asyncio
+async def test_replan_does_not_replace_a_different_active_draft(tmp_path):
+    project_dir = project_with_outline(tmp_path)
+    planning = load_planning(project_dir)
+    foreign_draft = ActiveStoryPatchDraft(
+        operations=[
+            {
+                "target": "overview",
+                "field": "geography",
+                "value": "浮空城",
+            }
+        ]
+    )
+    planning.active_draft = foreign_draft
+    save_planning(project_dir, planning)
+    provider = MockProvider(structured_response=ReplanPreview())
+    service = QuickPlanningService(project_dir, provider_factory=lambda: provider)
+
+    with pytest.raises(OperationBlockedError, match="story_patch"):
+        await service.generate_replan()
+
+    assert load_planning(project_dir).active_draft == foreign_draft

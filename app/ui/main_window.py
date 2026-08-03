@@ -548,6 +548,11 @@ class MainWindow(QMainWindow):
     def guard_deep_save(self, save: Callable[[], bool]) -> bool:
         if self._deep_save_in_progress:
             return save()
+        bootstrap_revision = (
+            self._application.story_designer.unapproved_bootstrap_revision()
+            if self._application is not None
+            else None
+        )
         if not self._confirm_bootstrap_discard():
             return False
         self._deep_save_in_progress = True
@@ -555,8 +560,10 @@ class MainWindow(QMainWindow):
             saved = save()
         finally:
             self._deep_save_in_progress = False
-        if saved and self._application is not None:
-            self._application.story_designer.discard_unapproved_bootstrap()
+        if saved and self._application is not None and bootstrap_revision is not None:
+            self._application.story_designer.discard_unapproved_bootstrap(
+                base_revision=bootstrap_revision
+            )
         return saved
 
     def _on_new_project(self) -> None:

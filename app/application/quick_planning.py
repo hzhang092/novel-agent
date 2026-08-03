@@ -11,7 +11,10 @@ from typing import Any
 from app.application.errors import ConcurrentModificationError, OperationBlockedError
 from app.application.characters import CharacterApplicationService
 from app.application.story_bible import StoryBibleApplicationService
-from app.application.story_designer import StoryDesignerService
+from app.application.story_designer import (
+    StoryDesignerService,
+    require_compatible_active_draft,
+)
 from app.providers.base import LLMProvider
 from app.storage.models import (
     ActiveReplanDraft,
@@ -150,6 +153,9 @@ class QuickPlanningService:
         )
 
     async def generate_story_patch(self, instruction: str) -> ActiveStoryPatchDraft:
+        planning = load_planning(self.project_dir)
+        require_compatible_active_draft(planning, ActiveStoryPatchDraft)
+        original_draft = planning.active_draft
         base_revision = self._canon_revision()
         response = await self._designer.generate_structured(
             self._story_patch_messages(instruction), StoryPatchPreview
@@ -159,9 +165,14 @@ class QuickPlanningService:
             raise ConcurrentModificationError("The story changed while generating the patch")
         draft.base_revision = base_revision
         self._validate_story_patch(draft)
-        planning = load_planning(self.project_dir)
-        planning.active_draft = draft
-        save_planning(self.project_dir, planning)
+        current = load_planning(self.project_dir)
+        require_compatible_active_draft(current, ActiveStoryPatchDraft)
+        if current.active_draft != original_draft:
+            raise ConcurrentModificationError(
+                "The active planning draft changed while generating the story patch"
+            )
+        current.active_draft = draft
+        save_planning(self.project_dir, current)
         return draft
 
     def apply_story_patch(self, draft: StoryPatchPreview) -> None:
@@ -193,7 +204,7 @@ class QuickPlanningService:
         if overview_changed:
             StoryBibleApplicationService(self.project_dir).save_overview(overview)
         self._mark_prose_from(0)
-        self._clear_active_draft()
+        self._clear_active_draft(ActiveStoryPatchDraft)
 
     def cancel_story_patch(self, draft: StoryPatchPreview) -> None:
         self._assert_current_draft(draft, ActiveStoryPatchDraft)
@@ -209,6 +220,9 @@ class QuickPlanningService:
         )
 
     async def generate_replan(self, instruction: str = "") -> ActiveReplanDraft:
+        planning = load_planning(self.project_dir)
+        require_compatible_active_draft(planning, ActiveReplanDraft)
+        original_draft = planning.active_draft
         base = self.preview_replan()
         published = self._published_chapter_ids()
         response = await self._designer.generate_structured(
@@ -228,9 +242,14 @@ class QuickPlanningService:
         draft.downstream_review_chapter_ids = self._review_ids_from(
             set(draft.published_chapter_ids)
         )
-        planning = load_planning(self.project_dir)
-        planning.active_draft = draft
-        save_planning(self.project_dir, planning)
+        current = load_planning(self.project_dir)
+        require_compatible_active_draft(current, ActiveReplanDraft)
+        if current.active_draft != original_draft:
+            raise ConcurrentModificationError(
+                "The active planning draft changed while generating the replan"
+            )
+        current.active_draft = draft
+        save_planning(self.project_dir, current)
         return draft
 
     async def replan(self, instruction: str = "") -> ActiveReplanDraft:
@@ -243,6 +262,8 @@ class QuickPlanningService:
         confirm_published: bool = False,
     ) -> ReplanPreview:
         planning = load_planning(self.project_dir)
+        require_compatible_active_draft(planning, ActiveReplanDraft)
+        has_active_draft = isinstance(planning.active_draft, ActiveReplanDraft)
         if isinstance(planning.active_draft, ActiveReplanDraft):
             self._assert_current_draft(preview, ActiveReplanDraft)
         elif preview.base_revision != self._canon_revision():
@@ -272,7 +293,8 @@ class QuickPlanningService:
                 self._save_chapter(chapter)
         if story_affecting:
             self._mark_affected_chapters(preview)
-        self._clear_active_draft(ActiveReplanDraft)
+        if has_active_draft:
+            self._clear_active_draft(ActiveReplanDraft)
         return preview
 
     def _card(
@@ -491,9 +513,10 @@ class QuickPlanningService:
 
     def _clear_active_draft(self, draft_type: type | None = None) -> None:
         planning = load_planning(self.project_dir)
-        if draft_type is None or isinstance(planning.active_draft, draft_type):
-            planning.active_draft = None
-            save_planning(self.project_dir, planning)
+        if draft_type is not None and not isinstance(planning.active_draft, draft_type):
+            raise ConcurrentModificationError("The active planning draft has changed")
+        planning.active_draft = None
+        save_planning(self.project_dir, planning)
 
     def _validate_story_patch(self, draft: StoryPatchPreview) -> None:
         characters = {
