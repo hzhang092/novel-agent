@@ -248,12 +248,7 @@ class SceneWorkflow:
         if not source_record.scene_plan:
             raise OperationBlockedError("没有已批准的章节计划，无法安全再生成")
         if self.state.active:
-            if self._task is not None and not self._task.done():
-                raise OperationBlockedError("Another scene generation is already active")
-            if self.state.scene_id != scene_id:
-                raise OperationBlockedError("Another scene generation is already active")
-            self.state.active = False
-            self.run_guard.release("scene_workflow")
+            raise OperationBlockedError("Another scene generation is already active")
         plan = ScenePlan.model_validate(source_record.scene_plan)
         if plan_patch is not None:
             patch = ScenePlanPatch.model_validate(plan_patch)
@@ -271,17 +266,18 @@ class SceneWorkflow:
         )
 
     async def continue_review(self) -> None:
+        self._require_idle_task()
         if self._pipeline is None or self._result is None or self.state.draft_record is None:
             return
-        if not self.state.active:
-            if not self.run_guard.acquire("scene_workflow"):
-                raise OperationBlockedError("Another project generation is already active")
-            self.state.active = True
-        self.state.draft_record.review_overridden = True
-        from app.storage.project_files import save_scene_generation_record
+        self._acquire_run()
+        try:
+            self.state.draft_record.review_overridden = True
+            from app.storage.project_files import save_scene_generation_record
 
-        save_scene_generation_record(self.project_dir, self.state.draft_record)
-        await self._analyze_draft()
+            save_scene_generation_record(self.project_dir, self.state.draft_record)
+            await self._analyze_draft()
+        finally:
+            self._release_run()
 
     async def save_edited_draft(
         self,
@@ -297,21 +293,12 @@ class SceneWorkflow:
         chapter_id = _chapter_for_scene(self.project_dir, scene_id)
         if not chapter_id:
             raise OperationBlockedError("The scene has no chapter")
-        acquired = False
-        if self._task is not None and not self._task.done():
-            raise OperationBlockedError("Another scene generation is already active")
-        if self.state.active:
-            if self.state.scene_id != scene_id:
-                raise OperationBlockedError("Another scene generation is already active")
-        elif not self.run_guard.acquire("scene_workflow"):
-            raise OperationBlockedError("Another project generation is already active")
-        else:
-            acquired = True
-            self.state = SceneWorkflowState(
-                scene_id=scene_id,
-                chapter_id=chapter_id,
-                active=True,
-            )
+        self._acquire_run()
+        self.state = SceneWorkflowState(
+            scene_id=scene_id,
+            chapter_id=chapter_id,
+            active=True,
+        )
         try:
             self._observer = observer
             self._pipeline = self._pipeline_factory()
@@ -329,12 +316,15 @@ class SceneWorkflow:
             self.state.selected_revision = record.revision_id
             self._observer.draft(record)
             if analyze:
-                await self._analyze_draft()
+                try:
+                    await self._analyze_draft()
+                finally:
+                    self._release_run()
             else:
                 self._finish("草稿已保存")
             return record
-        except Exception:
-            if acquired:
+        except BaseException:
+            if self.state.active:
                 self._finish("")
             raise
 
@@ -415,6 +405,7 @@ class SceneWorkflow:
     async def continue_stale(self, revision_id: str | None = None) -> Any:
         from app.storage.project_files import load_scene_generation_record, save_scene_generation_record
 
+        self._require_idle_task()
         revision_id = revision_id or self.state.selected_revision
         if not revision_id or not self.state.scene_id:
             raise OperationBlockedError("请先选择过期草稿")
@@ -423,17 +414,21 @@ class SceneWorkflow:
         )
         if record is None or not record.stale_input or record.stale_input_reviewed:
             raise OperationBlockedError("该草稿不是过期草稿")
+        needs_analysis = (record.review or {}).get("overall_pass", False)
+        if needs_analysis:
+            self._acquire_run()
+        elif self.state.active:
+            raise OperationBlockedError("Another scene generation is already active")
         try:
-            if (record.review or {}).get("overall_pass", False) and not self.state.active:
-                if not self.run_guard.acquire("scene_workflow"):
-                    raise OperationBlockedError("Another project generation is already active")
-                self.state.active = True
             record.stale_input_reviewed = True
             save_scene_generation_record(self.project_dir, record)
             self.state.selected_revision = record.revision_id
             self.state.draft_record = record
-            if (record.review or {}).get("overall_pass", False):
-                await self._analyze_draft()
+            if needs_analysis:
+                try:
+                    await self._analyze_draft()
+                finally:
+                    self._release_run()
             return record
         except BaseException:
             if self.state.active:
@@ -442,6 +437,8 @@ class SceneWorkflow:
 
     async def _run(self) -> None:
         providers: list[Any] = []
+        release_after_close = False
+        finish_after_close: str | None = None
         try:
             planner, characters, writer, reviewer = self._provider_loader()
             providers = [planner, characters, writer, reviewer]
@@ -486,7 +483,7 @@ class SceneWorkflow:
                         result, "source_context_fingerprint", ""
                     )
                     if not result.prose:
-                        self._finish("生成失败")
+                        finish_after_close = "生成失败"
                         return
                     record = self._save_draft(result)
                     self.state.draft_record = record
@@ -500,7 +497,9 @@ class SceneWorkflow:
                         await self._analyze_draft()
                     else:
                         self._observer.status("草稿已保存")
+                    release_after_close = True
                     return
+            finish_after_close = "生成失败"
         except asyncio.CancelledError:
             result = self._result or getattr(self._pipeline, "partial_result", None)
             completed_artifacts = bool(
@@ -543,7 +542,7 @@ class SceneWorkflow:
             raise
         except Exception as error:
             self._observer.error(error)
-            self._finish("生成失败")
+            finish_after_close = "生成失败"
         finally:
             self._providers = []
             for provider in providers:
@@ -551,6 +550,10 @@ class SceneWorkflow:
                     await provider.close()
                 except Exception:
                     pass
+            if finish_after_close is not None:
+                self._finish(finish_after_close)
+            elif release_after_close:
+                self._release_run()
 
     async def _wait_for_plan(self, plan: Any) -> bool:
         self._plan_future = asyncio.get_running_loop().create_future()
@@ -668,10 +671,23 @@ class SceneWorkflow:
         return record
 
     def _finish(self, status: str) -> None:
+        self._release_run()
+        self._observer.status(status)
+
+    def _release_run(self) -> None:
         self.state.active = False
         self._observer.generating(False)
-        self._observer.status(status)
         self.run_guard.release("scene_workflow")
+
+    def _require_idle_task(self) -> None:
+        if self._task is not None and not self._task.done():
+            raise OperationBlockedError("Another scene generation is already active")
+
+    def _acquire_run(self) -> None:
+        self._require_idle_task()
+        if self.state.active or not self.run_guard.acquire("scene_workflow"):
+            raise OperationBlockedError("Another project generation is already active")
+        self.state.active = True
 
     def _finish_cancelled_task(self, task: asyncio.Task) -> None:
         if task.cancelled():

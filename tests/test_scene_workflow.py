@@ -45,6 +45,92 @@ async def test_scene_workflow_start_owns_a_real_pipeline_task(tmp_path):
     assert workflow.task is not None
     await workflow.task
     assert workflow.state.draft_record.draft_text == "draft"
+    assert workflow.state.selected_revision == workflow.state.draft_record.revision_id
+    assert workflow.state.active is False
+    assert workflow.run_guard.active_owner is None
+
+    workflow.start("scene-1", "chapter-1", SceneWorkflowObserver())
+    await workflow.task
+    assert workflow.state.draft_record.revision_number == 2
+
+
+@pytest.mark.asyncio
+async def test_run_guard_stays_owned_until_generation_providers_close(tmp_path):
+    project_dir = _project_with_scenes(tmp_path, ("scene-1", "chapter-1"))
+    closing = asyncio.Event()
+    allow_close = asyncio.Event()
+
+    class Provider:
+        async def close(self):
+            closing.set()
+            await allow_close.wait()
+
+    class Pipeline:
+        async def generate_stream(self, *_args, **_kwargs):
+            yield None, GenerationResult(scene_id="scene-1", prose="draft")
+
+    workflow = SceneWorkflow(
+        project_dir,
+        provider_loader=lambda: (Provider(), Provider(), Provider(), Provider()),
+        pipeline_factory=Pipeline,
+    )
+    workflow.start("scene-1", "chapter-1", SceneWorkflowObserver())
+
+    await closing.wait()
+    assert workflow.state.active is True
+    assert workflow.run_guard.active_owner == "scene_workflow"
+    assert workflow.run_guard.acquire("story_designer") is False
+
+    allow_close.set()
+    await workflow.task
+    assert workflow.run_guard.active_owner is None
+
+
+@pytest.mark.asyncio
+async def test_exhausted_generation_stream_releases_the_run_guard(tmp_path):
+    project_dir = _project_with_scenes(tmp_path, ("scene-1", "chapter-1"))
+
+    class Provider:
+        async def close(self):
+            pass
+
+    class Pipeline:
+        async def generate_stream(self, *_args, **_kwargs):
+            if False:
+                yield None, None
+
+    workflow = SceneWorkflow(
+        project_dir,
+        provider_loader=lambda: (Provider(), Provider(), Provider(), Provider()),
+        pipeline_factory=Pipeline,
+    )
+    workflow.start("scene-1", "chapter-1", SceneWorkflowObserver())
+
+    await workflow.task
+
+    assert workflow.state.active is False
+    assert workflow.run_guard.active_owner is None
+
+
+@pytest.mark.asyncio
+async def test_continuations_cannot_release_a_live_generation_run(tmp_path):
+    workflow = SceneWorkflow(tmp_path)
+    workflow.state.scene_id = "scene-1"
+    workflow.state.active = True
+    workflow.state.draft_record = SceneGenerationRecord(scene_id="scene-1")
+    workflow._pipeline = object()
+    workflow._result = object()
+    workflow.run_guard.acquire("scene_workflow")
+    workflow._task = asyncio.get_running_loop().create_future()
+
+    with pytest.raises(OperationBlockedError):
+        await workflow.continue_review()
+    with pytest.raises(OperationBlockedError):
+        await workflow.continue_stale()
+
+    assert workflow.state.active is True
+    assert workflow.run_guard.active_owner == "scene_workflow"
+    workflow._task.cancel()
 
 
 @pytest.mark.asyncio
@@ -113,12 +199,12 @@ async def test_edited_draft_uses_its_own_scene_chapter_and_current_observer(
     assert (project_dir / "scenes" / "chapter-2" / "scene-2.v1.md").read_text(encoding="utf-8") == "edited scene two"
     assert not (project_dir / "scenes" / "chapter-1" / "scene-2.v1.md").exists()
     assert observer_records == [record]
-    assert workflow.state.active is True
-    assert workflow.run_guard.active_owner == "scene_workflow"
+    assert workflow.state.active is False
+    assert workflow.run_guard.active_owner is None
 
 
 @pytest.mark.asyncio
-async def test_edit_and_recovery_cannot_redirect_another_active_scene(tmp_path, monkeypatch):
+async def test_completed_edit_and_recovery_can_move_to_another_scene(tmp_path, monkeypatch):
     project_dir = _project_with_scenes(
         tmp_path, ("scene-1", "chapter-1"), ("scene-2", "chapter-2")
     )
@@ -128,13 +214,19 @@ async def test_edit_and_recovery_cannot_redirect_another_active_scene(tmp_path, 
         "scene one", SceneGenerationRecord(scene_id="scene-1"), SceneWorkflowObserver()
     )
 
-    with pytest.raises(OperationBlockedError):
-        await workflow.save_edited_draft(
-            "scene two", SceneGenerationRecord(scene_id="scene-2"), SceneWorkflowObserver()
-        )
-    with pytest.raises(OperationBlockedError):
-        workflow.recover_writer_draft("scene-2", "chapter-2", "recovered")
-    assert (workflow.state.scene_id, workflow.state.chapter_id) == ("scene-1", "chapter-1")
+    second = await workflow.save_edited_draft(
+        "scene two", SceneGenerationRecord(scene_id="scene-2"), SceneWorkflowObserver()
+    )
+    recovered = workflow.recover_writer_draft(
+        "scene-1", "chapter-1", "recovered"
+    )
+
+    assert second.scene_id == "scene-2"
+    assert recovered.scene_id == "scene-1"
+    assert (workflow.state.scene_id, workflow.state.chapter_id) == (
+        "scene-1",
+        "chapter-1",
+    )
 
 
 @pytest.mark.asyncio
@@ -151,6 +243,41 @@ async def test_edit_cannot_replace_a_live_same_scene_task(tmp_path, monkeypatch)
         await workflow.save_edited_draft(
             "edited", SceneGenerationRecord(scene_id="scene-1"), SceneWorkflowObserver()
         )
+
+
+@pytest.mark.asyncio
+async def test_edit_cannot_join_another_edit_analysis_run(tmp_path, monkeypatch):
+    project_dir = _project_with_scenes(tmp_path, ("scene-1", "chapter-1"))
+    analyzing = asyncio.Event()
+    release = asyncio.Event()
+
+    class BlockingPipeline:
+        async def analyze_draft(self, *_args, **_kwargs):
+            analyzing.set()
+            await release.wait()
+
+    _patch_analysis_providers(monkeypatch)
+    workflow = SceneWorkflow(project_dir, pipeline_factory=BlockingPipeline)
+    source = SceneGenerationRecord(scene_id="scene-1")
+    first = asyncio.create_task(
+        workflow.save_edited_draft(
+            "first edit", source, SceneWorkflowObserver()
+        )
+    )
+    await analyzing.wait()
+
+    try:
+        with pytest.raises(OperationBlockedError):
+            await asyncio.wait_for(
+                workflow.save_edited_draft(
+                    "second edit", source, SceneWorkflowObserver()
+                ),
+                timeout=0.1,
+            )
+    finally:
+        release.set()
+        await first
+    assert workflow.run_guard.active_owner is None
 
 
 @pytest.mark.asyncio
@@ -209,7 +336,8 @@ async def test_analysis_failure_keeps_saved_draft_and_retry_path(tmp_path, monke
 
     assert load_scene_generation_record(project_dir, "scene-1", version="v1").draft_text == "saved before analysis"
     assert workflow.state.draft_record is record
-    assert workflow.state.active is True
+    assert workflow.state.active is False
+    assert workflow.run_guard.active_owner is None
     assert statuses[-1] == "记忆分析失败"
     assert reviews[-1] == (False, "记忆分析失败；草稿已保存，可重试")
 
@@ -310,7 +438,8 @@ async def test_workflow_owns_pipeline_draft_and_memory_review(tmp_path, monkeypa
     await workflow.task
 
     record = load_scene_generation_record(project_dir, "scene-1")
-    assert workflow.state.active
+    assert workflow.state.active is False
+    assert workflow.run_guard.active_owner is None
     assert workflow.state.partial_prose == "first "
     assert record.status == "draft"
     assert record.generated_from_checkpoint_id == "cp-1"
