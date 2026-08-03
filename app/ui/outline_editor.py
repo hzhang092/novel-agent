@@ -46,6 +46,23 @@ ROLE_NODE_ID = Qt.ItemDataRole.UserRole + 1
 ROLE_CHARACTER_ID = Qt.ItemDataRole.UserRole + 2
 
 
+def _normalized(value):
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        return [_normalized(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: (
+                sorted(_normalized(item))
+                if key == "participating_character_ids"
+                else _normalized(item)
+            )
+            for key, item in value.items()
+        }
+    return value
+
+
 class OutlineEditorView(QWidget):
     """Tree-based outline editor for Volumes → Chapters → Scenes.
 
@@ -60,6 +77,7 @@ class OutlineEditorView(QWidget):
         self._project_dir: Path | None = None
         self._application: OutlineApplicationService | None = None
         self._volumes: list = []
+        self._baseline: list[dict] = []
         self._selected_node_id: str | None = None
         self._save_handler: Callable[[Callable[[], bool]], bool] | None = None
         self._setup_ui()
@@ -74,8 +92,11 @@ class OutlineEditorView(QWidget):
             self._application = OutlineApplicationService(project_dir)
         snapshot = self._application.load_editor_snapshot()
         self._volumes = list(snapshot.volumes)
+        self._baseline = self._outline_snapshot()
+        self._selected_node_id = None
         self._scene_elements.set_selected_ids([])
         self._scene_elements.set_elements(snapshot.bible_elements)
+        self._detail_stack.setCurrentWidget(self._empty_detail)
         self._rebuild_tree()
 
     def bind_application(self, service: OutlineApplicationService) -> None:
@@ -86,6 +107,37 @@ class OutlineEditorView(QWidget):
     def is_loaded(self) -> bool:
         """Return whether a project is bound to the editor."""
         return self._project_dir is not None
+
+    @property
+    def is_dirty(self) -> bool:
+        if self._project_dir is None:
+            return False
+        current = self._tree.currentItem()
+        if (
+            current is not None
+            and current.data(0, ROLE_NODE_TYPE) == "chapter"
+        ):
+            try:
+                int(self._ch_word_count.text().strip())
+            except ValueError:
+                return True
+        self._gather_current_form()
+        return self._outline_snapshot() != self._baseline
+
+    def reload(self) -> None:
+        """Reload the outline from the currently bound project."""
+        if self._project_dir is not None:
+            selected_node_id = self._selected_node_id
+            self.load_project_dir(self._project_dir)
+            if selected_node_id is not None:
+                item = self._find_tree_item(selected_node_id)
+                if item is not None:
+                    blocked = self._tree.blockSignals(True)
+                    try:
+                        self._tree.setCurrentItem(item)
+                    finally:
+                        self._tree.blockSignals(blocked)
+                    self._on_tree_selection_changed(item, None, emit_scene=False)
 
     def save(self) -> bool:
         """Gather the current form and persist the outline."""
@@ -98,6 +150,7 @@ class OutlineEditorView(QWidget):
             return False
         self._gather_current_form()
         self._volumes = list(self._application.save_outline(self._volumes))
+        self._baseline = self._outline_snapshot()
         self.saved.emit()
         return True
 
@@ -450,7 +503,9 @@ class OutlineEditorView(QWidget):
         self._tree.expandAll()
         self._tree.blockSignals(False)
 
-    def _on_tree_selection_changed(self, current, _previous) -> None:
+    def _on_tree_selection_changed(
+        self, current, _previous, *, emit_scene: bool = True
+    ) -> None:
         # Gather unsaved changes from the previous selection
         self._gather_current_form()
 
@@ -492,7 +547,8 @@ class OutlineEditorView(QWidget):
                     for sc in ch.scenes:
                         if sc.id == self._selected_node_id:
                             self._populate_scene_form(sc)
-                            self.scene_selected.emit(sc.id)
+                            if emit_scene:
+                                self.scene_selected.emit(sc.id)
                             break
             self._detail_stack.setCurrentWidget(self._scene_form)
 
@@ -581,6 +637,9 @@ class OutlineEditorView(QWidget):
 
     def _find_volume(self, volume_id: str):
         return find_volume(self._volumes, volume_id)
+
+    def _outline_snapshot(self) -> list[dict]:
+        return [_normalized(volume.model_dump(mode="json")) for volume in self._volumes]
 
     def _get_parent_volume_id(self, item: QTreeWidgetItem) -> str | None:
         current = item.parent()

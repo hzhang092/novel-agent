@@ -537,3 +537,120 @@ def test_outline_does_not_open_element_repository_without_manifest(
 
     widget.load_project_dir(proj_dir)
     assert widget._scene_elements.selected_ids() == []
+
+
+def test_outline_tracks_dirty_form_and_reload_restores_canonical_state(tmp_path, qtbot):
+    from app.storage.models import ChapterOutline, SceneOutline, VolumeOutline
+    from app.storage.project_files import save_volume_outline
+    from app.ui.outline_editor import OutlineEditorView
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(
+            id="volume-1",
+            chapters=[
+                ChapterOutline(
+                    id="chapter-1",
+                    scenes=[SceneOutline(id="scene-1", title="canonical")],
+                )
+            ],
+        ),
+    )
+    widget = OutlineEditorView()
+    qtbot.addWidget(widget)
+    widget.load_project_dir(proj_dir)
+    widget.activate_scene("scene-1")
+
+    assert widget.is_dirty is False
+    widget._scene_title.setText("unsaved")
+    assert widget.is_dirty is True
+
+    widget.reload()
+
+    widget.activate_scene("scene-1")
+    assert widget._scene_title.text() == "canonical"
+    assert widget.is_dirty is False
+
+
+def test_loaded_outline_normalization_does_not_mark_editor_dirty(tmp_path, qtbot):
+    from app.storage.models import VolumeOutline
+    from app.storage.project_files import save_volume_outline
+    from app.ui.outline_editor import OutlineEditorView
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_volume_outline(proj_dir, VolumeOutline(id="volume-1", title="  canonical  "))
+    widget = OutlineEditorView()
+    qtbot.addWidget(widget)
+    widget.load_project_dir(proj_dir)
+    widget._select_by_id("volume-1")
+
+    assert widget.is_dirty is False
+
+
+def test_participant_order_does_not_mark_loaded_outline_dirty(tmp_path, qtbot):
+    from app.storage.models import (
+        ChapterOutline,
+        Character,
+        CharacterCore,
+        CharacterState,
+        SceneOutline,
+        VolumeOutline,
+    )
+    from app.storage.project_files import save_character, save_volume_outline
+    from app.ui.outline_editor import OutlineEditorView
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    for character_id in ("char-a", "char-b"):
+        save_character(
+            proj_dir,
+            Character(
+                core=CharacterCore(id=character_id, name=character_id),
+                state=CharacterState(character_id=character_id),
+            ),
+        )
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(
+            id="volume-1",
+            chapters=[
+                ChapterOutline(
+                    id="chapter-1",
+                    scenes=[
+                        SceneOutline(
+                            id="scene-1",
+                            participating_character_ids=["char-b", "char-a"],
+                        )
+                    ],
+                )
+            ],
+        ),
+    )
+    widget = OutlineEditorView()
+    qtbot.addWidget(widget)
+    widget.load_project_dir(proj_dir)
+    widget.activate_scene("scene-1")
+
+    assert widget.is_dirty is False
+
+
+def test_invalid_chapter_word_count_is_dirty(tmp_path, qtbot):
+    from app.storage.models import ChapterOutline, VolumeOutline
+    from app.storage.project_files import save_volume_outline
+    from app.ui.outline_editor import OutlineEditorView
+
+    proj_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_volume_outline(
+        proj_dir,
+        VolumeOutline(
+            id="volume-1",
+            chapters=[ChapterOutline(id="chapter-1", target_word_count=3000)],
+        ),
+    )
+    widget = OutlineEditorView()
+    qtbot.addWidget(widget)
+    widget.load_project_dir(proj_dir)
+    widget._select_by_id("chapter-1")
+    widget._ch_word_count.setText("invalid")
+
+    assert widget.is_dirty is True

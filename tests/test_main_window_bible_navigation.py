@@ -377,20 +377,6 @@ def test_quick_reopen_last_scene_selects_workspace_destination(tmp_path, qtbot, 
     assert window.sidebar.currentItem().data(Qt.ItemDataRole.UserRole) == "workspace"
 
 
-def test_leaving_outline_uses_public_save_contract(tmp_path, qtbot, monkeypatch):
-    project_dir = create_project(tmp_path, Project(title="Story", genre="Fantasy"))
-    window = MainWindow()
-    qtbot.addWidget(window)
-    window._outline_view.load_project_dir(project_dir)
-    saved = []
-    monkeypatch.setattr(window._outline_view, "save", lambda: saved.append(True) or True)
-    window._previous_tab_index = 2
-
-    window._on_nav_changed(1)
-
-    assert saved == [True]
-
-
 def test_bible_navigation_uses_event_bus_facade(qtbot, monkeypatch):
     window = MainWindow()
     qtbot.addWidget(window)

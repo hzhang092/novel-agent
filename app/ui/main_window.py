@@ -403,12 +403,8 @@ class MainWindow(QMainWindow):
             return
         if leaving_bible:
             self._previous_destination = target
-        if (
-            self._experience_mode == "deep"
-            and current == "outline"
-            and self._outline_view.is_loaded
-        ):
-            if not self._save_deep_outline():
+        if self._experience_mode == "deep" and current == "outline":
+            if not self._maybe_leave_deep_outline():
                 blocker = QSignalBlocker(self._experience_switch)
                 self._experience_switch.setCurrentIndex(
                     self._experience_switch.findData(self._experience_mode)
@@ -454,14 +450,13 @@ class MainWindow(QMainWindow):
             del blocker
             return
 
-        # Auto-save Outline editor when navigating away from it
         if (
             self._experience_mode == "deep"
             and previous_key == "outline"
             and key != "outline"
             and self._outline_view.is_loaded
         ):
-            if not self._save_deep_outline():
+            if not self._maybe_leave_deep_outline():
                 blocker = QSignalBlocker(self.sidebar)
                 self.sidebar.setCurrentRow(self._previous_tab_index)
                 del blocker
@@ -509,6 +504,26 @@ class MainWindow(QMainWindow):
             return self._bible_view.save_all()
         if reply == QMessageBox.StandardButton.Discard:
             self._bible_view.reload()
+            return True
+        return False
+
+    def _maybe_leave_deep_outline(self) -> bool:
+        if not self._outline_view.is_loaded or not self._outline_view.is_dirty:
+            return True
+
+        reply = QMessageBox.question(
+            self,
+            "未保存的大纲更改",
+            "大纲有未保存的更改。是否保存？",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if reply == QMessageBox.StandardButton.Save:
+            return self._save_deep_outline()
+        if reply == QMessageBox.StandardButton.Discard:
+            self._outline_view.reload()
             return True
         return False
 

@@ -1,8 +1,8 @@
 import pytest
 from PySide6.QtWidgets import QMessageBox
 
-from app.storage.models import Project
-from app.storage.project_files import create_project
+from app.storage.models import ChapterOutline, Project, SceneOutline, VolumeOutline
+from app.storage.project_files import create_project, load_all_volumes, save_volume_outline
 from app.ui.main_window import MainWindow
 
 
@@ -20,6 +20,26 @@ def _labels(window):
 
 def _switch(window, mode):
     window._experience_switch.setCurrentIndex(window._experience_switch.findData(mode))
+
+
+def _outline_window(tmp_path, qtbot):
+    window = _window(tmp_path, qtbot)
+    save_volume_outline(
+        window._current_project_dir,
+        VolumeOutline(
+            id="volume-1",
+            chapters=[
+                ChapterOutline(
+                    id="chapter-1",
+                    scenes=[SceneOutline(id="scene-1", title="canonical")],
+                )
+            ],
+        ),
+    )
+    window._outline_view.load_project_dir(window._current_project_dir)
+    window._select_destination("outline")
+    window._outline_view.activate_scene("scene-1")
+    return window
 
 
 def test_existing_project_defaults_to_deep_with_separate_presentations(tmp_path, qtbot):
@@ -74,13 +94,18 @@ def test_switching_preserves_shared_writing_and_outline_state(tmp_path, qtbot):
     assert window._outline_view._selected_node_id == "chapter-1"
 
 
-def test_switching_from_deep_outline_saves_before_quick_refresh(
+def test_switching_from_clean_deep_outline_does_not_save_before_quick_refresh(
     tmp_path, qtbot, monkeypatch
 ):
     window = _window(tmp_path, qtbot)
+    window._outline_view.load_project_dir(window._current_project_dir)
     window._select_destination("outline")
     calls = []
-    monkeypatch.setattr(window._outline_view, "save", lambda: calls.append("save") or True)
+    monkeypatch.setattr(
+        window._outline_view,
+        "save",
+        lambda: pytest.fail("clean outline should not be saved during switching"),
+    )
     monkeypatch.setattr(
         window._quick_outline_view,
         "refresh",
@@ -89,7 +114,102 @@ def test_switching_from_deep_outline_saves_before_quick_refresh(
 
     _switch(window, "quick")
 
-    assert calls == ["save", "refresh"]
+    assert calls == ["refresh"]
+
+
+@pytest.mark.parametrize(
+    "answer, expected_call",
+    [
+        (QMessageBox.StandardButton.Save, "save"),
+        (QMessageBox.StandardButton.Discard, "reload"),
+        (QMessageBox.StandardButton.Cancel, None),
+    ],
+)
+def test_switching_dirty_deep_outline_resolves_before_experience_change(
+    tmp_path, qtbot, monkeypatch, answer, expected_call
+):
+    window = _outline_window(tmp_path, qtbot)
+    window._outline_view._scene_title.setText("unsaved")
+    window._workspace_view.set_scene("scene-1", "chapter-1")
+    window._workspace_view.set_prose_text("in memory")
+    calls = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *_args: answer)
+    real_save = window._outline_view.save
+    monkeypatch.setattr(
+        window._outline_view,
+        "save",
+        lambda: calls.append("save") or real_save(),
+    )
+    real_reload = window._outline_view.reload
+    monkeypatch.setattr(
+        window._outline_view,
+        "reload",
+        lambda: calls.append("reload") or real_reload(),
+    )
+
+    _switch(window, "quick")
+
+    assert calls == ([] if expected_call is None else [expected_call])
+    assert window._workspace_view.prose_text() == "in memory"
+    if answer == QMessageBox.StandardButton.Cancel:
+        assert window._experience_mode == "deep"
+        assert window._previous_destination == "outline"
+        assert window._outline_view._scene_title.text() == "unsaved"
+        assert window._outline_view.is_dirty is True
+    else:
+        assert window._experience_mode == "quick"
+        if answer == QMessageBox.StandardButton.Save:
+            assert load_all_volumes(window._current_project_dir)[0].chapters[0].scenes[0].title == "unsaved"
+        else:
+            assert window._outline_view._scene_title.text() == "canonical"
+            assert window._outline_view.is_dirty is False
+
+
+@pytest.mark.parametrize(
+    "answer, expected_call",
+    [
+        (QMessageBox.StandardButton.Save, "save"),
+        (QMessageBox.StandardButton.Discard, "reload"),
+        (QMessageBox.StandardButton.Cancel, None),
+    ],
+)
+def test_switching_dirty_deep_outline_resolves_before_destination_change(
+    tmp_path, qtbot, monkeypatch, answer, expected_call
+):
+    window = _outline_window(tmp_path, qtbot)
+    window._outline_view._scene_title.setText("unsaved")
+    window._workspace_view.set_scene("scene-1", "chapter-1")
+    window._workspace_view.set_prose_text("in memory")
+    calls = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *_args: answer)
+    real_save = window._outline_view.save
+    monkeypatch.setattr(
+        window._outline_view,
+        "save",
+        lambda: calls.append("save") or real_save(),
+    )
+    real_reload = window._outline_view.reload
+    monkeypatch.setattr(
+        window._outline_view,
+        "reload",
+        lambda: calls.append("reload") or real_reload(),
+    )
+
+    window._select_destination("workspace")
+
+    assert calls == ([] if expected_call is None else [expected_call])
+    assert window._workspace_view.prose_text() == "in memory"
+    if answer == QMessageBox.StandardButton.Cancel:
+        assert window._previous_destination == "outline"
+        assert window._outline_view._scene_title.text() == "unsaved"
+        assert window._outline_view.is_dirty is True
+    else:
+        assert window._previous_destination == "workspace"
+        if answer == QMessageBox.StandardButton.Save:
+            assert load_all_volumes(window._current_project_dir)[0].chapters[0].scenes[0].title == "unsaved"
+        else:
+            assert window._outline_view._scene_title.text() == "canonical"
+            assert window._outline_view.is_dirty is False
 
 
 def test_quick_advanced_links_open_the_exact_deep_element(
