@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
@@ -24,6 +25,7 @@ class QuickChapterView(QWidget):
 
     start_requested = Signal(str, str)  # chapter_id, scene_id
     adjust_requested = Signal(str)  # chapter_id
+    adjustment_cancelled = Signal()
     save_requested = Signal()
     regenerate_requested = Signal()
     revision_selected = Signal(str)
@@ -42,6 +44,8 @@ class QuickChapterView(QWidget):
         self._scene_id = ""
         self._facts: list[Any] = []
         self._changes: list[Any] = []
+        self._plan: dict[str, Any] = {}
+        self._plan_before_adjustment: dict[str, Any] | None = None
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("快速章节"))
@@ -87,7 +91,7 @@ class QuickChapterView(QWidget):
         self.start_button = QPushButton("开始")
         self.adjust_button = QPushButton("调整")
         self.start_button.clicked.connect(self._start)
-        self.adjust_button.clicked.connect(lambda: self.adjust_requested.emit(self._chapter_id))
+        self.adjust_button.clicked.connect(self._adjust)
         actions.addWidget(self.start_button)
         actions.addWidget(self.adjust_button)
         layout.addLayout(actions)
@@ -185,11 +189,35 @@ class QuickChapterView(QWidget):
         self._scene_id = scene_id
 
     def show_plan(self, plan: dict[str, Any]) -> None:
+        self._plan = deepcopy(plan)
         self._scene_id = str(plan.get("scene_id", self._scene_id))
         self.goal_edit.setText(str(plan.get("scene_goal", "")))
         self.key_events_edit.setPlainText("\n".join(plan.get("required_beats", [])))
         self.emotional_turn_edit.setText(str(plan.get("emotional_arc", "")))
         self.hook_edit.setText(str(plan.get("ending_hook", "")))
+
+    def begin_plan_adjustment(self) -> None:
+        if self._plan_before_adjustment is not None:
+            return
+        self._plan_before_adjustment = deepcopy(self._plan)
+        self._set_plan_editable(True)
+
+    def accept_plan_adjustment(self, plan: dict[str, Any] | None = None) -> None:
+        if self._plan_before_adjustment is None:
+            return
+        plan = self.plan() if plan is None else plan
+        self._plan_before_adjustment = None
+        self.show_plan(plan)
+        self._set_plan_editable(False)
+
+    def cancel_plan_adjustment(self) -> bool:
+        if self._plan_before_adjustment is None:
+            return False
+        plan = self._plan_before_adjustment
+        self._plan_before_adjustment = None
+        self.show_plan(plan)
+        self._set_plan_editable(False)
+        return True
 
     def show_review(self, passed: bool, summary: str) -> None:
         self.review_summary_label.setText(
@@ -227,20 +255,42 @@ class QuickChapterView(QWidget):
         return facts, changes
 
     def plan(self) -> dict[str, Any]:
-        return {
-            "scene_id": self._scene_id,
-            "scene_goal": self.goal_edit.text(),
-            "required_beats": [
-                line.strip()
-                for line in self.key_events_edit.toPlainText().splitlines()
-                if line.strip()
-            ],
-            "emotional_arc": self.emotional_turn_edit.text(),
-            "ending_hook": self.hook_edit.text(),
-        }
+        plan = deepcopy(self._plan)
+        plan.setdefault("scene_id", self._scene_id)
+        plan.update(
+            {
+                "scene_goal": self.goal_edit.text(),
+                "required_beats": [
+                    line.strip()
+                    for line in self.key_events_edit.toPlainText().splitlines()
+                    if line.strip()
+                ],
+                "emotional_arc": self.emotional_turn_edit.text(),
+                "ending_hook": self.hook_edit.text(),
+            }
+        )
+        return plan
 
     def _start(self) -> None:
+        self.accept_plan_adjustment()
         self.start_requested.emit(self._chapter_id, self._scene_id)
+
+    def _adjust(self) -> None:
+        if self.cancel_plan_adjustment():
+            self.adjustment_cancelled.emit()
+        else:
+            self.adjust_requested.emit(self._chapter_id)
+
+    def _set_plan_editable(self, editable: bool) -> None:
+        for editor in (
+            self.goal_edit,
+            self.key_events_edit,
+            self.emotional_turn_edit,
+            self.hook_edit,
+        ):
+            editor.setReadOnly(not editable)
+        self.start_button.setText("应用" if editable else "开始")
+        self.adjust_button.setText("取消" if editable else "调整")
 
     def _select_revision(self, revision_id: str) -> None:
         if revision_id:

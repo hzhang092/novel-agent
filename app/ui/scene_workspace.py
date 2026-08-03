@@ -43,6 +43,7 @@ class SceneWorkspaceView(QWidget):
     approval_batch_approved = Signal(str, str, list, list)
     quick_start_requested = Signal(str, str)
     quick_adjust_requested = Signal(str)
+    quick_adjust_cancelled = Signal()
     quick_save_requested = Signal()
     quick_regenerate_requested = Signal()
     quick_revision_instruction_requested = Signal(str)
@@ -113,6 +114,10 @@ class SceneWorkspaceView(QWidget):
         for source, target in (
             (self._quick_chapter.start_requested, self.quick_start_requested),
             (self._quick_chapter.adjust_requested, self.quick_adjust_requested),
+            (
+                self._quick_chapter.adjustment_cancelled,
+                self.quick_adjust_cancelled,
+            ),
             (self._quick_chapter.save_requested, self.quick_save_requested),
             (self._quick_chapter.regenerate_requested, self.quick_regenerate_requested),
             (
@@ -303,6 +308,15 @@ class SceneWorkspaceView(QWidget):
     def set_quick_length(self, mode: str, target: int, warning: str = "") -> None:
         """Project the active chapter length into Quick Creation."""
         self._quick_chapter.set_length(mode, target, warning)
+
+    def begin_quick_plan_adjustment(self) -> None:
+        self._quick_chapter.begin_plan_adjustment()
+
+    def accept_quick_plan_adjustment(self, plan: dict) -> None:
+        self._quick_chapter.accept_plan_adjustment(plan)
+
+    def cancel_quick_plan_adjustment(self) -> None:
+        self._quick_chapter.cancel_plan_adjustment()
 
     def focus_deep_control(self, control: str) -> None:
         """Move focus to the Deep control linked from Quick."""
