@@ -212,6 +212,22 @@ def test_switching_dirty_deep_outline_resolves_before_destination_change(
             assert window._outline_view.is_dirty is False
 
 
+def test_project_leave_guard_cannot_skip_dirty_deep_outline(
+    tmp_path, qtbot, monkeypatch
+):
+    window = _outline_window(tmp_path, qtbot)
+    window._outline_view._scene_title.setText("unsaved")
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args: QMessageBox.StandardButton.Cancel,
+    )
+
+    assert window._maybe_close_current_project() is False
+    assert window._outline_view._scene_title.text() == "unsaved"
+    assert window._outline_view.is_dirty is True
+
+
 def test_quick_advanced_links_open_the_exact_deep_element(
     tmp_path, qtbot, monkeypatch
 ):

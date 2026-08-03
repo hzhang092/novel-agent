@@ -95,9 +95,28 @@ class QuickPlanningService:
     def apply_card_edit(self, preview: ChapterCardEditPreview) -> ChapterCardProjection:
         chapter = self._chapter(preview.chapter_id).model_copy(deep=True)
         scene = self._scene(chapter)
+        story_affecting = (
+            chapter.summary != preview.summary
+            or scene.ending_hook != preview.ending_hook
+        )
         chapter.title, chapter.summary = preview.title, preview.summary
         scene.ending_hook = preview.ending_hook
+        if story_affecting and self._has_prose(chapter):
+            chapter.needs_review = True
         self._save_chapter(chapter)
+        if story_affecting:
+            chapters = [
+                item
+                for volume in load_all_volumes(self.project_dir)
+                for item in volume.chapters
+            ]
+            start = next(
+                index for index, item in enumerate(chapters) if item.id == chapter.id
+            )
+            for later in chapters[start + 1 :]:
+                if self._has_prose(later):
+                    later = later.model_copy(update={"needs_review": True})
+                    self._save_chapter(later)
         return self._card(chapter)
 
     def _card(

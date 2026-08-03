@@ -125,6 +125,9 @@ class QuickStoryView(QWidget):
         self.approved_brief_label = QLabel("")
         self.approved_brief_label.setWordWrap(True)
         layout.addWidget(self.approved_brief_label)
+        self.approved_proposal_label = QLabel("")
+        self.approved_proposal_label.setWordWrap(True)
+        layout.addWidget(self.approved_proposal_label)
         layout.addWidget(QLabel("高级信息"))
         self.quick_projection_label = QLabel("")
         self.quick_projection_label.setWordWrap(True)
@@ -231,6 +234,13 @@ class QuickStoryView(QWidget):
             )
         else:
             self.approved_brief_label.clear()
+        if planning.approved_proposal is not None:
+            self.approved_proposal_label.setText(
+                f"故事提案 · v{planning.approved_proposal.revision}\n"
+                f"{planning.approved_proposal.logline}"
+            )
+        else:
+            self.approved_proposal_label.clear()
         self._set_story_projection(self._application.quick_planning.story_projection())
         self._refresh_creation_stage()
 

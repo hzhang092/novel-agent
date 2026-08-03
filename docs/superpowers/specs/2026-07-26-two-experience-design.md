@@ -152,7 +152,7 @@ An accepted generated title updates `Project.title` immediately. It never silent
 - The first Quick release does not offer **Generate Story Brief from existing project**. Existing projects still open and remain usable without guided-planning artifacts.
 - Switching an empty blank project to Quick starts Story Brief in the same folder.
 - If an unapproved Story Bootstrap exists and the author switches to Deep, Deep may inspect it. The first canonical Deep save warns that it will discard the active bootstrap draft. Story Brief and an approved Story Proposal remain.
-- Full Story Bootstrap is available only when the project has no canonical story content. Existing projects receive targeted patches instead; there is no bootstrap merge system.
+- Full Story Bootstrap is available only when the project has no canonical story content. Existing projects use their canonical data directly in Quick; advanced canonical changes remain available in Deep Creation.
 
 ## 6. Story Brief
 

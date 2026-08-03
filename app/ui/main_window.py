@@ -488,24 +488,24 @@ class MainWindow(QMainWindow):
     # ── Actions ───────────────────────────────────────────────────────────
 
     def _maybe_close_current_project(self) -> bool:
-        if not self._bible_view.is_loaded or not self._bible_view.is_dirty:
-            return True
-
-        reply = QMessageBox.question(
-            self,
-            "未保存的更改",
-            "设定集有未保存的更改。是否保存？",
-            QMessageBox.StandardButton.Save
-            | QMessageBox.StandardButton.Discard
-            | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
-        )
-        if reply == QMessageBox.StandardButton.Save:
-            return self._bible_view.save_all()
-        if reply == QMessageBox.StandardButton.Discard:
-            self._bible_view.reload()
-            return True
-        return False
+        if self._bible_view.is_loaded and self._bible_view.is_dirty:
+            reply = QMessageBox.question(
+                self,
+                "未保存的更改",
+                "设定集有未保存的更改。是否保存？",
+                QMessageBox.StandardButton.Save
+                | QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if reply == QMessageBox.StandardButton.Save:
+                if not self._bible_view.save_all():
+                    return False
+            elif reply == QMessageBox.StandardButton.Discard:
+                self._bible_view.reload()
+            else:
+                return False
+        return self._maybe_leave_deep_outline()
 
     def _maybe_leave_deep_outline(self) -> bool:
         if not self._outline_view.is_loaded or not self._outline_view.is_dirty:

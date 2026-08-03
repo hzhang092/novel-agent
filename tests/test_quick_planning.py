@@ -64,6 +64,36 @@ def project_with_outline(tmp_path):
     return project_dir
 
 
+def project_with_later_chapters(tmp_path):
+    project_dir = project_with_outline(tmp_path)
+    volume = load_all_volumes(project_dir)[0]
+    for number in range(2, 5):
+        volume.chapters.append(
+            ChapterOutline(
+                id=f"chapter-{number}",
+                volume_id=volume.id,
+                title=f"第{number}章",
+                summary=f"事件 {number}",
+                scenes=[
+                    SceneOutline(
+                        id=f"scene-{number}",
+                        chapter_id=f"chapter-{number}",
+                        ending_hook=f"钩子 {number}",
+                    )
+                ],
+            )
+        )
+    save_volume_outline(project_dir, volume)
+    for number in range(1, 4):
+        save_scene_prose(
+            project_dir,
+            f"chapter-{number}",
+            f"scene-{number}",
+            f"正文 {number}",
+        )
+    return project_dir
+
+
 def test_story_arc_and_card_are_canonical_projections_with_derived_status(tmp_path):
     project_dir = project_with_outline(tmp_path)
 
@@ -100,6 +130,50 @@ def test_card_edit_changes_only_title_summary_and_hook(tmp_path):
     assert chapter.scenes[0].conflict == "追兵出现"
     assert chapter.scenes[0].required_plot_beats == []
     assert getattr(chapter, "generation_blocked", False) is False
+
+
+def test_title_only_card_edit_does_not_mark_prose_for_review(tmp_path):
+    project_dir = project_with_later_chapters(tmp_path)
+    service = QuickPlanningService(project_dir)
+
+    service.apply_card_edit(
+        service.preview_card_edit("chapter-1", title="新标题")
+    )
+
+    assert [
+        service.chapter_card(f"chapter-{number}").status
+        for number in range(1, 5)
+    ] == [
+        ChapterCardStatus.DRAFT,
+        ChapterCardStatus.DRAFT,
+        ChapterCardStatus.DRAFT,
+        ChapterCardStatus.UNWRITTEN,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("summary", "新事件"), ("ending_hook", "新钩子")],
+)
+def test_story_affecting_card_edit_marks_current_and_later_prose_for_review(
+    tmp_path, field, value
+):
+    project_dir = project_with_later_chapters(tmp_path)
+    service = QuickPlanningService(project_dir)
+
+    service.apply_card_edit(
+        service.preview_card_edit("chapter-1", **{field: value})
+    )
+
+    assert [
+        service.chapter_card(f"chapter-{number}").status
+        for number in range(1, 5)
+    ] == [
+        ChapterCardStatus.NEEDS_REVIEW,
+        ChapterCardStatus.NEEDS_REVIEW,
+        ChapterCardStatus.NEEDS_REVIEW,
+        ChapterCardStatus.UNWRITTEN,
+    ]
 
 
 def test_card_status_distinguishes_draft_and_new_draft(tmp_path):

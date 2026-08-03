@@ -63,7 +63,10 @@ def fake_application(monkeypatch):
     monkeypatch.setattr(
         "app.ui.quick_story_view.load_planning",
         lambda _: SimpleNamespace(
-            approved_proposal=object(),
+            approved_proposal=SimpleNamespace(
+                revision=2,
+                logline="被贬入凡间的剑仙追查契约术失控的真相",
+            ),
             approved_brief=SimpleNamespace(premise="追查契约术失控的真相"),
         ),
     )
@@ -82,6 +85,8 @@ def test_refresh_renders_projection_and_emits_exact_deep_targets(qtbot, fake_app
     assert "林默" in view.quick_projection_label.text()
     assert "浮空城" in view.quick_projection_label.text()
     assert "追查契约术失控的真相" in view.approved_brief_label.text()
+    assert "故事提案 · v2" in view.approved_proposal_label.text()
+    assert "被贬入凡间的剑仙" in view.approved_proposal_label.text()
     buttons = view.quick_projection_actions.parentWidget().findChildren(type(view.generate_button))
     next(button for button in buttons if button.text() == "高级角色：林默").click()
     next(button for button in buttons if button.text() == "高级世界设定").click()
@@ -150,6 +155,7 @@ def test_quick_story_shows_only_the_current_creation_stage(qtbot, fake_applicati
     assert view.projection_section.isHidden()
 
     proposal = SimpleNamespace(
+        revision=2,
         title="标题",
         logline="一句话",
         main_characters=[],
