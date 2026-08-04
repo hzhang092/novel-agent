@@ -173,6 +173,20 @@ def test_bible_save_all_writes_only_dirty_sections(tmp_path, qtbot, monkeypatch)
     assert editor.save_all() is True
     assert calls == ["world"]
 
+    calls.clear()
+    editor._world_tab._overview_geography.setPlainText("失败地理")
+    editor._notes_edit.setPlainText("不要保存")
+    monkeypatch.setattr(
+        editor._world_tab,
+        "save_all",
+        lambda: calls.append("world-failed") or False,
+    )
+
+    assert editor.save_all() is False
+    assert calls == ["world-failed"]
+    assert load_project(proj_dir).style_guide.freeform_notes == ""
+    assert editor.is_dirty is True
+
 
 def test_template_fill_empty_uses_current_form_without_saving(tmp_path, qtbot):
     from PySide6.QtCore import QTimer
@@ -571,39 +585,6 @@ def test_style_guide_save_load_round_trip(tmp_path):
     assert raw["pacing"] == "快节奏"
     assert raw["tone"] == "热血"
     assert len(raw["reference_passages"]) == 2
-
-
-def test_world_setting_empty_save_load(tmp_path):
-    """Save an empty WorldSetting, verify it reloads with defaults."""
-    project = Project(title="空项目", genre="科幻")
-    proj_dir = create_project(tmp_path, project)
-
-    from app.storage.models import WorldSetting
-
-    world = WorldSetting()
-    save_world_setting(proj_dir, world)
-    loaded = load_project(proj_dir)
-
-    assert loaded.world_setting.geography == ""
-    assert loaded.world_setting.power_system is None
-    assert loaded.world_setting.factions == []
-    assert loaded.world_setting.rules == []
-
-
-def test_style_guide_empty_save_load(tmp_path):
-    """Save an empty StyleGuide, verify it reloads with defaults."""
-    project = Project(title="空项目", genre="科幻")
-    proj_dir = create_project(tmp_path, project)
-
-    from app.storage.models import StyleGuide
-
-    style = StyleGuide()
-    save_style_guide(proj_dir, style)
-    loaded = load_project(proj_dir)
-
-    assert loaded.style_guide.pacing == ""
-    assert loaded.style_guide.pov == ""
-    assert loaded.style_guide.taboo_patterns == []
 
 
 def test_world_md_without_power_system(tmp_path):

@@ -5,6 +5,7 @@ from app.ui.character_detail_catalog import (
     initial_character_fields,
     populated_character_fields,
 )
+from app.ui.display_labels import character_tier_label
 
 
 def test_character_detail_registry_and_tier_defaults() -> None:
@@ -41,6 +42,11 @@ def test_character_detail_registry_and_tier_defaults() -> None:
     }
     assert default_character_fields(CharacterTier.SUPPORTING) == {"personality"}
     assert default_character_fields(CharacterTier.BACKGROUND) == set()
+    assert [character_tier_label(tier) for tier in CharacterTier] == [
+        "主要角色",
+        "配角",
+        "背景角色",
+    ]
 
 
 def test_initial_fields_include_populated_values_without_blank_values() -> None:

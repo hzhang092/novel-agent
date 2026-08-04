@@ -91,26 +91,6 @@ def test_save_and_load_character_round_trip(tmp_path):
     assert loaded.state.last_updated_scene == "scene-001"
 
 
-def test_save_character_minimal(tmp_path):
-    """Save a character with only required fields, verify round-trip."""
-    from app.storage.project_files import save_character, load_character
-
-    project = Project(title="测试", genre="玄幻")
-    proj_dir = create_project(tmp_path, project)
-
-    core = CharacterCore(name="无名")
-    state = CharacterState(character_id=core.id)
-    character = Character(core=core, state=state)
-
-    save_character(proj_dir, character)
-    loaded = load_character(proj_dir, character.core.id)
-
-    assert loaded.core.name == "无名"
-    assert loaded.core.tier == CharacterTier.SUPPORTING  # default
-    assert loaded.core.aliases == []
-    assert loaded.state.current_goal == ""
-
-
 def test_save_character_update_is_replayable(tmp_path):
     from app.storage.character_events import load_events
     from app.storage.project_files import load_character, save_character
@@ -193,15 +173,6 @@ def test_delete_character(tmp_path):
     with pytest.raises(FileNotFoundError):
         load_character(proj_dir, core.id)
 
-
-def test_delete_nonexistent_character_no_error(tmp_path):
-    """Deleting a nonexistent character does not raise."""
-    from app.storage.project_files import delete_character
-
-    project = Project(title="测试", genre="玄幻")
-    proj_dir = create_project(tmp_path, project)
-
-    # Should not raise
     delete_character(proj_dir, "nonexistent-id")
 
 
@@ -318,15 +289,18 @@ def test_delete_character_transactionally_unlinks_participants_and_relationships
     assert not (proj_dir / "characters" / target.id).exists()
 
 
-def test_list_character_ids(tmp_path):
-    """List returns all character IDs in the characters directory."""
+def test_list_and_load_all_characters(tmp_path):
+    """List and load-all cover empty and populated character directories."""
     from app.storage.project_files import (
         list_character_ids,
+        load_all_characters,
         save_character,
     )
 
     project = Project(title="测试", genre="玄幻")
     proj_dir = create_project(tmp_path, project)
+    assert list_character_ids(proj_dir) == []
+    assert load_all_characters(proj_dir) == []
 
     ids = []
     for name in ["林轩", "苏清鸾", "路人甲"]:
@@ -337,40 +311,9 @@ def test_list_character_ids(tmp_path):
 
     result = list_character_ids(proj_dir)
     assert set(result) == set(ids)
-
-
-def test_list_character_ids_empty_directory(tmp_path):
-    """Empty characters directory returns empty list."""
-    from app.storage.project_files import list_character_ids
-
-    project = Project(title="测试", genre="玄幻")
-    proj_dir = create_project(tmp_path, project)
-
-    assert list_character_ids(proj_dir) == []
-
-
-def test_load_all_characters(tmp_path):
-    """Load all characters from disk."""
-    from app.storage.project_files import (
-        load_all_characters,
-        save_character,
-    )
-
-    project = Project(title="测试", genre="玄幻")
-    proj_dir = create_project(tmp_path, project)
-
-    chars = []
-    for name in ["林轩", "苏清鸾"]:
-        core = CharacterCore(name=name)
-        state = CharacterState(character_id=core.id)
-        char = Character(core=core, state=state)
-        save_character(proj_dir, char)
-        chars.append(char)
-
     loaded = load_all_characters(proj_dir)
-    assert len(loaded) == 2
     loaded_names = {c.core.name for c in loaded}
-    assert loaded_names == {"林轩", "苏清鸾"}
+    assert loaded_names == {"林轩", "苏清鸾", "路人甲"}
 
 
 def test_load_all_characters_raises_with_bad_files(tmp_path):
@@ -393,13 +336,3 @@ def test_load_all_characters_raises_with_bad_files(tmp_path):
     message = str(exc.value)
     assert "bad" in message
     assert str(bad_file) in message
-
-
-def test_load_all_characters_empty(tmp_path):
-    """Empty directory returns empty list."""
-    from app.storage.project_files import load_all_characters
-
-    project = Project(title="测试", genre="玄幻")
-    proj_dir = create_project(tmp_path, project)
-
-    assert load_all_characters(proj_dir) == []

@@ -1,4 +1,4 @@
-"""Tests for ProviderConfig, factory, and per-step routing."""
+"""Tests for ProviderConfig, factory, routing, and secure storage."""
 
 from unittest.mock import patch
 
@@ -14,108 +14,66 @@ from app.providers.config import (
 from app.providers.deepseek import DeepSeekProvider
 from app.providers.ollama import OllamaProvider
 from app.storage.models import ProviderConfig
+from app.ui.settings_dialog import STEP_LABELS
 
 
-class TestProviderConfig:
-    def test_defaults(self):
-        cfg = ProviderConfig()
-        assert cfg.ollama_host == "http://localhost:11434"
-        assert cfg.ollama_model == "qwen:14b"
-        assert cfg.deepseek_model == "deepseek-chat"
-        assert cfg.deepseek_api_key == ""
-        assert cfg.routing["planner"] == "ollama"
-        assert cfg.routing["writer"] == "ollama"
-        assert cfg.routing["state_updater"] == "ollama"
-        assert cfg.routing["bible_assistant"] == "ollama"
-        assert cfg.routing["story_designer"] == "ollama"
-        assert len(cfg.routing) == 8
+def test_provider_config_defaults_and_custom_routing():
+    defaults = ProviderConfig()
+    custom = ProviderConfig(routing={**defaults.routing, "writer": "deepseek"})
 
-    def test_custom_routing(self):
-        cfg = ProviderConfig(
-            routing={
-                "planner": "ollama",
-                "characters": "ollama",
-                "writer": "deepseek",
-                "reviewer": "ollama",
-                "fact_extractor": "ollama",
-                "state_updater": "ollama",
-            }
-        )
-        assert cfg.routing["writer"] == "deepseek"
+    assert defaults.ollama_host == "http://localhost:11434"
+    assert defaults.ollama_model == "qwen:14b"
+    assert defaults.deepseek_model == "deepseek-chat"
+    assert defaults.deepseek_api_key == ""
+    assert set(defaults.routing.values()) == {"ollama"}
+    assert set(defaults.routing) == set(STEP_LABELS)
+    assert custom.routing["writer"] == "deepseek"
 
 
-class TestCreateProvider:
-    def test_create_ollama(self):
-        cfg = ProviderConfig(ollama_host="http://localhost:11434", ollama_model="qwen:14b")
-        provider = create_provider("ollama", cfg)
-        assert isinstance(provider, OllamaProvider)
-        assert provider.host == "http://localhost:11434"
-        assert provider.model == "qwen:14b"
+def test_create_supported_providers():
+    config = ProviderConfig(
+        ollama_host="http://localhost:11434",
+        ollama_model="qwen:14b",
+        deepseek_model="deepseek-chat",
+        deepseek_api_key="sk-test",
+        deepseek_base_url="https://api.deepseek.com/v1",
+    )
 
-    def test_create_deepseek(self):
-        cfg = ProviderConfig(
-            deepseek_model="deepseek-chat",
-            deepseek_api_key="sk-test",
-            deepseek_base_url="https://api.deepseek.com/v1",
-        )
-        provider = create_provider("deepseek", cfg)
-        assert isinstance(provider, DeepSeekProvider)
-        assert provider.model == "deepseek-chat"
+    ollama = create_provider("ollama", config)
+    deepseek = create_provider("deepseek", config)
 
-    def test_create_mock(self):
-        cfg = ProviderConfig()
-        provider = create_provider("mock", cfg)
-        assert isinstance(provider, MockProvider)
-
-    def test_create_unknown_raises(self):
-        cfg = ProviderConfig()
-        with pytest.raises(ValueError, match="Unknown provider type"):
-            create_provider("unknown", cfg)
+    assert isinstance(ollama, OllamaProvider)
+    assert ollama.host == "http://localhost:11434"
+    assert ollama.model == "qwen:14b"
+    assert isinstance(deepseek, DeepSeekProvider)
+    assert deepseek.model == "deepseek-chat"
+    assert isinstance(create_provider("mock", config), MockProvider)
 
 
-class TestGetProviderForStep:
-    def test_default_routing_all_ollama(self):
-        cfg = ProviderConfig()
-        for step in [
-            "planner",
-            "characters",
-            "writer",
-            "reviewer",
-            "fact_extractor",
-            "state_updater",
-            "bible_assistant",
-            "story_designer",
-        ]:
-            provider = get_provider_for_step(step, cfg)
-            assert isinstance(provider, OllamaProvider)
-
-    def test_custom_writer_routing(self):
-        cfg = ProviderConfig(
-            deepseek_api_key="sk-test",
-            routing={
-                "planner": "ollama",
-                "characters": "ollama",
-                "writer": "deepseek",
-                "reviewer": "ollama",
-                "fact_extractor": "ollama",
-                "state_updater": "ollama",
-            },
-        )
-        writer = get_provider_for_step("writer", cfg)
-        assert isinstance(writer, DeepSeekProvider)
-
-        planner = get_provider_for_step("planner", cfg)
-        assert isinstance(planner, OllamaProvider)
-
-    def test_unknown_step_falls_back(self):
-        cfg = ProviderConfig()
-        provider = get_provider_for_step("nonexistent", cfg)
-        assert isinstance(provider, OllamaProvider)
+def test_create_unknown_provider_raises():
+    with pytest.raises(ValueError, match="Unknown provider type"):
+        create_provider("unknown", ProviderConfig())
 
 
-class TestConfigSerialization:
-    def test_legacy_config_adds_state_updater_from_fact_extractor(self):
-        cfg = ProviderConfig.model_validate({
+def test_step_routing_covers_defaults_override_and_fallback():
+    default = ProviderConfig()
+    custom = ProviderConfig(
+        deepseek_api_key="sk-test",
+        routing={**default.routing, "writer": "deepseek"},
+    )
+
+    assert all(
+        isinstance(get_provider_for_step(step, default), OllamaProvider)
+        for step in default.routing
+    )
+    assert isinstance(get_provider_for_step("writer", custom), DeepSeekProvider)
+    assert isinstance(get_provider_for_step("planner", custom), OllamaProvider)
+    assert isinstance(get_provider_for_step("nonexistent", default), OllamaProvider)
+
+
+def test_config_serialization_preserves_routing_but_excludes_secrets():
+    legacy = ProviderConfig.model_validate(
+        {
             "routing": {
                 "planner": "ollama",
                 "characters": "ollama",
@@ -123,63 +81,55 @@ class TestConfigSerialization:
                 "reviewer": "ollama",
                 "fact_extractor": "deepseek",
             }
-        })
+        }
+    )
+    config = ProviderConfig(
+        ollama_model="qwen:32b",
+        deepseek_api_key="sk-secret",
+        routing={**ProviderConfig().routing, "planner": "deepseek"},
+    )
+    restored = ProviderConfig.model_validate(config.model_dump(mode="json"))
 
-        assert cfg.routing["state_updater"] == "deepseek"
-
-    def test_round_trip_excludes_api_key(self):
-        cfg = ProviderConfig(
-            ollama_model="qwen:32b",
-            deepseek_api_key="sk-secret",
-            routing={
-                "planner": "deepseek",
-                "characters": "deepseek",
-                "writer": "deepseek",
-                "reviewer": "ollama",
-                "fact_extractor": "ollama",
-                "state_updater": "ollama",
-            },
-        )
-        data = cfg.model_dump(mode="json")
-        restored = ProviderConfig.model_validate(data)
-        assert restored.ollama_model == "qwen:32b"
-        assert restored.deepseek_api_key == ""
-        assert restored.routing["planner"] == "deepseek"
+    assert legacy.routing["state_updater"] == "deepseek"
+    assert legacy.routing["bible_assistant"] == "deepseek"
+    assert legacy.routing["story_designer"] == "ollama"
+    assert restored.ollama_model == "qwen:32b"
+    assert restored.deepseek_api_key == ""
+    assert restored.routing["planner"] == "deepseek"
 
 
-class TestSecureConfigStorage:
-    def test_save_keeps_api_key_out_of_qsettings(self):
-        config = ProviderConfig(deepseek_api_key="sk-secret")
+def test_save_keeps_api_key_out_of_qsettings():
+    with (
+        patch("PySide6.QtCore.QSettings") as qsettings,
+        patch("app.providers.config.keyring.set_password") as set_password,
+    ):
+        save_provider_config(ProviderConfig(deepseek_api_key="sk-secret"))
 
-        with (
-            patch("PySide6.QtCore.QSettings") as qsettings,
-            patch("app.providers.config.keyring.set_password") as set_password,
-        ):
-            save_provider_config(config)
+    set_password.assert_called_once_with("NovelForge", "DeepSeek API key", "sk-secret")
+    saved = qsettings.return_value.setValue.call_args.args[1]
+    assert "deepseek_api_key" not in saved
 
-        set_password.assert_called_once_with("NovelForge", "DeepSeek API key", "sk-secret")
-        saved = qsettings.return_value.setValue.call_args.args[1]
-        assert "deepseek_api_key" not in saved
 
-    def test_load_migrates_legacy_api_key(self):
-        with (
-            patch("PySide6.QtCore.QSettings") as qsettings,
-            patch("app.providers.config.keyring.get_password", return_value=None),
-            patch("app.providers.config.keyring.set_password") as set_password,
-        ):
-            qsettings.return_value.value.return_value = {"deepseek_api_key": "sk-legacy"}
-            config = load_provider_config()
+def test_load_migrates_legacy_api_key():
+    with (
+        patch("PySide6.QtCore.QSettings") as qsettings,
+        patch("app.providers.config.keyring.get_password", return_value=None),
+        patch("app.providers.config.keyring.set_password") as set_password,
+    ):
+        qsettings.return_value.value.return_value = {"deepseek_api_key": "sk-legacy"}
+        config = load_provider_config()
 
-        assert config.deepseek_api_key == "sk-legacy"
-        set_password.assert_called_once_with("NovelForge", "DeepSeek API key", "sk-legacy")
-        saved = qsettings.return_value.setValue.call_args.args[1]
-        assert "deepseek_api_key" not in saved
+    assert config.deepseek_api_key == "sk-legacy"
+    set_password.assert_called_once_with("NovelForge", "DeepSeek API key", "sk-legacy")
+    saved = qsettings.return_value.setValue.call_args.args[1]
+    assert "deepseek_api_key" not in saved
 
-    def test_save_empty_key_removes_stored_credential(self):
-        with (
-            patch("PySide6.QtCore.QSettings"),
-            patch("app.providers.config.keyring.delete_password") as delete_password,
-        ):
-            save_provider_config(ProviderConfig())
 
-        delete_password.assert_called_once_with("NovelForge", "DeepSeek API key")
+def test_save_empty_key_removes_stored_credential():
+    with (
+        patch("PySide6.QtCore.QSettings"),
+        patch("app.providers.config.keyring.delete_password") as delete_password,
+    ):
+        save_provider_config(ProviderConfig())
+
+    delete_password.assert_called_once_with("NovelForge", "DeepSeek API key")

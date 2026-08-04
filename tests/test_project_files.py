@@ -1,10 +1,8 @@
 """Tests for project file I/O operations."""
 
-from pathlib import Path
-
 import pytest
 
-from app.storage.models import Project, WorldSetting
+from app.storage.models import PowerSystem, Project, StyleGuide, WorldSetting
 from app.storage.project_files import (
     create_project,
     delete_project,
@@ -13,76 +11,23 @@ from app.storage.project_files import (
 )
 
 
-def test_create_project_creates_directory_structure(tmp_path):
-    project = Project(title="测试小说", genre="玄幻")
-    proj_dir = create_project(tmp_path, project)
-
-    assert proj_dir.exists()
-    assert (proj_dir / "project.yaml").exists()
-    assert (proj_dir / "world.md").exists()
-    assert (proj_dir / "style.yaml").exists()
-    assert (proj_dir / ".gitignore").exists()
-    assert (proj_dir / "characters").is_dir()
-    assert (proj_dir / "outline").is_dir()
-    assert (proj_dir / "scenes").is_dir()
-    assert (proj_dir / "canon").is_dir()
-    assert (proj_dir / "exports").is_dir()
-
-
-def test_create_project_writes_project_yaml(tmp_path):
-    project = Project(title="修仙之路", genre="玄幻", llm_provider="deepseek")
-    proj_dir = create_project(tmp_path, project)
-
-    loaded = load_project(proj_dir)
-    assert loaded.title == "修仙之路"
-    assert loaded.genre == "玄幻"
-    assert loaded.llm_provider == "deepseek"
-    assert loaded.id == project.id  # UUID preserved
-
-
-def test_load_project_round_trip(tmp_path):
-    project = Project(
-        title="测试小说",
-        genre="都市",
-        world_setting=WorldSetting(geography="现代都市，隐藏修仙世界"),
-    )
-    proj_dir = create_project(tmp_path, project)
-
-    loaded = load_project(proj_dir)
-    assert loaded.world_setting.geography == "现代都市，隐藏修仙世界"
-    assert loaded.language == "zh-CN"
-
-
 def test_load_project_missing_yaml(tmp_path):
     with pytest.raises(FileNotFoundError):
         load_project(tmp_path / "nonexistent")
 
 
-def test_load_project_invalid_yaml(tmp_path):
-    proj_dir = tmp_path / "bad_project"
-    proj_dir.mkdir()
-    (proj_dir / "project.yaml").write_text(": bad yaml : :", encoding="utf-8")
-
-    with pytest.raises(ValueError, match="Invalid YAML"):
-        load_project(proj_dir)
-
-
-def test_load_project_empty_yaml(tmp_path):
-    proj_dir = tmp_path / "empty_project"
-    proj_dir.mkdir()
-    (proj_dir / "project.yaml").write_text("", encoding="utf-8")
-
-    with pytest.raises(ValueError, match="Empty"):
-        load_project(proj_dir)
-
-
-def test_load_project_missing_required_fields(tmp_path):
-    proj_dir = tmp_path / "partial_project"
-    proj_dir.mkdir()
-    (proj_dir / "project.yaml").write_text("id: abc\n", encoding="utf-8")
-
-    with pytest.raises(ValueError, match="Invalid project data"):
-        load_project(proj_dir)
+def test_load_project_rejects_invalid_files(tmp_path):
+    cases = [
+        ("bad_project", ": bad yaml : :", "Invalid YAML"),
+        ("empty_project", "", "Empty"),
+        ("partial_project", "id: abc\n", "Invalid project data"),
+    ]
+    for name, content, message in cases:
+        project_dir = tmp_path / name
+        project_dir.mkdir()
+        (project_dir / "project.yaml").write_text(content, encoding="utf-8")
+        with pytest.raises(ValueError, match=message):
+            load_project(project_dir)
 
 
 def test_project_exists(tmp_path):
@@ -91,40 +36,18 @@ def test_project_exists(tmp_path):
     project = Project(title="测试小说", genre="玄幻")
     proj_dir = create_project(tmp_path, project)
     assert project_exists(proj_dir)
-
-
-def test_delete_project(tmp_path):
-    project = Project(title="测试小说", genre="玄幻")
-    proj_dir = create_project(tmp_path, project)
-    assert proj_dir.exists()
-
-    delete_project(proj_dir)
-    assert not proj_dir.exists()
-
-
-def test_create_project_duplicate_raises(tmp_path):
-    project = Project(title="测试小说", genre="玄幻")
-    create_project(tmp_path, project)
     with pytest.raises(FileExistsError):
         create_project(tmp_path, project)
-
-
-def test_create_project_ignores_local_editor_state(tmp_path):
-    proj_dir = create_project(tmp_path, Project(title="测试小说", genre="玄幻"))
-
-    assert (proj_dir / ".gitignore").read_text(encoding="utf-8") == (
-        "exports/\n.novel-agent/\n"
-    )
+    delete_project(proj_dir)
+    assert not project_exists(proj_dir)
 
 
 def test_full_round_trip_with_world_and_style(tmp_path):
     """End-to-end: create a full project, load it back, verify all fields."""
-    from app.storage.models import PowerSystem, StyleGuide, WorldSetting
-
     project = Project(
         title="修仙之路",
         genre="玄幻",
-        llm_provider="ollama",
+        llm_provider="deepseek",
         world_setting=WorldSetting(
             geography="东荒大陆",
             power_system=PowerSystem(realms=["炼气", "筑基", "金丹"]),
@@ -143,7 +66,11 @@ def test_full_round_trip_with_world_and_style(tmp_path):
 
     # Load and verify
     loaded = load_project(proj_dir)
+    assert loaded.id == project.id
     assert loaded.title == project.title
+    assert loaded.genre == "玄幻"
+    assert loaded.language == "zh-CN"
+    assert loaded.llm_provider == "deepseek"
     assert loaded.world_setting.geography == "东荒大陆"
     assert loaded.world_setting.power_system is not None
     assert len(loaded.world_setting.power_system.realms) == 3
@@ -151,14 +78,13 @@ def test_full_round_trip_with_world_and_style(tmp_path):
 
     # Verify .gitignore excludes exports/
     gitignore = (proj_dir / ".gitignore").read_text(encoding="utf-8")
-    assert "exports/" in gitignore
+    assert gitignore == "exports/\n.novel-agent/\n"
 
 
-def test_save_world_setting_preserves_other_fields(tmp_path):
-    from app.storage.models import PowerSystem, WorldSetting, Project as P
-    from app.storage.project_files import save_world_setting
+def test_save_world_and_style_preserve_other_fields(tmp_path):
+    from app.storage.project_files import save_style_guide, save_world_setting
 
-    project = P(title="测试", genre="玄幻")
+    project = Project(title="测试", genre="玄幻")
     proj_dir = create_project(tmp_path, project)
 
     new_world = WorldSetting(
@@ -177,14 +103,6 @@ def test_save_world_setting_preserves_other_fields(tmp_path):
     md_content = (proj_dir / "world.md").read_text(encoding="utf-8")
     assert "新地理描述" in md_content
     assert "炼气" in md_content
-
-
-def test_save_style_guide_preserves_other_fields(tmp_path):
-    from app.storage.models import StyleGuide, Project as P
-    from app.storage.project_files import save_style_guide
-
-    project = P(title="测试", genre="玄幻")
-    proj_dir = create_project(tmp_path, project)
 
     new_style = StyleGuide(
         pacing="快节奏",

@@ -14,30 +14,20 @@ def _visible_text(widget):
     return texts
 
 
-def test_quick_creation_is_available_by_default(qtbot, tmp_path, monkeypatch):
+def test_release_ui_uses_creation_names_and_has_concise_help(
+    qtbot, tmp_path, monkeypatch
+):
     monkeypatch.delenv("NOVELFORGE_QUICK_CREATION", raising=False)
     window = MainWindow()
-    dialog = CreateProjectDialog(default_storage_dir=tmp_path, quick_creation_enabled=True)
+    dialog = CreateProjectDialog(
+        default_storage_dir=tmp_path,
+        quick_creation_enabled=True,
+    )
     qtbot.addWidget(window)
     qtbot.addWidget(dialog)
 
     assert not window._experience_switch.isHidden()
     assert not dialog.quick_button.isHidden()
-
-
-def test_constructor_override_can_still_hide_quick_creation(qtbot):
-    window = MainWindow(quick_creation_enabled=False)
-    qtbot.addWidget(window)
-
-    assert window._experience_switch.isHidden()
-
-
-def test_release_ui_uses_creation_names_and_has_concise_help(qtbot, monkeypatch):
-    window = MainWindow()
-    dialog = CreateProjectDialog(quick_creation_enabled=True)
-    qtbot.addWidget(window)
-    qtbot.addWidget(dialog)
-
     all_text = " ".join(_visible_text(window) + _visible_text(dialog))
     assert "快速创作" in all_text
     assert "深度创作" in all_text

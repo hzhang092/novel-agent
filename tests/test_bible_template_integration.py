@@ -8,6 +8,7 @@ from app.storage.project_files import create_project
 from app.ui.bible_editor import BibleEditorView
 from app.ui.template_apply_dialog import TemplateApplyDialog
 from app.ui.world_bible_editor import WorldBibleEditorView
+from app.utils.template_merge import TemplateMergeMode
 
 
 def test_world_editor_stages_snapshot_without_writing_until_save(tmp_path, qtbot):
@@ -65,6 +66,9 @@ def test_bible_editor_applies_typed_template_in_memory_then_saves(tmp_path, qtbo
     def accept_dialog():
         dialog = QApplication.activeModalWidget()
         assert isinstance(dialog, TemplateApplyDialog)
+        assert dialog.apply_world is True
+        assert dialog.apply_style is True
+        assert dialog.merge_mode == TemplateMergeMode.FILL_EMPTY
         dialog.accept()
 
     QTimer.singleShot(0, accept_dialog)
