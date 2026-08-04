@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import json
 from typing import AsyncGenerator
 
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
-from app.providers.base import LLMProvider, ProviderResponse
+from app.providers.base import LLMProvider, ProviderResponse, parse_structured_json
 
 
 class OllamaProvider(LLMProvider):
@@ -70,8 +69,14 @@ class OllamaProvider(LLMProvider):
             messages=messages,  # type: ignore[arg-type]
             temperature=temperature,
             max_tokens=4096,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema.__name__,
+                    "schema": json_schema,
+                },
+            },
             extra_body={
-                "format": json_schema,
                 "options": {
                     "num_ctx": 16384,
                     "presence_penalty": 0.0,
@@ -80,7 +85,7 @@ class OllamaProvider(LLMProvider):
         )
         choice = resp.choices[0]
         text = choice.message.content or ""
-        parsed = json.loads(text)
+        parsed = parse_structured_json(text)
         model = schema.model_validate(parsed)
         return ProviderResponse(
             text=text,
@@ -120,11 +125,15 @@ class OllamaProvider(LLMProvider):
 def _clean_schema(schema: dict) -> dict:
     """Strip Pydantic-specific keys (title, default, description) for Ollama compat."""
     if isinstance(schema, dict):
-        return {
-            k: _clean_schema(v)
-            for k, v in schema.items()
-            if k not in ("title", "default", "description")
-        }
+        cleaned = {}
+        for key, value in schema.items():
+            if key in ("title", "default", "description"):
+                continue
+            if key == "properties" and isinstance(value, dict):
+                cleaned[key] = {name: _clean_schema(definition) for name, definition in value.items()}
+            else:
+                cleaned[key] = _clean_schema(value)
+        return cleaned
     if isinstance(schema, list):
         return [_clean_schema(item) for item in schema]
     return schema

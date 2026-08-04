@@ -8,7 +8,7 @@ from typing import AsyncGenerator
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
-from app.providers.base import LLMProvider, ProviderResponse
+from app.providers.base import LLMProvider, ProviderResponse, parse_structured_json
 
 
 class DeepSeekProvider(LLMProvider):
@@ -74,7 +74,7 @@ class DeepSeekProvider(LLMProvider):
         )
         choice = resp.choices[0]
         text = choice.message.content or ""
-        parsed = json.loads(text)
+        parsed = parse_structured_json(text)
         model = schema.model_validate(parsed)
         return ProviderResponse(
             text=text,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import AsyncGenerator
@@ -16,6 +17,21 @@ class ProviderResponse:
     model: BaseModel | None = None
     parsed: dict | None = None
     usage: dict | None = None  # {"prompt_tokens": N, "completion_tokens": N, "total_tokens": N}
+
+
+def parse_structured_json(text: str) -> dict:
+    """Parse JSON returned directly or inside a Markdown code fence."""
+    payload = text.strip()
+    if payload.startswith("```"):
+        lines = payload.splitlines()
+        lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines.pop()
+        payload = "\n".join(lines).strip()
+    parsed = json.loads(payload)
+    if not isinstance(parsed, dict):
+        raise ValueError("Structured provider response must be a JSON object")
+    return parsed
 
 
 class LLMProvider(ABC):

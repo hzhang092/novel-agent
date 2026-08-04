@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.providers.ollama import OllamaProvider
+from app.providers.ollama import OllamaProvider, _clean_schema
 
 
 class _TestSchema:
@@ -90,8 +90,22 @@ class TestOllamaProvider:
         assert resp.parsed["value"] == 42
 
     @pytest.mark.asyncio
+    async def test_generate_structured_accepts_markdown_json_fence(self, ollama_provider):
+        mock_create = AsyncMock(
+            return_value=_make_mock_completion('```json\n{"name": "test", "value": 42}\n```')
+        )
+
+        with patch.object(ollama_provider._client.chat.completions, "create", mock_create):
+            resp = await ollama_provider.generate_structured(
+                [{"role": "user", "content": "Give me JSON"}],
+                _TestSchema,
+            )
+
+        assert resp.parsed == {"name": "test", "value": 42}
+
+    @pytest.mark.asyncio
     async def test_generate_structured_passes_json_schema_format(self, ollama_provider):
-        """Verify that extra_body includes the `format` field with cleaned schema."""
+        """Verify that the OpenAI-compatible endpoint receives a cleaned JSON schema."""
         captured_kwargs = {}
 
         async def _capture(**kwargs):
@@ -106,15 +120,25 @@ class TestOllamaProvider:
                 _TestSchema,
             )
 
-        assert "extra_body" in captured_kwargs
-        assert "format" in captured_kwargs["extra_body"]
-        fmt = captured_kwargs["extra_body"]["format"]
+        assert captured_kwargs["response_format"]["type"] == "json_schema"
+        fmt = captured_kwargs["response_format"]["json_schema"]["schema"]
         assert fmt.get("type") == "object"
         # Pydantic metadata keys (title, default, description) should be stripped
         assert "title" not in fmt
         assert "description" not in fmt
         prop = fmt.get("properties", {}).get("name", {})
         assert "title" not in prop
+
+    def test_clean_schema_preserves_a_property_named_title(self):
+        schema = _clean_schema(
+            {
+                "title": "TitleSchema",
+                "type": "object",
+                "properties": {"title": {"type": "string", "title": "Title"}},
+            }
+        )
+
+        assert schema["properties"]["title"] == {"type": "string"}
 
     @pytest.mark.asyncio
     async def test_generate_stream(self, ollama_provider):
