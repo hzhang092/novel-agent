@@ -8,7 +8,8 @@ import re
 from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFormLayout, QHBoxLayout, QLabel,
-    QLineEdit, QMessageBox, QPushButton, QSpinBox, QTextEdit, QVBoxLayout, QWidget,
+    QLineEdit, QMessageBox, QPushButton, QScrollArea, QSpinBox, QTextEdit,
+    QVBoxLayout, QWidget,
 )
 
 from app.providers.config import ProviderConfigurationError
@@ -19,7 +20,6 @@ from app.application.errors import (
 )
 from app.storage.models import (
     ActiveBootstrapDraft,
-    ActiveStoryPatchDraft,
     ChapterLength,
     StoryBootstrap,
     StoryBrief,
@@ -49,7 +49,17 @@ class QuickStoryView(QWidget):
         self._proposal_task = None
         self._chips: dict[str, dict[str, QCheckBox]] = {}
         self._custom: dict[str, QLineEdit] = {}
-        layout = QVBoxLayout(self)
+        root_layout = QVBoxLayout(self)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        scroll.setWidget(content)
+        root_layout.addWidget(scroll)
+
+        self.brief_section = QWidget()
+        content_layout.addWidget(self.brief_section)
+        layout = QVBoxLayout(self.brief_section)
         layout.addWidget(QLabel("故事意向"))
         self.premise_edit = QTextEdit()
         self.premise_edit.setPlaceholderText("一句话故事方向（可选）")
@@ -104,45 +114,34 @@ class QuickStoryView(QWidget):
         save = QPushButton("保存故事意向")
         save.clicked.connect(self._save_brief)
         layout.addWidget(save)
-        self.generate_brief_button = QPushButton("从现有项目生成故事意向")
-        self.generate_brief_button.clicked.connect(
-            lambda: self._start_task(self._generate_brief_from_existing())
-        )
-        layout.addWidget(self.generate_brief_button)
-        layout.addWidget(QLabel("故事提案"))
-        self.proposal_label = QLabel("尚未生成")
-        self.proposal_label.setWordWrap(True)
-        layout.addWidget(self.proposal_label)
+
+        self.generate_button = QPushButton("生成故事提案")
+        self.generate_button.clicked.connect(lambda: self._start_task(self._generate_proposal()))
+        layout.addWidget(self.generate_button)
+
+        self.projection_section = QWidget()
+        content_layout.addWidget(self.projection_section)
+        layout = QVBoxLayout(self.projection_section)
         self.approved_brief_label = QLabel("")
         self.approved_brief_label.setWordWrap(True)
         layout.addWidget(self.approved_brief_label)
+        self.approved_proposal_label = QLabel("")
+        self.approved_proposal_label.setWordWrap(True)
+        layout.addWidget(self.approved_proposal_label)
+        layout.addWidget(QLabel("高级信息"))
         self.quick_projection_label = QLabel("")
         self.quick_projection_label.setWordWrap(True)
         layout.addWidget(self.quick_projection_label)
         self.quick_projection_actions = QHBoxLayout()
         layout.addLayout(self.quick_projection_actions)
-        self.story_patch_edit = QLineEdit()
-        self.story_patch_edit.setPlaceholderText("用一句话调整主角或核心设定")
-        layout.addWidget(self.story_patch_edit)
-        story_patch_actions = QHBoxLayout()
-        self.generate_story_patch_button = QPushButton("生成调整预览")
-        self.apply_story_patch_button = QPushButton("应用调整")
-        self.cancel_story_patch_button = QPushButton("取消调整")
-        self.generate_story_patch_button.clicked.connect(
-            lambda: self._start_task(self._generate_story_patch())
-        )
-        self.apply_story_patch_button.clicked.connect(self._apply_story_patch)
-        self.cancel_story_patch_button.clicked.connect(self._cancel_story_patch)
-        for button in (
-            self.generate_story_patch_button,
-            self.apply_story_patch_button,
-            self.cancel_story_patch_button,
-        ):
-            story_patch_actions.addWidget(button)
-        layout.addLayout(story_patch_actions)
-        self.story_patch_label = QLabel("")
-        self.story_patch_label.setWordWrap(True)
-        layout.addWidget(self.story_patch_label)
+
+        self.proposal_section = QWidget()
+        content_layout.addWidget(self.proposal_section)
+        layout = QVBoxLayout(self.proposal_section)
+        layout.addWidget(QLabel("故事提案"))
+        self.proposal_label = QLabel("尚未生成")
+        self.proposal_label.setWordWrap(True)
+        layout.addWidget(self.proposal_label)
         self.adjust_edit = QLineEdit()
         self.adjust_edit.setPlaceholderText("告诉 AI 如何调整")
         layout.addWidget(self.adjust_edit)
@@ -150,15 +149,16 @@ class QuickStoryView(QWidget):
         self.adopt_button = QPushButton("采用这个故事")
         self.adjust_button = QPushButton("调整")
         self.another_button = QPushButton("换一个方向")
-        self.generate_button = QPushButton("生成故事提案")
         self.adopt_button.clicked.connect(lambda: self._start_task(self._adopt_proposal()))
         self.adjust_button.clicked.connect(lambda: self._start_task(self._adjust_proposal()))
         self.another_button.clicked.connect(lambda: self._start_task(self._generate_proposal()))
-        self.generate_button.clicked.connect(lambda: self._start_task(self._generate_proposal()))
-        actions.addWidget(self.generate_button)
         for button in (self.adopt_button, self.adjust_button, self.another_button):
             actions.addWidget(button)
         layout.addLayout(actions)
+
+        self.bootstrap_section = QWidget()
+        content_layout.addWidget(self.bootstrap_section)
+        layout = QVBoxLayout(self.bootstrap_section)
         layout.addWidget(QLabel("故事启动包"))
         self.bootstrap_label = QLabel("采用故事后可生成")
         self.bootstrap_label.setWordWrap(True)
@@ -196,9 +196,9 @@ class QuickStoryView(QWidget):
         self._bootstrap_draft = None
         self._bootstrap_preview = None
         self._bootstrap_fields = []
-        self._story_patch_preview = None
         self._set_story_projection(None)
-        layout.addStretch()
+        self._set_creation_stage("brief")
+        content_layout.addStretch()
 
     def bind_application(self, application) -> None:
         self.cancel_generation()
@@ -206,18 +206,13 @@ class QuickStoryView(QWidget):
         self._application = application
         planning = load_planning(application.project_dir)
         self._set_brief(planning.story_brief or StoryBrief())
-        self.generate_brief_button.setVisible(
-            not application.story_designer.is_empty_project()
-        )
         self.ending_edit.setText(planning.provisional_destination)
         self.adjust_edit.clear()
         proposal = planning.active_draft if hasattr(planning.active_draft, "proposal") else planning.approved_proposal
         self._show_proposal(proposal)
         self.refresh_quick_projection()
-        if isinstance(planning.active_draft, ActiveStoryPatchDraft):
-            self._story_patch_preview = planning.active_draft
-            self._show_story_patch()
         self._show_bootstrap(planning.active_draft if isinstance(planning.active_draft, ActiveBootstrapDraft) else None)
+        self._refresh_creation_stage()
 
     def refresh_brief(self) -> None:
         if self._application is None:
@@ -225,27 +220,7 @@ class QuickStoryView(QWidget):
         planning = load_planning(self._application.project_dir)
         self._set_brief(planning.story_brief or StoryBrief())
         self.ending_edit.setText(planning.provisional_destination)
-        self.generate_brief_button.setVisible(
-            not self._application.story_designer.is_empty_project()
-        )
-
-    async def _generate_brief_from_existing(self) -> None:
-        application = self._application
-        if application is None:
-            return
-        try:
-            brief = await application.story_designer.generate_brief_from_existing()
-        except ProviderConfigurationError as error:
-            if self._application is application:
-                self._provider_error(str(error), self._generate_brief_from_existing)
-            return
-        except (StoryDesignerProviderError, OperationBlockedError) as error:
-            if self._application is application:
-                self._provider_error(f"生成失败：{error}", self._generate_brief_from_existing)
-            return
-        if self._application is application:
-            self._set_brief(brief)
-            self.approved_brief_label.setText("AI 生成的故事意向草稿：保存后生效")
+        self._refresh_creation_stage()
 
     def refresh_quick_projection(self) -> None:
         """Refresh the compact post-bootstrap projection from canonical storage."""
@@ -259,7 +234,40 @@ class QuickStoryView(QWidget):
             )
         else:
             self.approved_brief_label.clear()
+        if planning.approved_proposal is not None:
+            self.approved_proposal_label.setText(
+                f"故事提案 · v{planning.approved_proposal.revision}\n"
+                f"{planning.approved_proposal.logline}"
+            )
+        else:
+            self.approved_proposal_label.clear()
         self._set_story_projection(self._application.quick_planning.story_projection())
+        self._refresh_creation_stage()
+
+    def _refresh_creation_stage(self) -> None:
+        if self._application is None:
+            self._set_creation_stage("brief")
+            return
+        planning = load_planning(self._application.project_dir)
+        draft = getattr(planning, "active_draft", None)
+        if isinstance(draft, ActiveBootstrapDraft):
+            stage = "bootstrap"
+        elif hasattr(draft, "proposal"):
+            stage = "proposal"
+        else:
+            designer = getattr(self._application, "story_designer", None)
+            is_empty = designer is not None and designer.is_empty_project()
+            if getattr(planning, "approved_proposal", None) is not None and is_empty:
+                stage = "bootstrap"
+            elif is_empty:
+                stage = "brief"
+            else:
+                stage = "projection"
+        self._set_creation_stage(stage)
+
+    def _set_creation_stage(self, stage: str) -> None:
+        for name in ("brief", "proposal", "bootstrap", "projection"):
+            getattr(self, f"{name}_section").setVisible(name == stage)
 
     def _set_story_projection(self, projection) -> None:
         while self.quick_projection_actions.count():
@@ -268,8 +276,6 @@ class QuickStoryView(QWidget):
                 item.widget().deleteLater()
         self.quick_projection_label.clear()
         if projection is None:
-            self.generate_story_patch_button.setEnabled(False)
-            self._cancel_story_patch()
             return
         characters = "、".join(
             f"{character.name}（{character.identity or '未设定'}）"
@@ -302,59 +308,6 @@ class QuickStoryView(QWidget):
                     lambda checked=False, element_id=element.id: self.world_element_requested.emit(element_id)
                 )
                 self.quick_projection_actions.addWidget(button)
-        self.generate_story_patch_button.setEnabled(True)
-
-    async def _generate_story_patch(self) -> None:
-        if self._application is None or not self.story_patch_edit.text().strip():
-            return
-        application = self._application
-        try:
-            self._story_patch_preview = await application.quick_planning.generate_story_patch(
-                self.story_patch_edit.text().strip()
-            )
-        except (ProviderConfigurationError, StoryDesignerProviderError,
-                ConcurrentModificationError, OperationBlockedError) as error:
-            if self._application is application:
-                self._provider_error(f"调整失败：{error}", self._generate_story_patch)
-            return
-        if self._application is application:
-            self._show_story_patch()
-
-    def _show_story_patch(self) -> None:
-        self.story_patch_label.setText(
-            "变更：" + "；".join(self._story_patch_preview.changes or ["无具体变更"])
-            + "\n影响：" + "；".join(self._story_patch_preview.consequences or ["无"])
-        )
-        self.apply_story_patch_button.setEnabled(True)
-        self.cancel_story_patch_button.setEnabled(True)
-
-    def _apply_story_patch(self) -> None:
-        if self._application is None or self._story_patch_preview is None:
-            return
-        try:
-            self._application.quick_planning.apply_story_patch(self._story_patch_preview)
-        except (ConcurrentModificationError, OperationBlockedError, ValueError) as error:
-            self._provider_error(f"应用失败：{error}")
-            return
-        self._cancel_story_patch(clear_persisted=False)
-        self.refresh_quick_projection()
-
-    def _cancel_story_patch(self, *, clear_persisted: bool = True) -> None:
-        if (
-            clear_persisted
-            and self._application is not None
-            and self._story_patch_preview is not None
-        ):
-            try:
-                self._application.quick_planning.cancel_story_patch(
-                    self._story_patch_preview
-                )
-            except ConcurrentModificationError:
-                pass
-        self._story_patch_preview = None
-        self.story_patch_label.clear()
-        self.apply_story_patch_button.setEnabled(False)
-        self.cancel_story_patch_button.setEnabled(False)
 
     def _start_task(self, coroutine) -> None:
         if self._proposal_task is None or self._proposal_task.done():
@@ -549,6 +502,7 @@ class QuickStoryView(QWidget):
         if not editable:
             self.bootstrap_label.setText("采用故事后可生成" if not approved else ("尚未生成" if can_generate else "已采用"))
             self.bootstrap_advanced.clear()
+            self._refresh_creation_stage()
             return
         bootstrap = draft.bootstrap
         self.bootstrap_label.setText(f"v{draft.revision}：可编辑简要卡片；高级字段只读。")
@@ -577,6 +531,7 @@ class QuickStoryView(QWidget):
         for field in ("pacing", "dialogue_density", "description_style", "tone", "sentence_length", "pov"):
             self._add_bootstrap_field(f"风格 {field}", getattr(bootstrap.style, field), ("style", field))
         self.bootstrap_advanced.setPlainText(bootstrap.model_dump_json(indent=2))
+        self._refresh_creation_stage()
 
     def _add_bootstrap_field(self, label: str, value: str | list[str], path: tuple) -> None:
         row = QHBoxLayout()
@@ -667,6 +622,7 @@ class QuickStoryView(QWidget):
             self.adopt_button.setEnabled(False)
             self.adjust_button.setEnabled(False)
             self.another_button.setVisible(False)
+            self._refresh_creation_stage()
             return
         self.generate_button.setVisible(False)
         is_draft = hasattr(value, "proposal")
@@ -680,6 +636,7 @@ class QuickStoryView(QWidget):
             f"主角：{'、'.join(proposal.main_characters)}\n核心冲突：{proposal.core_conflict}\n"
             f"看点：{'、'.join(proposal.story_promises)}\n结局方向：{proposal.ending_direction}"
         )
+        self._refresh_creation_stage()
 
     def _provider_error(self, message: str, retry=None) -> None:
         application = self._application

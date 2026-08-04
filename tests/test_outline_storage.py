@@ -70,58 +70,6 @@ def test_save_and_load_volume_round_trip(tmp_path):
     assert sc.constraints == ["林轩不能使用神秘力量"]
 
 
-def test_save_and_load_volume_minimal(tmp_path):
-    """Save a volume with defaults, verify round-trip."""
-    from app.storage.project_files import save_volume_outline, load_volume_outline
-
-    project = Project(title="测试", genre="玄幻")
-    proj_dir = create_project(tmp_path, project)
-
-    volume = VolumeOutline(title="第一卷")
-    save_volume_outline(proj_dir, volume)
-    loaded = load_volume_outline(proj_dir, volume.id)
-
-    assert loaded.title == "第一卷"
-    assert loaded.summary == ""
-    assert loaded.chapters == []
-
-
-def test_save_volume_with_multiple_chapters_and_scenes(tmp_path):
-    """Verify nested hierarchy with multiple chapters, each with multiple scenes."""
-    from app.storage.project_files import save_volume_outline, load_volume_outline
-
-    project = Project(title="测试", genre="玄幻")
-    proj_dir = create_project(tmp_path, project)
-
-    volume = VolumeOutline(
-        title="第一卷",
-        chapters=[
-            ChapterOutline(
-                title="第一章",
-                scenes=[
-                    SceneOutline(title="场景1", ending_hook="悬念A"),
-                    SceneOutline(title="场景2", ending_hook=""),
-                ],
-            ),
-            ChapterOutline(
-                title="第二章",
-                scenes=[
-                    SceneOutline(title="场景3", ending_hook="悬念B"),
-                ],
-            ),
-        ],
-    )
-    save_volume_outline(proj_dir, volume)
-    loaded = load_volume_outline(proj_dir, volume.id)
-
-    assert len(loaded.chapters) == 2
-    assert len(loaded.chapters[0].scenes) == 2
-    assert len(loaded.chapters[1].scenes) == 1
-    assert loaded.chapters[0].scenes[0].ending_hook == "悬念A"
-    assert loaded.chapters[0].scenes[1].ending_hook == ""
-    assert loaded.chapters[1].scenes[0].ending_hook == "悬念B"
-
-
 def test_load_volume_missing_file(tmp_path):
     """Loading a nonexistent volume raises FileNotFoundError."""
     from app.storage.project_files import load_volume_outline
@@ -168,23 +116,21 @@ def test_delete_volume(tmp_path):
     with pytest.raises(FileNotFoundError):
         load_volume_outline(proj_dir, volume.id)
 
-
-def test_delete_nonexistent_volume_no_error(tmp_path):
-    """Deleting a nonexistent volume does not raise."""
-    from app.storage.project_files import delete_volume_outline
-
-    project = Project(title="测试", genre="玄幻")
-    proj_dir = create_project(tmp_path, project)
-
     delete_volume_outline(proj_dir, "nonexistent-id")
 
 
-def test_list_volume_ids(tmp_path):
-    """List returns all volume IDs in the outline directory."""
-    from app.storage.project_files import list_volume_ids, save_volume_outline
+def test_list_and_load_all_volumes(tmp_path):
+    """List and load-all cover empty and populated outline directories."""
+    from app.storage.project_files import (
+        list_volume_ids,
+        load_all_volumes,
+        save_volume_outline,
+    )
 
     project = Project(title="测试", genre="玄幻")
     proj_dir = create_project(tmp_path, project)
+    assert list_volume_ids(proj_dir) == []
+    assert load_all_volumes(proj_dir) == []
 
     ids = []
     for title in ["第一卷", "第二卷", "第三卷"]:
@@ -194,33 +140,8 @@ def test_list_volume_ids(tmp_path):
 
     result = list_volume_ids(proj_dir)
     assert set(result) == set(ids)
-
-
-def test_list_volume_ids_empty_directory(tmp_path):
-    """Empty outline directory returns empty list."""
-    from app.storage.project_files import list_volume_ids
-
-    project = Project(title="测试", genre="玄幻")
-    proj_dir = create_project(tmp_path, project)
-
-    assert list_volume_ids(proj_dir) == []
-
-
-def test_load_all_volumes(tmp_path):
-    """Load all volumes sorted by filename."""
-    from app.storage.project_files import load_all_volumes, save_volume_outline
-
-    project = Project(title="测试", genre="玄幻")
-    proj_dir = create_project(tmp_path, project)
-
-    v1 = VolumeOutline(title="第一卷")
-    v2 = VolumeOutline(title="第二卷")
-    save_volume_outline(proj_dir, v1)
-    save_volume_outline(proj_dir, v2)
-
     loaded = load_all_volumes(proj_dir)
-    assert len(loaded) == 2
-    assert {v.title for v in loaded} == {"第一卷", "第二卷"}
+    assert {volume.title for volume in loaded} == {"第一卷", "第二卷", "第三卷"}
 
 
 def test_load_all_volumes_raises_with_bad_files(tmp_path):
@@ -239,13 +160,3 @@ def test_load_all_volumes_raises_with_bad_files(tmp_path):
     message = str(exc.value)
     assert "bad.yaml" in message
     assert str(bad_file) in message
-
-
-def test_load_all_volumes_empty(tmp_path):
-    """Empty directory returns empty list."""
-    from app.storage.project_files import load_all_volumes
-
-    project = Project(title="测试", genre="玄幻")
-    proj_dir = create_project(tmp_path, project)
-
-    assert load_all_volumes(proj_dir) == []

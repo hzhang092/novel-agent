@@ -4,12 +4,11 @@ from types import SimpleNamespace
 
 import pytest
 from PySide6.QtTest import QSignalSpy
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QScrollArea
 
 from app.storage.models import (
     QuickCharacterProjection,
     QuickStoryProjection,
-    StoryPatchPreview,
     WorldOverview,
 )
 from app.ui.quick_story_view import QuickStoryView
@@ -31,31 +30,10 @@ def projection() -> QuickStoryProjection:
 
 class FakeQuickPlanning:
     def __init__(self) -> None:
-        self.preview = StoryPatchPreview(
-            operations=[
-                {
-                    "target": "character",
-                    "target_id": "hero-1",
-                    "field": "personality",
-                    "value": "更谨慎",
-                }
-            ],
-            changes=["主角更谨慎"], consequences=["后续规划沿用新性格"]
-        )
-        self.applied = []
+        pass
 
     def story_projection(self):
         return projection()
-
-    async def generate_story_patch(self, instruction):
-        self.instruction = instruction
-        return self.preview
-
-    def apply_story_patch(self, preview):
-        self.applied.append(preview)
-
-    def cancel_story_patch(self, preview):
-        self.cancelled = preview
 
 
 @pytest.fixture
@@ -64,6 +42,10 @@ def fake_application(monkeypatch):
     application = SimpleNamespace(
         project_dir="unused",
         quick_planning=quick_planning,
+        story_designer=SimpleNamespace(
+            is_empty_project=lambda: False,
+            can_generate_bootstrap=lambda: False,
+        ),
         story_bible=SimpleNamespace(
             load_editor_snapshot=lambda: SimpleNamespace(
                 bible=SimpleNamespace(
@@ -81,7 +63,10 @@ def fake_application(monkeypatch):
     monkeypatch.setattr(
         "app.ui.quick_story_view.load_planning",
         lambda _: SimpleNamespace(
-            approved_proposal=object(),
+            approved_proposal=SimpleNamespace(
+                revision=2,
+                logline="被贬入凡间的剑仙追查契约术失控的真相",
+            ),
             approved_brief=SimpleNamespace(premise="追查契约术失控的真相"),
         ),
     )
@@ -100,6 +85,8 @@ def test_refresh_renders_projection_and_emits_exact_deep_targets(qtbot, fake_app
     assert "林默" in view.quick_projection_label.text()
     assert "浮空城" in view.quick_projection_label.text()
     assert "追查契约术失控的真相" in view.approved_brief_label.text()
+    assert "故事提案 · v2" in view.approved_proposal_label.text()
+    assert "被贬入凡间的剑仙" in view.approved_proposal_label.text()
     buttons = view.quick_projection_actions.parentWidget().findChildren(type(view.generate_button))
     next(button for button in buttons if button.text() == "高级角色：林默").click()
     next(button for button in buttons if button.text() == "高级世界设定").click()
@@ -110,6 +97,18 @@ def test_refresh_renders_projection_and_emits_exact_deep_targets(qtbot, fake_app
     assert character_spy.at(0) == ["hero-1"]
     assert world_spy.at(0) == ["overview"]
     assert world_spy.at(1) == ["power-1"]
+
+
+def test_quick_story_hides_deferred_controls_and_has_a_scroll_container(
+    qtbot, fake_application
+):
+    view = QuickStoryView()
+    qtbot.addWidget(view)
+
+    assert view.findChild(QScrollArea) is not None
+    assert not hasattr(view, "generate_brief_button")
+    assert not hasattr(view, "story_patch_edit")
+    assert not hasattr(view, "generate_story_patch_button")
 
 
 def test_existing_canonical_project_does_not_need_guided_planning(
@@ -132,24 +131,66 @@ def test_existing_canonical_project_does_not_need_guided_planning(
     assert "浮空城" in view.quick_projection_label.text()
 
 
-@pytest.mark.asyncio
-async def test_story_patch_is_reviewed_then_explicitly_applied_or_cancelled(
-    qtbot, fake_application
-):
+def test_quick_story_shows_only_the_current_creation_stage(qtbot, fake_application, monkeypatch):
+    planning = SimpleNamespace(
+        story_brief=None,
+        provisional_destination="",
+        approved_proposal=None,
+        approved_brief=None,
+        active_draft=None,
+    )
+    fake_application.story_designer = SimpleNamespace(
+        is_empty_project=lambda: True,
+        can_generate_bootstrap=lambda: True,
+    )
+    monkeypatch.setattr("app.ui.quick_story_view.load_planning", lambda _: planning)
     view = QuickStoryView()
     qtbot.addWidget(view)
     view._application = fake_application
-    view.refresh_quick_projection()
-    view.story_patch_edit.setText("让主角更谨慎")
+    view.bind_application(fake_application)
 
-    await view._generate_story_patch()
+    assert not view.brief_section.isHidden()
+    assert view.proposal_section.isHidden()
+    assert view.bootstrap_section.isHidden()
+    assert view.projection_section.isHidden()
 
-    assert "主角更谨慎" in view.story_patch_label.text()
-    assert fake_application.quick_planning.applied == []
-    view.cancel_story_patch_button.click()
-    assert fake_application.quick_planning.applied == []
-    assert view.story_patch_label.text() == ""
+    proposal = SimpleNamespace(
+        revision=2,
+        title="标题",
+        logline="一句话",
+        main_characters=[],
+        core_conflict="冲突",
+        story_promises=[],
+        ending_direction="结局",
+    )
+    planning.active_draft = SimpleNamespace(
+        revision=1,
+        proposal=proposal,
+    )
+    view.bind_application(fake_application)
 
-    await view._generate_story_patch()
-    view.apply_story_patch_button.click()
-    assert fake_application.quick_planning.applied == [fake_application.quick_planning.preview]
+    assert view.brief_section.isHidden()
+    assert not view.proposal_section.isHidden()
+    assert view.bootstrap_section.isHidden()
+    assert view.projection_section.isHidden()
+
+    planning.active_draft = None
+    planning.approved_proposal = proposal
+    view.bind_application(fake_application)
+
+    assert view.brief_section.isHidden()
+    assert view.proposal_section.isHidden()
+    assert not view.bootstrap_section.isHidden()
+    assert view.projection_section.isHidden()
+
+    planning.approved_proposal = None
+    fake_application.story_designer = SimpleNamespace(
+        is_empty_project=lambda: False,
+        can_generate_bootstrap=lambda: False,
+    )
+    view.bind_application(fake_application)
+
+    assert view.brief_section.isHidden()
+    assert view.proposal_section.isHidden()
+    assert view.bootstrap_section.isHidden()
+    assert not view.projection_section.isHidden()

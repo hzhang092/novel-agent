@@ -47,6 +47,6 @@ def build_project_application(
             story_bible=story_bible,
         ),
         story_designer=StoryDesignerService(project_dir, run_guard=workflow.run_guard),
-        quick_planning=QuickPlanningService(project_dir, run_guard=workflow.run_guard),
+        quick_planning=QuickPlanningService(project_dir),
         scene_workflow=workflow,
     )

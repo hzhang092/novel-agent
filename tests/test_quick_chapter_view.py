@@ -47,6 +47,68 @@ def test_companion_shows_plan_review_memory_and_advanced_information(qtbot):
     assert not hasattr(view, "prose_edit")
 
 
+def test_revision_review_and_memory_sections_are_hidden_until_relevant(qtbot):
+    view = QuickChapterView()
+    qtbot.addWidget(view)
+
+    assert view.revision_section.isHidden()
+    assert view.prose_section.isHidden()
+    assert view.review_section.isHidden()
+    assert view.memory_section.isHidden()
+    assert view.approval_section.isHidden()
+
+    view.set_revisions(["v1"], "v1", "")
+    assert not view.revision_section.isHidden()
+    assert not view.prose_section.isHidden()
+    assert not view.approval_section.isHidden()
+
+    view.show_review(False, "需要复核")
+    view.show_memory([{"text": "事实"}], [])
+    assert not view.review_section.isHidden()
+    assert not view.memory_section.isHidden()
+
+    view.show_review(True, "")
+    view.show_memory([], [])
+    assert view.review_section.isHidden()
+    assert view.memory_section.isHidden()
+
+
+def test_plan_adjustment_preserves_hidden_fields_and_cancel_restores(qtbot):
+    view = QuickChapterView()
+    qtbot.addWidget(view)
+    plan = {
+        "scene_id": "scene-1",
+        "scene_goal": "找到失踪的钥匙",
+        "required_beats": ["进入档案室", "发现血迹"],
+        "conflict": "守卫正在巡逻",
+        "emotional_arc": "从笃定到不安",
+        "ending_hook": "门后传来脚步声",
+        "continuity_constraints": ["主角仍然受伤"],
+    }
+    view.show_plan(plan)
+    cancellations = []
+    view.adjustment_cancelled.connect(lambda: cancellations.append(True))
+
+    view.begin_plan_adjustment()
+    assert not view.goal_edit.isReadOnly()
+    assert not view.key_events_edit.isReadOnly()
+    assert not view.emotional_turn_edit.isReadOnly()
+    assert not view.hook_edit.isReadOnly()
+
+    view.goal_edit.setText("拿到钥匙")
+    view.key_events_edit.setPlainText("躲开守卫\n打开保险柜")
+    assert view.plan() == plan | {
+        "scene_goal": "拿到钥匙",
+        "required_beats": ["躲开守卫", "打开保险柜"],
+    }
+
+    view.adjust_button.click()
+
+    assert cancellations == [True]
+    assert view.goal_edit.isReadOnly()
+    assert view.plan() == plan
+
+
 def test_actions_emit_and_share_workflow_revision_selection(qtbot):
     view = QuickChapterView()
     qtbot.addWidget(view)

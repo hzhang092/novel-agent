@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from app.storage.models import (
@@ -146,7 +148,249 @@ def test_quick_length_change_is_a_chapter_override(tmp_path, qtbot):
     assert chapter.chapter_length_override.resolved_target == 4200
 
 
-def test_story_changing_ai_fix_requires_approved_deep_plan_patch(
+def test_initial_quick_plan_adjustment_approves_the_merged_full_plan(
+    tmp_path, qtbot
+):
+    project_dir = _project(tmp_path)
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    window._set_experience_mode("quick")
+    window._select_destination("workspace")
+    window._workspace_view.set_scene("scene-1", "ch-1")
+    plan = {
+        "scene_id": "scene-1",
+        "scene_goal": "找到出口",
+        "required_beats": ["穿过大厅"],
+        "conflict": "出口被封锁",
+        "emotional_arc": "希望转为恐惧",
+        "ending_hook": "门外传来脚步",
+        "continuity_constraints": ["主角仍然受伤"],
+        "participants": ["主角", "守卫"],
+    }
+    window._workspace_view.show_plan_checkpoint(plan)
+    loop = asyncio.new_event_loop()
+    future = loop.create_future()
+    workflow = window._application.scene_workflow
+    workflow._plan_future = future
+    workflow.state.scene_id = "scene-1"
+    quick = window._workspace_view.findChild(QuickChapterView)
+
+    quick.adjust_button.click()
+    assert window._experience_mode == "quick"
+    assert window._previous_destination == "workspace"
+    assert not quick.goal_edit.isReadOnly()
+
+    quick.goal_edit.setText("逃出大厅")
+    quick.start_button.click()
+
+    assert future.result() == (True, plan | {"scene_goal": "逃出大厅"})
+    loop.close()
+
+
+def test_existing_plan_adjustment_cancels_or_applies_in_quick(
+    tmp_path, qtbot, monkeypatch
+):
+    project_dir = _project(tmp_path)
+    record = SceneGenerationRecord(
+        scene_id="scene-1",
+        revision_id="rev-1",
+        revision_number=1,
+        scene_plan=ScenePlan(
+            scene_id="scene-1",
+            scene_goal="找到出口",
+            conflict="出口被封锁",
+            emotional_arc="希望转为恐惧",
+            ending_hook="门后有脚步",
+            continuity_constraints=["主角仍然受伤"],
+        ).model_dump(mode="json"),
+        draft_text="正文",
+    )
+    save_scene_generation_record(project_dir, record)
+    (project_dir / "scenes" / "ch-1" / "scene-1.v1.md").write_text(
+        "正文", encoding="utf-8"
+    )
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    window._set_experience_mode("quick")
+    window._select_destination("workspace")
+    window._workspace_view.set_scene("scene-1", "ch-1")
+    window._current_prose_version = "v1"
+    calls = []
+    monkeypatch.setattr(
+        window._application.scene_workflow,
+        "regenerate",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    quick = window._workspace_view.findChild(QuickChapterView)
+
+    quick.adjust_button.click()
+    assert window._pending_plan_patch is not None
+    assert window._experience_mode == "quick"
+    assert window._previous_destination == "workspace"
+    assert calls == []
+
+    quick.goal_edit.setText("放弃出口")
+    quick.adjust_button.click()
+
+    assert window._pending_plan_patch is None
+    assert quick.plan() == record.scene_plan
+    assert calls == []
+
+    quick.adjust_button.click()
+    quick.hook_edit.setText("警报响起")
+    quick.start_button.click()
+
+    assert len(calls) == 1
+    patch = calls[0][1]["plan_patch"]
+    assert patch.base_revision_id == "rev-1"
+    assert patch.ending_hook == "警报响起"
+    assert patch.conflict == "出口被封锁"
+    assert patch.continuity_constraints == ["主角仍然受伤"]
+
+
+def test_scene_and_revision_changes_cancel_the_pending_quick_plan_patch(
+    tmp_path, qtbot, monkeypatch
+):
+    project_dir = _project(tmp_path)
+    volume = load_all_volumes(project_dir)[0]
+    volume.chapters.append(
+        ChapterOutline(id="ch-2", scenes=[SceneOutline(id="scene-2")])
+    )
+    save_volume_outline(project_dir, volume)
+    records = [
+        SceneGenerationRecord(
+            scene_id="scene-1",
+            revision_id=f"rev-{number}",
+            revision_number=number,
+            scene_plan=ScenePlan(
+                scene_id="scene-1",
+                scene_goal=f"计划 {number}",
+            ).model_dump(mode="json"),
+            draft_text=f"正文 {number}",
+        )
+        for number in (1, 2)
+    ]
+    for record in records:
+        save_scene_generation_record(project_dir, record)
+        (project_dir / "scenes" / "ch-1" / f"scene-1.v{record.revision_number}.md").write_text(
+            record.draft_text, encoding="utf-8"
+        )
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    window._set_experience_mode("quick")
+    window._select_destination("workspace")
+    window._workspace_view.set_scene("scene-1", "ch-1")
+    window._current_prose_version = "v1"
+    calls = []
+    monkeypatch.setattr(
+        window._application.scene_workflow,
+        "regenerate",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    quick = window._workspace_view.findChild(QuickChapterView)
+
+    quick.adjust_button.click()
+    window._on_prose_version_selected("v2")
+
+    assert window._pending_plan_patch is None
+    assert quick.goal_edit.isReadOnly()
+
+    quick.adjust_button.click()
+    window._on_scene_selected("scene-2")
+
+    assert window._pending_plan_patch is None
+    assert quick.goal_edit.isReadOnly()
+    assert calls == []
+
+
+def test_scene_change_exits_initial_quick_plan_adjustment(
+    tmp_path, qtbot, monkeypatch
+):
+    project_dir = _project(tmp_path)
+    volume = load_all_volumes(project_dir)[0]
+    volume.chapters.append(
+        ChapterOutline(id="ch-2", scenes=[SceneOutline(id="scene-2")])
+    )
+    save_volume_outline(project_dir, volume)
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    window._set_experience_mode("quick")
+    window._select_destination("workspace")
+    window._workspace_view.set_scene("scene-1", "ch-1")
+    window._workspace_view.show_plan_checkpoint(
+        ScenePlan(scene_id="scene-1", scene_goal="找到出口").model_dump(mode="json")
+    )
+    loop = asyncio.new_event_loop()
+    future = loop.create_future()
+    workflow = window._application.scene_workflow
+    workflow._plan_future = future
+    workflow.state.scene_id = "scene-1"
+    quick = window._workspace_view.findChild(QuickChapterView)
+    warnings = []
+    monkeypatch.setattr(
+        "app.ui.main_window.QMessageBox.warning",
+        lambda *args: warnings.append(args),
+    )
+
+    quick.adjust_button.click()
+    window._on_scene_selected("scene-2")
+
+    assert quick.goal_edit.isReadOnly()
+    assert quick.adjust_button.text() == "调整"
+    assert window._pending_plan_patch is None
+    assert not future.done()
+
+    quick.adjust_button.click()
+    quick.start_button.click()
+
+    assert quick.goal_edit.isReadOnly()
+    assert len(warnings) == 2
+    assert not future.done()
+    loop.close()
+
+
+def test_project_switch_clears_pending_quick_plan_adjustment(tmp_path, qtbot):
+    first_dir = _project(tmp_path / "first")
+    second_dir = _project(tmp_path / "second")
+    record = SceneGenerationRecord(
+        scene_id="scene-1",
+        revision_id="rev-1",
+        revision_number=1,
+        scene_plan=ScenePlan(
+            scene_id="scene-1",
+            scene_goal="找到出口",
+        ).model_dump(mode="json"),
+        draft_text="正文",
+    )
+    save_scene_generation_record(first_dir, record)
+    (first_dir / "scenes" / "ch-1" / "scene-1.v1.md").write_text(
+        "正文", encoding="utf-8"
+    )
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(first_dir)
+    window._set_experience_mode("quick")
+    window._select_destination("workspace")
+    window._workspace_view.set_scene("scene-1", "ch-1")
+    window._current_prose_version = "v1"
+    quick = window._workspace_view.findChild(QuickChapterView)
+
+    quick.adjust_button.click()
+    assert window._pending_plan_patch is not None
+
+    window._bind_project_application(second_dir)
+
+    assert window._pending_plan_patch is None
+    assert quick.goal_edit.isReadOnly()
+    assert quick.adjust_button.text() == "调整"
+    assert window._application.scene_workflow.project_dir == second_dir
+
+
+def test_deep_plan_resolution_exits_quick_adjustment(
     tmp_path, qtbot, monkeypatch
 ):
     project_dir = _project(tmp_path)
@@ -168,6 +412,63 @@ def test_story_changing_ai_fix_requires_approved_deep_plan_patch(
     window = MainWindow(quick_creation_enabled=True)
     qtbot.addWidget(window)
     window._bind_project_application(project_dir)
+    window._set_experience_mode("quick")
+    window._select_destination("workspace")
+    window._workspace_view.set_scene("scene-1", "ch-1")
+    window._current_prose_version = "v1"
+    calls = []
+    monkeypatch.setattr(
+        window._application.scene_workflow,
+        "regenerate",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    quick = window._workspace_view.findChild(QuickChapterView)
+
+    quick.adjust_button.click()
+    quick.context_button.click()
+    window._on_plan_rejected()
+
+    assert window._pending_plan_patch is None
+    assert quick.goal_edit.isReadOnly()
+    assert quick.adjust_button.text() == "调整"
+
+    window._set_experience_mode("quick")
+    window._select_destination("workspace")
+    quick.adjust_button.click()
+    quick.context_button.click()
+    edited = record.scene_plan | {"ending_hook": "警报响起"}
+    window._on_plan_approved(edited)
+
+    assert len(calls) == 1
+    assert window._pending_plan_patch is None
+    assert quick.hook_edit.isReadOnly()
+    assert quick.adjust_button.text() == "调整"
+    assert quick.plan() == edited
+
+
+def test_story_changing_ai_fix_waits_for_quick_plan_adjustment(
+    tmp_path, qtbot, monkeypatch
+):
+    project_dir = _project(tmp_path)
+    record = SceneGenerationRecord(
+        scene_id="scene-1",
+        revision_id="rev-1",
+        revision_number=1,
+        scene_plan=ScenePlan(
+            scene_id="scene-1",
+            scene_goal="找到出口",
+            ending_hook="门后有脚步",
+        ).model_dump(mode="json"),
+        draft_text="正文",
+    )
+    save_scene_generation_record(project_dir, record)
+    (project_dir / "scenes" / "ch-1" / "scene-1.v1.md").write_text(
+        "正文", encoding="utf-8"
+    )
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    window._set_experience_mode("quick")
     window._workspace_view.set_scene("scene-1", "ch-1")
     window._current_prose_version = "v1"
     calls = []
@@ -180,11 +481,15 @@ def test_story_changing_ai_fix_requires_approved_deep_plan_patch(
     window._workspace_view.show_review_result(False, "结尾缺少钩子")
     window._on_quick_ai_fix()
     assert window._pending_plan_patch is not None
-    assert window._experience_mode == "deep"
+    assert window._experience_mode == "quick"
+    assert calls == []
 
-    edited = record.scene_plan | {"ending_hook": "警报响起"}
-    window._on_plan_approved(edited)
+    quick = window._workspace_view.findChild(QuickChapterView)
+    assert not quick.hook_edit.isReadOnly()
+    quick.hook_edit.setText("警报响起")
+    quick.start_button.click()
 
+    assert len(calls) == 1
     assert calls[0][1]["plan_patch"].base_revision_id == "rev-1"
     assert calls[0][1]["plan_patch"].ending_hook == "警报响起"
 

@@ -17,6 +17,10 @@ def test_save_and_load_scene_prose_round_trip(tmp_path):
 
     loaded = load_scene_prose(proj_dir, chapter_id="ch-1", scene_id="scene-1")
     assert loaded == prose
+    assert (proj_dir / "scenes" / "ch-1" / "scene-1.md").exists()
+
+    save_scene_prose(proj_dir, "ch-1", "scene-1", "第二版")
+    assert load_scene_prose(proj_dir, "ch-1", "scene-1") == "第二版"
 
 
 def test_load_scene_prose_missing_file(tmp_path):
@@ -133,7 +137,10 @@ def test_save_scene_prose_appends_version_after_generation(tmp_path):
 
 
 def test_list_scene_prose_versions_newest_first_with_legacy(tmp_path):
-    from app.storage.project_files import list_scene_prose_versions
+    from app.storage.project_files import (
+        list_scene_prose_versions,
+        load_scene_prose_version,
+    )
 
     project = Project(title="测试", genre="玄幻")
     proj_dir = create_project(tmp_path, project)
@@ -147,41 +154,17 @@ def test_list_scene_prose_versions_newest_first_with_legacy(tmp_path):
     versions = list_scene_prose_versions(proj_dir, "ch-1", "scene-1")
 
     assert versions == ["v3", "v1", "legacy"]
-
-
-def test_load_scene_prose_version_loads_requested_version(tmp_path):
-    from app.storage.project_files import load_scene_prose_version
-
-    project = Project(title="测试", genre="玄幻")
-    proj_dir = create_project(tmp_path, project)
-    chapter_dir = proj_dir / "scenes" / "ch-1"
-    chapter_dir.mkdir(parents=True)
-    (chapter_dir / "scene-1.md").write_text("legacy", encoding="utf-8")
-    (chapter_dir / "scene-1.v1.md").write_text("first", encoding="utf-8")
-    (chapter_dir / "scene-1.v2.md").write_text("second", encoding="utf-8")
-
     assert load_scene_prose_version(proj_dir, "ch-1", "scene-1", "v1") == "first"
     assert load_scene_prose_version(proj_dir, "ch-1", "scene-1", "legacy") == "legacy"
     assert load_scene_prose_version(proj_dir, "ch-1", "scene-1", "missing") == ""
 
 
-def test_set_active_scene_prose_version_writes_marker(tmp_path):
+def test_load_scene_prose_prefers_active_version(tmp_path):
     from app.storage.project_files import (
         get_active_scene_prose_version,
+        load_scene_prose,
         set_active_scene_prose_version,
     )
-
-    project = Project(title="测试", genre="玄幻")
-    proj_dir = create_project(tmp_path, project)
-
-    set_active_scene_prose_version(proj_dir, "ch-1", "scene-1", "v2")
-
-    assert get_active_scene_prose_version(proj_dir, "ch-1", "scene-1") == "v2"
-    assert (proj_dir / "scenes" / "ch-1" / "scene-1.active.yaml").exists()
-
-
-def test_load_scene_prose_prefers_active_version(tmp_path):
-    from app.storage.project_files import load_scene_prose, set_active_scene_prose_version
 
     project = Project(title="测试", genre="玄幻")
     proj_dir = create_project(tmp_path, project)
@@ -192,6 +175,8 @@ def test_load_scene_prose_prefers_active_version(tmp_path):
     set_active_scene_prose_version(proj_dir, "ch-1", "scene-1", "v1")
 
     assert load_scene_prose(proj_dir, "ch-1", "scene-1") == "chosen"
+    assert get_active_scene_prose_version(proj_dir, "ch-1", "scene-1") == "v1"
+    assert (chapter_dir / "scene-1.active.yaml").exists()
 
 
 def test_load_scene_prose_status_reports_missing_active_fallback(tmp_path):
@@ -237,6 +222,7 @@ def test_save_and_load_scene_generation_record(tmp_path):
 
     project = Project(title="测试", genre="玄幻")
     proj_dir = create_project(tmp_path, project)
+    assert load_scene_generation_record(proj_dir, "scene-1") is None
 
     # Create a minimal outline so the scene can be resolved to a chapter
     from app.storage.models import VolumeOutline, ChapterOutline, SceneOutline
@@ -262,41 +248,3 @@ def test_save_and_load_scene_generation_record(tmp_path):
     assert loaded.generation_mode == "standard"
     assert loaded.scene_plan == {"beats": ["开场冲突", "发展", "高潮"]}
     assert loaded.draft_text == "林轩推门而入。"
-
-
-def test_load_scene_generation_record_missing(tmp_path):
-    """Loading a record that doesn't exist returns None."""
-    from app.storage.project_files import load_scene_generation_record
-
-    project = Project(title="测试", genre="玄幻")
-    proj_dir = create_project(tmp_path, project)
-
-    result = load_scene_generation_record(proj_dir, "scene-1")
-    assert result is None
-
-
-def test_save_scene_prose_creates_chapter_dir(tmp_path):
-    """Saving prose creates the chapter subdirectory if needed."""
-    from app.storage.project_files import save_scene_prose
-
-    project = Project(title="测试", genre="玄幻")
-    proj_dir = create_project(tmp_path, project)
-
-    save_scene_prose(proj_dir, chapter_id="ch-2", scene_id="scene-5", prose="...")
-    chapter_dir = proj_dir / "scenes" / "ch-2"
-    assert chapter_dir.exists()
-    assert (chapter_dir / "scene-5.md").exists()
-
-
-def test_overwrite_scene_prose(tmp_path):
-    """Saving prose twice overwrites the previous content."""
-    from app.storage.project_files import save_scene_prose, load_scene_prose
-
-    project = Project(title="测试", genre="玄幻")
-    proj_dir = create_project(tmp_path, project)
-
-    save_scene_prose(proj_dir, chapter_id="ch-1", scene_id="scene-1", prose="第一版")
-    save_scene_prose(proj_dir, chapter_id="ch-1", scene_id="scene-1", prose="第二版")
-
-    loaded = load_scene_prose(proj_dir, chapter_id="ch-1", scene_id="scene-1")
-    assert loaded == "第二版"

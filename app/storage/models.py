@@ -220,7 +220,6 @@ class ChapterOutline(BaseModel):
     scenes: list[SceneOutline] = Field(default_factory=list)
     target_word_count: int = 3000
     chapter_length_override: "ChapterLength | None" = None
-    generation_blocked: bool = False
     needs_review: bool = False
 
 
@@ -281,78 +280,12 @@ class QuickStoryProjection(BaseModel):
     core_setting: WorldOverview = Field(default_factory=WorldOverview)
 
 
-class HiddenFieldPatch(BaseModel):
-    path: str
-    old_value: object
-    new_value: object
-    reason: str
-
-
 class ChapterCardEditPreview(BaseModel):
     chapter_id: str
     changed_fields: list[str] = Field(default_factory=list)
     title: str
     summary: str
     ending_hook: str
-    advanced_patch: list[HiddenFieldPatch] = Field(default_factory=list)
-
-
-class StoryBriefDrift(BaseModel):
-    changed_fields: list[str] = Field(default_factory=list)
-
-
-class StoryPatchOperation(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    target: Literal["character", "overview"]
-    target_id: str = ""
-    field: str
-    value: str | list[str] | None
-
-
-class StoryPatchPreview(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    kind: Literal["story_patch"] = "story_patch"
-    base_revision: int = Field(default=1, ge=1)
-    operations: list[StoryPatchOperation] = Field(min_length=1)
-    changes: list[str] = Field(default_factory=list)
-    consequences: list[str] = Field(default_factory=list)
-
-
-class ReplanPreview(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    kind: Literal["replan"] = "replan"
-    base_revision: int = Field(default=1, ge=1)
-    future_chapter_ids: list[str] = Field(default_factory=list)
-    published_chapter_ids: list[str] = Field(default_factory=list)
-    downstream_review_chapter_ids: list[str] = Field(default_factory=list)
-    changes: list[str] = Field(default_factory=list)
-    consequences: list[str] = Field(default_factory=list)
-    story_affecting: bool = True
-    operations: list[dict] = Field(default_factory=list)
-
-
-class LaterArcPlan(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    kind: Literal["later_arc"] = "later_arc"
-    base_revision: int = Field(default=1, ge=1)
-    title: str
-    summary: str
-    chapters: list[ChapterOutline] = Field(default_factory=list)
-    direction_conflicts: list[str] = Field(default_factory=list)
-    changes: list[str] = Field(default_factory=list)
-    consequences: list[str] = Field(default_factory=list)
-
-
-class ActiveReplanDraft(ReplanPreview):
-    pass
-
-
-class ActiveStoryPatchDraft(StoryPatchPreview):
-    pass
-
-
-class ActiveLaterArcDraft(LaterArcPlan):
-    pass
 
 
 # ── Scene Generation ───────────────────────────────────────────────────────
@@ -652,9 +585,6 @@ ActivePlanningDraft = Annotated[
     Union[
         ActiveProposalDraft,
         ActiveBootstrapDraft,
-        ActiveStoryPatchDraft,
-        ActiveReplanDraft,
-        ActiveLaterArcDraft,
     ],
     Field(discriminator="kind"),
 ]

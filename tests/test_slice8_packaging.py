@@ -67,6 +67,10 @@ def test_window_composes_generation_publication_export_and_reopen_seams(
     assert modes == {"deep", "quick"}
     assert window._application.scene_workflow is not None
     assert load_project(project_dir).title == "Smoke Story"
+    file_menu = window.menuBar().actions()[0].menu()
+    labels = [action.text() for action in file_menu.actions() if not action.isSeparator()]
+    assert labels.count("导出 Markdown(&M)...") == 1
+    assert labels.count("导出 EPUB(&E)...") == 1
 
 
 def test_reopened_project_exports_published_prose(tmp_path):

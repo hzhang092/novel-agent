@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.application.errors import ConcurrentModificationError
 from app.application.project_context import (
     ProjectApplicationContext,
     build_project_application,
@@ -266,7 +267,10 @@ class MainWindow(QMainWindow):
         self._workspace_view.plan_rejected.connect(self._on_plan_rejected)
         self._workspace_view.quick_start_requested.connect(self._on_quick_start)
         self._workspace_view.quick_adjust_requested.connect(
-            self._open_deep_workspace_for_chapter
+            self._on_quick_adjust
+        )
+        self._workspace_view.quick_adjust_cancelled.connect(
+            self._on_quick_adjust_cancelled
         )
         self._workspace_view.quick_save_requested.connect(self._on_quick_save)
         self._workspace_view.quick_regenerate_requested.connect(
@@ -307,6 +311,9 @@ class MainWindow(QMainWindow):
             self._quick_outline_view.refresh()
 
     def _bind_project_application(self, project_dir: Path) -> None:
+        self._cancel_quick_plan_adjustment()
+        self._workspace_view.hide_plan_checkpoint()
+        self._current_prose_version = None
         self._current_project_dir = project_dir
         self._application = build_project_application(
             project_dir,
@@ -397,12 +404,8 @@ class MainWindow(QMainWindow):
             return
         if leaving_bible:
             self._previous_destination = target
-        if (
-            self._experience_mode == "deep"
-            and current == "outline"
-            and self._outline_view.is_loaded
-        ):
-            if not self._save_deep_outline():
+        if self._experience_mode == "deep" and current == "outline":
+            if not self._maybe_leave_deep_outline():
                 blocker = QSignalBlocker(self._experience_switch)
                 self._experience_switch.setCurrentIndex(
                     self._experience_switch.findData(self._experience_mode)
@@ -448,14 +451,13 @@ class MainWindow(QMainWindow):
             del blocker
             return
 
-        # Auto-save Outline editor when navigating away from it
         if (
             self._experience_mode == "deep"
             and previous_key == "outline"
             and key != "outline"
             and self._outline_view.is_loaded
         ):
-            if not self._save_deep_outline():
+            if not self._maybe_leave_deep_outline():
                 blocker = QSignalBlocker(self.sidebar)
                 self.sidebar.setCurrentRow(self._previous_tab_index)
                 del blocker
@@ -487,22 +489,42 @@ class MainWindow(QMainWindow):
     # ── Actions ───────────────────────────────────────────────────────────
 
     def _maybe_close_current_project(self) -> bool:
-        if not self._bible_view.is_loaded or not self._bible_view.is_dirty:
+        if self._bible_view.is_loaded and self._bible_view.is_dirty:
+            reply = QMessageBox.question(
+                self,
+                "未保存的更改",
+                "设定集有未保存的更改。是否保存？",
+                QMessageBox.StandardButton.Save
+                | QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if reply == QMessageBox.StandardButton.Save:
+                if not self._bible_view.save_all():
+                    return False
+            elif reply == QMessageBox.StandardButton.Discard:
+                self._bible_view.reload()
+            else:
+                return False
+        return self._maybe_leave_deep_outline()
+
+    def _maybe_leave_deep_outline(self) -> bool:
+        if not self._outline_view.is_loaded or not self._outline_view.is_dirty:
             return True
 
         reply = QMessageBox.question(
             self,
-            "未保存的更改",
-            "设定集有未保存的更改。是否保存？",
+            "未保存的大纲更改",
+            "大纲有未保存的更改。是否保存？",
             QMessageBox.StandardButton.Save
             | QMessageBox.StandardButton.Discard
             | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
         if reply == QMessageBox.StandardButton.Save:
-            return self._bible_view.save_all()
+            return self._save_deep_outline()
         if reply == QMessageBox.StandardButton.Discard:
-            self._bible_view.reload()
+            self._outline_view.reload()
             return True
         return False
 
@@ -527,6 +549,11 @@ class MainWindow(QMainWindow):
     def guard_deep_save(self, save: Callable[[], bool]) -> bool:
         if self._deep_save_in_progress:
             return save()
+        bootstrap_revision = (
+            self._application.story_designer.unapproved_bootstrap_revision()
+            if self._application is not None
+            else None
+        )
         if not self._confirm_bootstrap_discard():
             return False
         self._deep_save_in_progress = True
@@ -534,8 +561,15 @@ class MainWindow(QMainWindow):
             saved = save()
         finally:
             self._deep_save_in_progress = False
-        if saved and self._application is not None:
-            self._application.story_designer.discard_unapproved_bootstrap()
+        if saved and self._application is not None and bootstrap_revision is not None:
+            try:
+                self._application.story_designer.discard_unapproved_bootstrap(
+                    base_revision=bootstrap_revision
+                )
+            except ConcurrentModificationError:
+                logger.warning(
+                    "Bootstrap draft changed after Deep save; leaving it untouched"
+                )
         return saved
 
     def _on_new_project(self) -> None:
@@ -748,6 +782,8 @@ class MainWindow(QMainWindow):
         """Handle scene selection: assemble context, find chapter, load prose, update workspace."""
         if self._current_project_dir is None:
             return
+        if self._workspace_view.current_scene_id != scene_id:
+            self._cancel_quick_plan_adjustment()
 
         referenced_ids = (
             set(self._application.outlines.scene_element_ids(scene_id))
@@ -938,6 +974,7 @@ class MainWindow(QMainWindow):
                 self._refresh_prose_versions(chapter_id, scene_id, self._current_prose_version)
                 return
 
+        self._cancel_quick_plan_adjustment()
         from app.storage.project_files import (
             load_scene_generation_record,
             load_scene_prose_version,
@@ -1008,6 +1045,7 @@ class MainWindow(QMainWindow):
     def _on_plan_approved(self, edited_plan: dict) -> None:
         """Resolve the current planner decision as approved."""
         if self._application is not None:
+            self._workspace_view.accept_quick_plan_adjustment(edited_plan)
             if self._pending_plan_patch is not None:
                 source_record, instruction = self._pending_plan_patch
                 self._pending_plan_patch = None
@@ -1051,6 +1089,7 @@ class MainWindow(QMainWindow):
     def _on_plan_rejected(self) -> None:
         """Resolve the current planner decision as rejected."""
         if self._application is not None:
+            self._workspace_view.cancel_quick_plan_adjustment()
             if self._pending_plan_patch is not None:
                 self._pending_plan_patch = None
                 self._workspace_view.hide_plan_checkpoint()
@@ -1063,9 +1102,6 @@ class MainWindow(QMainWindow):
         self._set_experience_mode("deep")
         self._select_destination("workspace")
 
-    def _open_deep_workspace_for_chapter(self, _chapter_id: str) -> None:
-        self._open_deep_workspace()
-
     def _open_deep_control(self, control: str) -> None:
         self._open_deep_workspace()
         self._workspace_view.focus_deep_control(control)
@@ -1073,12 +1109,53 @@ class MainWindow(QMainWindow):
     def _on_quick_start(self, _chapter_id: str, scene_id: str) -> None:
         if self._application is None:
             return
+        if self._pending_plan_patch is not None:
+            self._on_plan_approved(self._workspace_view.quick_plan())
+            return
         workflow = self._application.scene_workflow
         if workflow.waiting_for_plan:
+            if workflow.state.scene_id != scene_id:
+                QMessageBox.warning(
+                    self,
+                    "无法应用计划",
+                    "当前等待确认的计划属于其他章节，请返回对应章节后再继续。",
+                )
+                return
             workflow.approve_plan(self._workspace_view.quick_plan())
             self._workspace_view.hide_plan_checkpoint()
         elif scene_id:
             self._on_generate_requested(scene_id)
+
+    def _on_quick_adjust(self, _chapter_id: str) -> None:
+        if self._application is None:
+            return
+        workflow = self._application.scene_workflow
+        if workflow.waiting_for_plan:
+            if workflow.state.scene_id != self._workspace_view.current_scene_id:
+                QMessageBox.warning(
+                    self,
+                    "无法调整",
+                    "当前等待确认的计划属于其他章节，请返回对应章节后再继续。",
+                )
+                return
+            self._workspace_view.begin_quick_plan_adjustment()
+            return
+        record = self._selected_generation_record()
+        if record is None or not record.scene_plan:
+            QMessageBox.warning(self, "无法调整", "请选择带有已批准计划的草稿。")
+            return
+        self._pending_plan_patch = (record, "")
+        self._workspace_view.show_plan_checkpoint(record.scene_plan)
+        self._workspace_view.begin_quick_plan_adjustment()
+
+    def _on_quick_adjust_cancelled(self) -> None:
+        self._cancel_quick_plan_adjustment()
+
+    def _cancel_quick_plan_adjustment(self) -> None:
+        self._workspace_view.cancel_quick_plan_adjustment()
+        if self._pending_plan_patch is not None:
+            self._pending_plan_patch = None
+            self._workspace_view.hide_plan_checkpoint()
 
     def _selected_generation_record(self):
         if self._current_project_dir is None:
@@ -1145,7 +1222,7 @@ class MainWindow(QMainWindow):
         if prose_instruction_requires_plan_patch(instruction):
             self._pending_plan_patch = (record, instruction)
             self._workspace_view.show_plan_checkpoint(record.scene_plan)
-            self._open_deep_workspace()
+            self._workspace_view.begin_quick_plan_adjustment()
             return
         self._regenerate_quick(instruction)
 

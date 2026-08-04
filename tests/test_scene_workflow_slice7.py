@@ -146,6 +146,8 @@ async def test_stale_run_records_source_and_blocks_publication_until_explicit_co
     reopened.restore_draft(record, "chapter-1")
     monkeypatch.setattr(reopened, "_analyze_draft", AsyncMock())
     await reopened.continue_stale(record.revision_id)
+    assert reopened.state.active is False
+    assert reopened.run_guard.active_owner is None
     continued = load_scene_generation_record(
         project_dir, "scene-1", revision_id=record.revision_id
     )
@@ -404,8 +406,7 @@ async def test_completed_stale_run_can_start_normal_regeneration(tmp_path):
     workflow = SceneWorkflow(project_dir)
     workflow.state.scene_id = "scene-1"
     workflow.state.chapter_id = "chapter-1"
-    workflow.state.active = True
-    workflow.run_guard.acquire("scene_workflow")
+    workflow.state.active = False
     completed = asyncio.get_running_loop().create_future()
     completed.set_result(None)
     workflow._task = completed

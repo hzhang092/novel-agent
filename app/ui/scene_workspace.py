@@ -43,6 +43,7 @@ class SceneWorkspaceView(QWidget):
     approval_batch_approved = Signal(str, str, list, list)
     quick_start_requested = Signal(str, str)
     quick_adjust_requested = Signal(str)
+    quick_adjust_cancelled = Signal()
     quick_save_requested = Signal()
     quick_regenerate_requested = Signal()
     quick_revision_instruction_requested = Signal(str)
@@ -73,7 +74,9 @@ class SceneWorkspaceView(QWidget):
         layout.setSpacing(6)
 
         # ── Toolbar ──
-        toolbar = QHBoxLayout()
+        self._deep_toolbar = QWidget()
+        toolbar = QHBoxLayout(self._deep_toolbar)
+        toolbar.setContentsMargins(0, 0, 0, 0)
 
         self._generate_btn = QPushButton("生成")
         self._generate_btn.setEnabled(False)
@@ -107,12 +110,16 @@ class SceneWorkspaceView(QWidget):
         toolbar.addWidget(self._status_label)
 
         toolbar.addStretch()
-        layout.addLayout(toolbar)
+        layout.addWidget(self._deep_toolbar)
 
         self._quick_chapter = QuickChapterView()
         for source, target in (
             (self._quick_chapter.start_requested, self.quick_start_requested),
             (self._quick_chapter.adjust_requested, self.quick_adjust_requested),
+            (
+                self._quick_chapter.adjustment_cancelled,
+                self.quick_adjust_cancelled,
+            ),
             (self._quick_chapter.save_requested, self.quick_save_requested),
             (self._quick_chapter.regenerate_requested, self.quick_regenerate_requested),
             (
@@ -223,6 +230,7 @@ class SceneWorkspaceView(QWidget):
         """Switch presentation while preserving the shared editor and run state."""
         self._experience_mode = "quick" if mode == "quick" else "deep"
         quick = self._experience_mode == "quick"
+        self._deep_toolbar.setVisible(not quick)
         self._quick_chapter.setVisible(quick)
         self._left_pane.setVisible(not quick)
         self._right_pane.setVisible(not quick)
@@ -303,6 +311,15 @@ class SceneWorkspaceView(QWidget):
     def set_quick_length(self, mode: str, target: int, warning: str = "") -> None:
         """Project the active chapter length into Quick Creation."""
         self._quick_chapter.set_length(mode, target, warning)
+
+    def begin_quick_plan_adjustment(self) -> None:
+        self._quick_chapter.begin_plan_adjustment()
+
+    def accept_quick_plan_adjustment(self, plan: dict) -> None:
+        self._quick_chapter.accept_plan_adjustment(plan)
+
+    def cancel_quick_plan_adjustment(self) -> None:
+        self._quick_chapter.cancel_plan_adjustment()
 
     def focus_deep_control(self, control: str) -> None:
         """Move focus to the Deep control linked from Quick."""
@@ -447,6 +464,7 @@ class SceneWorkspaceView(QWidget):
         """Hide the review result bar."""
         self._review_bar.hide()
         self._has_review = False
+        self._quick_chapter.show_review(True, "")
 
     def show_fact_approval(
         self,

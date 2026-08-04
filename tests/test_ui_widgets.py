@@ -4,7 +4,7 @@ from PySide6.QtWidgets import QAbstractItemView, QListWidget, QPushButton, QTabl
 from app.ui.widgets import KeyValueTable, StringListEditor
 
 
-def test_string_list_reports_edits_but_not_population(qtbot):
+def test_string_list_reports_user_edits_once(qtbot):
     editor = StringListEditor()
     qtbot.addWidget(editor)
     changes = QSignalSpy(editor.changed)
@@ -14,20 +14,14 @@ def test_string_list_reports_edits_but_not_population(qtbot):
 
     editor.findChild(QListWidget).item(0).setText("after")
     assert changes.count() == 1
-
-
-def test_string_list_reports_add_and_remove_once(qtbot):
-    editor = StringListEditor()
-    qtbot.addWidget(editor)
-    changes = QSignalSpy(editor.changed)
     buttons = editor.findChildren(QPushButton)
 
     buttons[0].click()
-    assert changes.count() == 1
+    assert changes.count() == 2
 
     editor.findChild(QListWidget).item(0).setSelected(True)
     buttons[1].click()
-    assert changes.count() == 2
+    assert changes.count() == 3
 
 
 def test_string_list_read_only_keeps_selection_but_blocks_changes(qtbot):
@@ -48,7 +42,7 @@ def test_string_list_read_only_keeps_selection_but_blocks_changes(qtbot):
     assert list_widget.editTriggers() != QAbstractItemView.EditTrigger.NoEditTriggers
 
 
-def test_key_value_table_reports_edits_but_not_population(qtbot):
+def test_key_value_table_reports_user_edits_once(qtbot):
     editor = KeyValueTable(["key", "value"])
     qtbot.addWidget(editor)
     changes = QSignalSpy(editor.changed)
@@ -58,26 +52,21 @@ def test_key_value_table_reports_edits_but_not_population(qtbot):
 
     editor.findChild(QTableWidget).item(0, 0).setText("after")
     assert changes.count() == 1
-
-
-def test_key_value_table_reports_add_and_remove_once(qtbot):
-    editor = KeyValueTable(["key", "value"])
-    qtbot.addWidget(editor)
-    changes = QSignalSpy(editor.changed)
     buttons = editor.findChildren(QPushButton)
 
     buttons[0].click()
-    assert changes.count() == 1
+    assert changes.count() == 2
 
     editor.findChild(QTableWidget).selectRow(0)
     buttons[1].click()
-    assert changes.count() == 2
+    assert changes.count() == 3
 
 
 def test_key_value_table_read_only_keeps_selection_but_blocks_changes(qtbot):
     editor = KeyValueTable(["key", "value"])
     qtbot.addWidget(editor)
     editor.set_rows([["readable", "selectable"]])
+    before = editor.rows()
 
     editor.set_read_only(True)
 
@@ -85,6 +74,7 @@ def test_key_value_table_read_only_keeps_selection_but_blocks_changes(qtbot):
     assert table.editTriggers() == QAbstractItemView.EditTrigger.NoEditTriggers
     assert table.selectionMode() != QAbstractItemView.SelectionMode.NoSelection
     assert editor._button_row.isHidden()
+    assert editor.rows() == before
 
     editor.set_read_only(False)
 

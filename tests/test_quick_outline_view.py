@@ -1,14 +1,8 @@
-import asyncio
-
-import pytest
-
 from app.storage.models import (
     ChapterCardEditPreview,
     ChapterCardProjection,
     ChapterCardStatus,
-    HiddenFieldPatch,
     QuickStoryProjection,
-    ReplanPreview,
     StoryArcProjection,
 )
 from app.ui.quick_outline_view import QuickOutlineView
@@ -42,36 +36,12 @@ class FakeQuickPlanning:
         self.calls.append(("preview_card_edit", chapter_id, edits or kwargs))
         values = {"title": self.card.title, "summary": self.card.summary, "ending_hook": self.card.ending_hook}
         values.update(edits or kwargs)
-        preview = ChapterCardEditPreview(chapter_id=chapter_id, changed_fields=list(values), **values)
-        if getattr(self, "advanced", False):
-            preview.advanced_patch = [HiddenFieldPatch(path="/scene/pov", old_value="旧", new_value="新", reason="需要高级确认")]
-        return preview
+        return ChapterCardEditPreview(chapter_id=chapter_id, changed_fields=list(values), **values)
 
-    def apply_card_edit(self, preview, *, accept_advanced=False):
-        self.calls.append(("apply_card_edit", preview.chapter_id, accept_advanced))
+    def apply_card_edit(self, preview):
+        self.calls.append(("apply_card_edit", preview.chapter_id))
         self.card = self.card.model_copy(update={"title": preview.title, "summary": preview.summary, "ending_hook": preview.ending_hook})
         return self.card
-
-    def brief_drift(self):
-        self.calls.append(("brief_drift",))
-        return type("Drift", (), {"changed_fields": ["premise", "tone_tags"]})()
-
-    async def generate_replan(self, instruction=""):
-        self.calls.append(("generate_replan", instruction))
-        return ReplanPreview(future_chapter_ids=["chapter-1"], changes=["第 1 章概要"], consequences=["影响后续节奏"])
-
-    def apply_replan(self, preview, *, confirm_published=False):
-        self.calls.append(("apply_replan", confirm_published))
-        return preview
-
-    def can_plan_next_arc(self, volume_id=None):
-        self.calls.append(("can_plan_next_arc", volume_id))
-        return True
-
-    async def generate_later_arc(self, volume_id=None):
-        self.calls.append(("generate_later_arc", volume_id))
-        return type("LaterArc", (), {"title": "第二卷", "summary": "新的旅程", "direction_conflicts": [], "changes": ["新增第二卷"]})()
-
 
 def test_quick_outline_renders_cards_and_emits_canonical_scene(qtbot):
     view = QuickOutlineView()
@@ -108,36 +78,12 @@ def test_quick_outline_edits_only_card_fields_and_requests_deep_outline(qtbot):
     assert requested == ["chapter-1"]
 
 
-def test_quick_outline_requires_explicit_choice_for_advanced_patch(qtbot):
-    view = QuickOutlineView()
-    qtbot.addWidget(view)
-    service = FakeQuickPlanning()
-    service.advanced = True
-    view.bind_application(service)
-    view.save_button.click()
-
-    assert "高级字段" in view.advanced_label.text()
-    assert view.apply_advanced_button.isEnabled()
-    assert view.save_card_only_button.isEnabled()
-    view.save_card_only_button.click()
-    assert "阻止生成" in view.advanced_label.text()
-    assert any(call[0] == "apply_card_edit" and call[2] is False for call in service.calls)
-
-
-@pytest.mark.asyncio
-async def test_quick_outline_shows_drift_replan_and_unapplied_later_arc(qtbot):
+def test_quick_outline_hides_brief_drift_and_replanning_controls(qtbot):
     view = QuickOutlineView()
     qtbot.addWidget(view)
     service = FakeQuickPlanning()
     view.bind_application(service)
 
-    assert "premise" in view.drift_label.text()
-    view.replan_instruction.setText("调整未来冲突")
-    view.replan_button.click()
-    await asyncio.sleep(0)
-    assert "第 1 章概要" in view.replan_label.text()
-    view.apply_replan_button.click()
-    view.next_arc_button.click()
-    await asyncio.sleep(0)
-    assert "第二卷" in view.next_arc_label.text()
-    assert not any(call[0] == "apply_later_arc" for call in service.calls)
+    assert not hasattr(view, "drift_label")
+    assert not hasattr(view, "replan_button")
+    assert not any("重规划" in button.text() for button in view.findChildren(type(view.save_button)))

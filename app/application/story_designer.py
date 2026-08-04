@@ -35,7 +35,6 @@ from app.storage.project_files import (
     load_planning,
     load_project,
     load_all_volumes,
-    load_all_characters,
     load_canon_facts,
     list_character_ids,
     save_character,
@@ -44,6 +43,14 @@ from app.storage.project_files import (
     save_style_guide,
     save_volume_outline,
 )
+
+
+def require_compatible_active_draft(planning, draft_type: type) -> None:
+    active = planning.active_draft
+    if active is not None and not isinstance(active, draft_type):
+        raise OperationBlockedError(
+            f"Resolve the active {active.kind} draft before starting another planning draft"
+        )
 
 
 class StoryDesignerService:
@@ -83,27 +90,18 @@ class StoryDesignerService:
         return self.save_brief(StoryBrief())
 
     def has_unapproved_bootstrap(self) -> bool:
-        return isinstance(load_planning(self.project_dir).active_draft, ActiveBootstrapDraft)
+        return self.unapproved_bootstrap_revision() is not None
 
-    def discard_unapproved_bootstrap(self) -> None:
+    def unapproved_bootstrap_revision(self) -> int | None:
+        draft = load_planning(self.project_dir).active_draft
+        return draft.revision if isinstance(draft, ActiveBootstrapDraft) else None
+
+    def discard_unapproved_bootstrap(self, *, base_revision: int) -> None:
         """Discard only the active bootstrap draft; keep Brief and Proposal."""
         planning = load_planning(self.project_dir)
-        if isinstance(planning.active_draft, ActiveBootstrapDraft):
-            planning.active_draft = None
-            save_planning(self.project_dir, planning)
-
-    async def generate_brief_from_existing(self) -> StoryBrief:
-        """Generate an editable Brief draft without persisting planning data."""
-        if self.is_empty_project():
-            raise OperationBlockedError("An empty project starts its Brief directly")
-        if not self.run_guard.acquire("story_designer"):
-            raise OperationBlockedError("Another project generation is already active")
-        try:
-            return await self._generate_with_provider(
-                _brief_messages(self.project_dir), StoryBrief
-            )
-        finally:
-            self.run_guard.release("story_designer")
+        self._bootstrap_draft(planning, base_revision)
+        planning.active_draft = None
+        save_planning(self.project_dir, planning)
 
     async def generate_proposal(self, instruction: str = "") -> ActiveProposalDraft:
         return await self._replace_draft(base_revision=None, instruction=instruction)
@@ -152,17 +150,6 @@ class StoryDesignerService:
             and planning.active_draft is None
             and self._is_empty_project()
         )
-
-    async def generate_structured(
-        self, messages: list[dict[str, str]], schema: type[BaseModel]
-    ) -> BaseModel:
-        """Use Story Designer's configured structured-provider route for planning drafts."""
-        if not self.run_guard.acquire("story_designer"):
-            raise OperationBlockedError("Another project generation is already active")
-        try:
-            return await self._generate_with_provider(messages, schema)
-        finally:
-            self.run_guard.release("story_designer")
 
     async def _generate_with_provider(
         self, messages: list[dict[str, str]], schema: type[BaseModel]
@@ -330,13 +317,12 @@ class StoryDesignerService:
         self, *, base_revision: int | None, instruction: str
     ) -> ActiveProposalDraft:
         planning = load_planning(self.project_dir)
-        if isinstance(planning.active_draft, ActiveBootstrapDraft):
-            raise OperationBlockedError("Resolve the bootstrap draft before changing the proposal")
+        require_compatible_active_draft(planning, ActiveProposalDraft)
         brief = planning.story_brief
         if brief is None:
             raise OperationBlockedError("A Story Brief is required before a proposal")
         if base_revision is not None and (
-            planning.active_draft is None
+            not isinstance(planning.active_draft, ActiveProposalDraft)
             or planning.active_draft.revision != base_revision
             or planning.active_draft.based_on_brief_revision != brief.revision
         ):
@@ -346,6 +332,7 @@ class StoryDesignerService:
             StoryProposal,
         )
         current = load_planning(self.project_dir)
+        require_compatible_active_draft(current, ActiveProposalDraft)
         if (
             current.story_brief is None
             or current.story_brief.revision != brief.revision
@@ -389,39 +376,6 @@ def _proposal_messages(
             "content": json.dumps(
                 {"story_brief": brief.model_dump(), "current_draft": draft.model_dump() if draft else None,
                  "adjustment": instruction},
-                ensure_ascii=False,
-            ),
-        },
-    ]
-
-
-def _brief_messages(project_dir: Path) -> list[dict[str, str]]:
-    project = load_project(project_dir)
-    bible = WorldBibleService(project_dir).load()
-    return [
-        {
-            "role": "system",
-            "content": (
-                "You are Story Designer. Infer an editable StoryBrief from the existing project. "
-                "Return only StoryBrief fields. Do not alter canonical story data, create a proposal, "
-                "or create a bootstrap. Preserve uncertainty as empty fields."
-            ),
-        },
-        {
-            "role": "user",
-            "content": json.dumps(
-                {
-                    "project": project.model_dump(mode="json"),
-                    "world_bible": bible.model_dump(mode="json"),
-                    "characters": [
-                        character.model_dump(mode="json")
-                        for character in load_all_characters(project_dir)
-                    ],
-                    "outline": [
-                        volume.model_dump(mode="json")
-                        for volume in load_all_volumes(project_dir)
-                    ],
-                },
                 ensure_ascii=False,
             ),
         },
@@ -536,4 +490,4 @@ def _replace_bootstrap_value(document: dict, path: str, value: object | None, op
 
 
 def _draft_revision(planning) -> int | None:
-    return planning.active_draft.revision if planning.active_draft else None
+    return getattr(planning.active_draft, "revision", None)

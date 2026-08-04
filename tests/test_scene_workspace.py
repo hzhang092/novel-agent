@@ -140,6 +140,69 @@ def test_quick_mode_is_a_compact_layer_over_the_same_workspace_state(qtbot):
     assert workspace.prose_text() == "shared draft"
 
 
+def test_quick_mode_hides_the_deep_generation_toolbar(qtbot):
+    workspace = SceneWorkspaceView()
+    qtbot.addWidget(workspace)
+    workspace.set_scene("scene-1", "chapter-1")
+
+    workspace.set_experience_mode("quick")
+    assert workspace._deep_toolbar.isHidden()
+    assert workspace.prose_text() == ""
+
+    workspace.set_experience_mode("deep")
+    assert not workspace._deep_toolbar.isHidden()
+
+
+def test_new_generation_clears_the_previous_quick_review(qtbot):
+    workspace = SceneWorkspaceView()
+    qtbot.addWidget(workspace)
+    quick = workspace.findChild(QuickChapterView)
+    workspace.set_scene("scene-1", "chapter-1")
+    workspace.show_review_result(False, "旧问题")
+    assert not quick.review_section.isHidden()
+
+    workspace.begin_generation()
+
+    assert quick.review_section.isHidden()
+
+
+def test_workspace_forwards_quick_plan_apply_and_cancel(qtbot):
+    workspace = SceneWorkspaceView()
+    qtbot.addWidget(workspace)
+    quick = workspace.findChild(QuickChapterView)
+    plan = {
+        "scene_id": "scene-1",
+        "scene_goal": "找到钥匙",
+        "required_beats": ["进入档案室"],
+        "conflict": "守卫巡逻",
+        "emotional_arc": "笃定到不安",
+        "ending_hook": "门后有脚步",
+        "continuity_constraints": ["主角仍然受伤"],
+    }
+    workspace.set_scene("scene-1", "chapter-1")
+    workspace.show_plan_checkpoint(plan)
+    starts, cancellations = [], []
+    workspace.quick_start_requested.connect(
+        lambda chapter, scene: starts.append((chapter, scene))
+    )
+    workspace.quick_adjust_cancelled.connect(lambda: cancellations.append(True))
+
+    workspace.begin_quick_plan_adjustment()
+    quick.goal_edit.setText("拿到钥匙")
+    quick.start_button.click()
+
+    assert starts == [("chapter-1", "scene-1")]
+    assert quick.goal_edit.isReadOnly()
+    assert workspace.quick_plan() == plan | {"scene_goal": "拿到钥匙"}
+
+    workspace.begin_quick_plan_adjustment()
+    quick.goal_edit.setText("放弃钥匙")
+    quick.adjust_button.click()
+
+    assert cancellations == [True]
+    assert workspace.quick_plan() == plan | {"scene_goal": "拿到钥匙"}
+
+
 def test_workspace_does_not_expose_raw_embedded_widgets(qtbot):
     workspace = SceneWorkspaceView()
     qtbot.addWidget(workspace)
