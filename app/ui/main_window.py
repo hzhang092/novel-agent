@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.application.errors import ConcurrentModificationError
 from app.application.project_context import (
     ProjectApplicationContext,
     build_project_application,
@@ -561,9 +562,14 @@ class MainWindow(QMainWindow):
         finally:
             self._deep_save_in_progress = False
         if saved and self._application is not None and bootstrap_revision is not None:
-            self._application.story_designer.discard_unapproved_bootstrap(
-                base_revision=bootstrap_revision
-            )
+            try:
+                self._application.story_designer.discard_unapproved_bootstrap(
+                    base_revision=bootstrap_revision
+                )
+            except ConcurrentModificationError:
+                logger.warning(
+                    "Bootstrap draft changed after Deep save; leaving it untouched"
+                )
         return saved
 
     def _on_new_project(self) -> None:

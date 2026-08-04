@@ -122,7 +122,7 @@ def test_switching_blank_project_to_quick_starts_brief_in_the_same_folder(
     assert load_project(project_dir).title == "空白故事"
 
 
-def test_deep_canonical_save_warns_then_discards_bootstrap_only(
+def test_deep_canonical_save_discards_bootstrap_and_tolerates_concurrent_clear(
     tmp_path, qtbot, monkeypatch
 ):
     project_dir = create_project(tmp_path, Project(title="空白故事"))
@@ -151,6 +151,18 @@ def test_deep_canonical_save_warns_then_discards_bootstrap_only(
     assert planning.active_draft is None
     assert planning.story_brief == brief
     assert planning.approved_proposal == proposal
+
+    planning.active_draft = draft
+    save_planning(project_dir, planning)
+
+    def save() -> bool:
+        current = load_planning(project_dir)
+        current.active_draft = None
+        save_planning(project_dir, current)
+        return True
+
+    assert window.guard_deep_save(save) is True
+    assert load_planning(project_dir).active_draft is None
 
 
 def test_failed_deep_save_preserves_bootstrap(tmp_path, qtbot, monkeypatch):
