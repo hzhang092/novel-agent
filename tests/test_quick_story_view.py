@@ -1,6 +1,8 @@
 import asyncio
 
 import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QPushButton
 
 import app.ui.quick_story_view as quick_story_view
 from app.application.errors import StoryDesignerProviderError
@@ -51,6 +53,10 @@ def _bootstrap() -> StoryBootstrap:
     )
 
 
+def _button(view: QuickStoryView, text: str) -> QPushButton:
+    return next(button for button in view.findChildren(QPushButton) if button.text() == text)
+
+
 def test_story_view_saves_brief_and_none_romance_clears_romance_chip(tmp_path, qtbot):
     project_dir = create_project(tmp_path, Project(title="故事"))
     view = QuickStoryView()
@@ -61,10 +67,11 @@ def test_story_view_saves_brief_and_none_romance_clears_romance_chip(tmp_path, q
     view.romance_combo.setCurrentIndex(view.romance_combo.findData("none"))
     view.target_combo.setCurrentIndex(view.target_combo.findData("ongoing"))
     view.ending_edit.setText("可调整的远方")
-    view._save_brief()
+    qtbot.mouseClick(_button(view, "保存故事意向"), Qt.MouseButton.LeftButton)
 
     brief = load_planning(project_dir).story_brief
     assert brief is not None
+    assert view.action_status_label.text() == "故事意向已保存"
     assert "恋人" not in brief.relationship_tags
     assert brief.target_length == "ongoing"
     assert brief.premise == ""
@@ -78,21 +85,58 @@ def test_story_view_saves_brief_and_none_romance_clears_romance_chip(tmp_path, q
     assert not reopened.adopt_button.isEnabled()
 
 
-def test_story_view_proposal_actions_keep_project_folder_and_adopt_title(tmp_path, qtbot):
+@pytest.mark.asyncio
+async def test_story_view_proposal_actions_keep_project_folder_and_adopt_title(tmp_path, qtbot):
     project_dir = create_project(tmp_path, Project(title="固定目录"))
     application = build_project_application(project_dir)
     application.story_designer._provider_factory = lambda: MockProvider(structured_response=_proposal())
     view = QuickStoryView()
     qtbot.addWidget(view)
     view.bind_application(application)
-    view._save_brief()
+    qtbot.mouseClick(view.generate_button, Qt.MouseButton.LeftButton)
+    await view._proposal_task
 
-    asyncio.run(view._generate_proposal())
     assert "暂定远方" in view.proposal_label.text()
-    asyncio.run(view._adopt_proposal())
+    assert view.action_status_label.text() == "故事提案已生成"
+    await view._adopt_proposal()
 
     assert load_project(project_dir).title == "生成标题"
     assert project_dir.name == "固定目录"
+
+
+@pytest.mark.asyncio
+async def test_generating_proposal_reports_progress_and_reenables_actions(tmp_path, qtbot):
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class WaitingProvider(MockProvider):
+        async def generate_structured(self, *args, **kwargs):
+            started.set()
+            await release.wait()
+            return await super().generate_structured(*args, **kwargs)
+
+    project_dir = create_project(tmp_path, Project(title="进度提示"))
+    application = build_project_application(project_dir)
+    application.story_designer._provider_factory = lambda: WaitingProvider(
+        structured_response=_proposal()
+    )
+    view = QuickStoryView()
+    qtbot.addWidget(view)
+    view.bind_application(application)
+
+    qtbot.mouseClick(view.generate_button, Qt.MouseButton.LeftButton)
+    await started.wait()
+
+    assert view.action_status_label.text() == "正在生成故事提案…"
+    assert not view.save_button.isEnabled()
+    assert not view.generate_button.isEnabled()
+
+    release.set()
+    await view._proposal_task
+
+    assert view.action_status_label.text() == "故事提案已生成"
+    assert view.save_button.isEnabled()
+    assert view.generate_button.isEnabled()
 
 
 @pytest.mark.asyncio

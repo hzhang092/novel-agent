@@ -57,6 +57,18 @@ def test_quick_affordance_is_hidden_without_the_development_flag(qtbot):
     assert window._experience_switch.isHidden()
 
 
+def test_experience_switch_requires_an_open_project(tmp_path, qtbot):
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+
+    assert not window._experience_switch.isEnabled()
+
+    project_dir = create_project(tmp_path, Project(title="Story"))
+    window._bind_project_application(project_dir)
+
+    assert window._experience_switch.isEnabled()
+
+
 def test_disabled_flag_forces_a_quick_preference_back_to_deep(tmp_path, qtbot):
     project_dir = create_project(tmp_path, Project(title="Story"))
     from app.storage.editor_layout import EditorLayoutStore

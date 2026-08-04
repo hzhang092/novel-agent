@@ -1523,6 +1523,7 @@ class MainWindow(QMainWindow):
 
     def _set_nav_items_enabled(self, enabled: bool) -> None:
         """Enable or disable all non-dashboard sidebar items."""
+        self._experience_switch.setEnabled(enabled)
         for i in range(1, self.sidebar.count()):
             item = self.sidebar.item(i)
             if item is not None:

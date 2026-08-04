@@ -111,12 +111,15 @@ class QuickStoryView(QWidget):
         self.ending_edit.setPlaceholderText("长篇连载的暂定远方（可调整）")
         form.addRow("暂定去向", self.ending_edit)
         layout.addLayout(form)
-        save = QPushButton("保存故事意向")
-        save.clicked.connect(self._save_brief)
-        layout.addWidget(save)
+        self.save_button = QPushButton("保存故事意向")
+        self.save_button.clicked.connect(self._save_brief)
+        layout.addWidget(self.save_button)
+        self.action_status_label = QLabel("")
+        self.action_status_label.setWordWrap(True)
+        layout.addWidget(self.action_status_label)
 
         self.generate_button = QPushButton("生成故事提案")
-        self.generate_button.clicked.connect(lambda: self._start_task(self._generate_proposal()))
+        self.generate_button.clicked.connect(self._start_proposal_generation)
         layout.addWidget(self.generate_button)
 
         self.projection_section = QWidget()
@@ -204,6 +207,9 @@ class QuickStoryView(QWidget):
         self.cancel_generation()
         self._proposal_task = None
         self._application = application
+        self.save_button.setEnabled(True)
+        self.generate_button.setEnabled(True)
+        self.action_status_label.clear()
         planning = load_planning(application.project_dir)
         self._set_brief(planning.story_brief or StoryBrief())
         self.ending_edit.setText(planning.provisional_destination)
@@ -375,14 +381,28 @@ class QuickStoryView(QWidget):
             ),
         )
 
-    def _save_brief(self) -> None:
-        if self._application is not None:
-            self._application.story_designer.save_brief(
-                self._brief(),
-                provisional_destination=(
-                    self.ending_edit.text() if self.target_combo.currentData() == "ongoing" else ""
-                ),
-            )
+    def _save_brief(self, _checked: bool = False) -> None:
+        if self._application is None:
+            self.action_status_label.setText("请先创建或打开项目")
+            return
+        self._application.story_designer.save_brief(
+            self._brief(),
+            provisional_destination=(
+                self.ending_edit.text() if self.target_combo.currentData() == "ongoing" else ""
+            ),
+        )
+        self.action_status_label.setText("故事意向已保存")
+
+    def _start_proposal_generation(self, _checked: bool = False) -> None:
+        if self._application is None:
+            self.action_status_label.setText("请先创建或打开项目")
+            return
+        if self._proposal_task is not None and not self._proposal_task.done():
+            return
+        self.action_status_label.setText("正在生成故事提案…")
+        self.save_button.setEnabled(False)
+        self.generate_button.setEnabled(False)
+        self._start_task(self._generate_proposal())
 
     def _prepare_brief(self) -> None:
         """Persist changed brief inputs without invalidating a current draft."""
@@ -405,24 +425,33 @@ class QuickStoryView(QWidget):
     async def _generate_proposal(self, *, prepared: bool = False) -> None:
         application = self._application
         if application is None:
+            self.action_status_label.setText("请先创建或打开项目")
             return
-        if not prepared:
-            self._prepare_brief()
-        instruction = self.ending_edit.text().strip()
-        if self.target_combo.currentData() == "ongoing" and instruction:
-            instruction = f"长篇连载的暂定去向：{instruction}"
         try:
+            if not prepared:
+                self._prepare_brief()
+            instruction = self.ending_edit.text().strip()
+            if self.target_combo.currentData() == "ongoing" and instruction:
+                instruction = f"长篇连载的暂定去向：{instruction}"
             draft = await application.story_designer.generate_proposal(instruction)
         except ProviderConfigurationError as error:
             if self._application is application:
                 self._provider_error(str(error), self._generate_proposal)
+                self.action_status_label.setText("生成失败，请重试")
             return
         except (StoryDesignerProviderError, ConcurrentModificationError, OperationBlockedError) as error:
             if self._application is application:
                 self._provider_error(f"生成失败：{error}", self._generate_proposal)
+                self.action_status_label.setText("生成失败，请重试")
             return
-        if self._application is application:
-            self._show_proposal(draft)
+        else:
+            if self._application is application:
+                self._show_proposal(draft)
+                self.action_status_label.setText("故事提案已生成")
+        finally:
+            if self._application is application:
+                self.save_button.setEnabled(True)
+                self.generate_button.setEnabled(True)
 
     async def _adjust_proposal(self) -> None:
         application = self._application
