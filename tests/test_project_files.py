@@ -6,6 +6,7 @@ from app.storage.models import PowerSystem, Project, StyleGuide, WorldSetting
 from app.storage.project_files import (
     create_project,
     delete_project,
+    load_planning,
     load_project,
     project_exists,
 )
@@ -40,6 +41,21 @@ def test_project_exists(tmp_path):
         create_project(tmp_path, project)
     delete_project(proj_dir)
     assert not project_exists(proj_dir)
+
+
+def test_load_planning_discards_deferred_legacy_drafts(tmp_path):
+    path = tmp_path / "planning.yaml"
+    for kind in ("story_patch", "replan", "later_arc"):
+        path.write_text(
+            f"schema_version: 1\nprovisional_destination: preserved\n"
+            f"active_draft:\n  kind: {kind}\n",
+            encoding="utf-8",
+        )
+
+        planning = load_planning(tmp_path)
+
+        assert planning.provisional_destination == "preserved"
+        assert planning.active_draft is None
 
 
 def test_full_round_trip_with_world_and_style(tmp_path):

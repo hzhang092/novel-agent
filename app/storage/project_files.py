@@ -102,7 +102,15 @@ def load_planning(project_dir: Path) -> PlanningData:
         return PlanningData()
     with open(path, "r", encoding="utf-8") as handle:
         raw = yaml.safe_load(handle)
-    return PlanningData.model_validate(raw or {})
+    data = raw or {}
+    if isinstance(data, dict):
+        active_draft = data.get("active_draft")
+        if (
+            isinstance(active_draft, dict)
+            and active_draft.get("kind") in {"story_patch", "replan", "later_arc"}
+        ):
+            data["active_draft"] = None
+    return PlanningData.model_validate(data)
 
 
 def save_planning(project_dir: Path, planning: PlanningData) -> None:
