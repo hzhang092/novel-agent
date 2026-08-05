@@ -1402,20 +1402,22 @@ class MainWindow(QMainWindow):
 
             return guarded
 
-        def same_application(callback):
-            def guarded(*args):
-                if self._application is application:
-                    return callback(*args)
-                return None
-
-            return guarded
+        def set_generating(value: bool) -> None:
+            if self._application is not application:
+                return
+            workspace.set_generating(value)
+            if not value and workspace.current_scene_id != expected_scene_id:
+                record = self._selected_generation_record()
+                chapter_id = workspace.current_chapter_id
+                if record is not None and chapter_id:
+                    application.scene_workflow.restore_draft(record, chapter_id)
 
         return SceneWorkflowObserver(
             trace=current(workspace.update_trace),
             prose=current(workspace.append_prose),
             plan=current(workspace.show_plan_checkpoint),
             status=current(workspace.set_status),
-            generating=same_application(workspace.set_generating),
+            generating=set_generating,
             review=current(workspace.show_review_result),
             draft=current(self._on_workflow_draft),
             memory=current(workspace.show_fact_approval),
@@ -1468,7 +1470,15 @@ class MainWindow(QMainWindow):
             return
         workflow = self._application.scene_workflow
         record = workflow.state.draft_record
-        if record is not None and record.stale_input and not record.stale_input_reviewed:
+        selected = self._selected_generation_record()
+        if (
+            record is None
+            or selected is None
+            or record.scene_id != self._workspace_view.current_scene_id
+            or record.revision_id != selected.revision_id
+        ):
+            return
+        if record.stale_input and not record.stale_input_reviewed:
             self._workspace_view.hide_continue_review()
             asyncio.ensure_future(self._continue_stale_record(record.revision_id))
             return

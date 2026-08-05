@@ -672,7 +672,9 @@ def test_late_workflow_callbacks_do_not_replace_new_scene_state(
     assert not quick.memory_section.isVisible()
 
 
-def test_run_completion_restores_controls_after_browsing_away(tmp_path, qtbot):
+def test_run_completion_restores_controls_after_browsing_away(
+    tmp_path, qtbot, monkeypatch
+):
     project_dir = _project(tmp_path)
     window = MainWindow(quick_creation_enabled=True)
     qtbot.addWidget(window)
@@ -683,9 +685,18 @@ def test_run_completion_restores_controls_after_browsing_away(tmp_path, qtbot):
     observer.generating(True)
 
     workspace.set_scene("scene-2", "ch-2")
+    selected = SceneGenerationRecord(
+        scene_id="scene-2",
+        revision_id="rev-2",
+        revision_number=1,
+        draft_text="第二章正文",
+    )
+    monkeypatch.setattr(window, "_selected_generation_record", lambda: selected)
+    window._application.scene_workflow.state.active = False
     observer.generating(False)
 
     assert workspace._generating is False
+    assert window._application.scene_workflow.state.draft_record is selected
 
 
 def test_returning_to_scene_restores_pending_plan(tmp_path, qtbot):
