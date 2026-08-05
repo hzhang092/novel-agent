@@ -51,10 +51,11 @@ def test_quick_outline_renders_cards_and_emits_canonical_scene(qtbot):
     selected = []
     view.scene_selected.connect(selected.append)
 
-    assert "第一章" in view.card_list.itemText(0)
-    assert "待写" in view.card_list.itemText(0)
+    assert "第一卷" in view._arc_groups["volume-1"].title()
+    assert view._card_widgets["chapter-1"]["title"].text() == "第一章"
+    assert "待写" in view._card_widgets["chapter-1"]["status"].text()
     view.select_chapter("chapter-1")
-    view.write_button.click()
+    view._card_widgets["chapter-1"]["write"].click()
 
     assert selected == ["scene-1"]
 
@@ -91,6 +92,50 @@ def test_quick_outline_emits_change_only_after_successful_save(qtbot):
     view.save_button.click()
 
     assert changed == ["chapter-1"]
+
+
+def test_quick_outline_groups_cards_in_canonical_order_and_preserves_selection(qtbot):
+    view = QuickOutlineView()
+    qtbot.addWidget(view)
+    service = FakeQuickPlanning()
+    second = service.card.model_copy(
+        update={
+            "id": "chapter-2",
+            "scene_id": "scene-2",
+            "title": "第二章",
+            "status": ChapterCardStatus.APPROVED,
+        }
+    )
+    third = service.card.model_copy(
+        update={"id": "chapter-3", "scene_id": "scene-3", "title": "第三章"}
+    )
+    service.projection = QuickStoryProjection(
+        arcs=[
+            StoryArcProjection(
+                id="volume-1",
+                story_id="story-1",
+                title="第一卷",
+                summary="开端",
+                chapter_cards=[service.card, second],
+            ),
+            StoryArcProjection(
+                id="volume-2",
+                story_id="story-1",
+                title="第二卷",
+                summary="发展",
+                chapter_cards=[third],
+            ),
+        ]
+    )
+
+    view.bind_application(service)
+    view.select_chapter("chapter-2")
+    view.refresh()
+
+    assert list(view._arc_groups) == ["volume-1", "volume-2"]
+    assert list(view._card_widgets) == ["chapter-1", "chapter-2", "chapter-3"]
+    assert "已批准 1/2" in view._arc_groups["volume-1"].title()
+    assert view.selected_chapter_id == "chapter-2"
 
 
 def test_quick_outline_hides_brief_drift_and_replanning_controls(qtbot):

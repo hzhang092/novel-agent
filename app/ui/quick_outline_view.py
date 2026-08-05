@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QComboBox,
     QFormLayout,
+    QFrame,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -42,13 +44,15 @@ class QuickOutlineView(QWidget):
         super().__init__(parent)
         self._service = None
         self._cards = {}
+        self._card_widgets = {}
+        self._arc_groups = {}
         self._selected_id = ""
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("快速大纲"))
-        self.card_list = QComboBox()
-        self.card_list.currentIndexChanged.connect(self._on_card_changed)
-        layout.addWidget(self.card_list)
+        self.card_scroll = QScrollArea()
+        self.card_scroll.setWidgetResizable(True)
+        layout.addWidget(self.card_scroll, 1)
 
         form = QFormLayout()
         self.title_edit = QLineEdit()
@@ -74,8 +78,6 @@ class QuickOutlineView(QWidget):
             actions.addWidget(button)
         layout.addLayout(actions)
 
-        layout.addStretch()
-
     def bind_application(self, service) -> None:
         self._service = service
         self.refresh()
@@ -90,21 +92,69 @@ class QuickOutlineView(QWidget):
             for arc in projection.arcs
             for card in arc.chapter_cards
         }
-        self.card_list.blockSignals(True)
-        self.card_list.clear()
-        for card in self._cards.values():
-            self.card_list.addItem(f"{card.title} · {card.status.value}", card.id)
-        self.card_list.blockSignals(False)
+        self._card_widgets = {}
+        self._arc_groups = {}
+        container = QWidget()
+        groups = QVBoxLayout(container)
+        for arc in projection.arcs:
+            approved = sum(
+                card.status.value == "已批准" for card in arc.chapter_cards
+            )
+            group = QGroupBox(
+                f"{arc.title} · 已批准 {approved}/{len(arc.chapter_cards)}"
+            )
+            self._arc_groups[arc.id] = group
+            cards_layout = QVBoxLayout(group)
+            for card in arc.chapter_cards:
+                frame = QFrame()
+                card_layout = QVBoxLayout(frame)
+                title = QLabel(card.title)
+                title.setStyleSheet("font-weight: bold")
+                summary = QLabel(card.summary)
+                summary.setWordWrap(True)
+                hook = QLabel(f"结尾：{card.ending_hook}")
+                hook.setWordWrap(True)
+                status = QLabel(f"状态：{card.status.value}")
+                buttons = QHBoxLayout()
+                edit = QPushButton("编辑")
+                write = QPushButton("写这一章")
+                edit.clicked.connect(
+                    lambda _checked=False, chapter_id=card.id: self.select_chapter(
+                        chapter_id
+                    )
+                )
+                write.clicked.connect(
+                    lambda _checked=False, chapter_id=card.id: self._write_chapter(
+                        chapter_id
+                    )
+                )
+                buttons.addWidget(edit)
+                buttons.addWidget(write)
+                buttons.addStretch()
+                for widget in (title, summary, hook, status):
+                    card_layout.addWidget(widget)
+                card_layout.addLayout(buttons)
+                cards_layout.addWidget(frame)
+                self._card_widgets[card.id] = {
+                    "frame": frame,
+                    "title": title,
+                    "summary": summary,
+                    "hook": hook,
+                    "status": status,
+                    "edit": edit,
+                    "write": write,
+                }
+            groups.addWidget(group)
+        groups.addStretch()
+        self.card_scroll.setWidget(container)
         if selected in self._cards:
             self.select_chapter(selected)
         elif self._cards:
             self.select_chapter(next(iter(self._cards)))
 
     def select_chapter(self, chapter_id: str) -> bool:
-        index = self.card_list.findData(chapter_id)
-        if index < 0:
+        if chapter_id not in self._cards:
             return False
-        self.card_list.setCurrentIndex(index)
         self._show_card(chapter_id)
         self.chapter_selected.emit(chapter_id)
         return True
@@ -112,11 +162,6 @@ class QuickOutlineView(QWidget):
     @property
     def selected_chapter_id(self) -> str:
         return self._selected_id
-
-    def _on_card_changed(self, index: int) -> None:
-        chapter_id = self.card_list.itemData(index)
-        if chapter_id:
-            self._show_card(chapter_id)
 
     def _show_card(self, chapter_id: str) -> None:
         card = self._cards.get(chapter_id)
@@ -130,9 +175,12 @@ class QuickOutlineView(QWidget):
 
     def _write_selected(self) -> None:
         if self._selected_id:
-            scene_id = self._cards[self._selected_id].scene_id
-            if scene_id:
-                self.scene_selected.emit(scene_id)
+            self._write_chapter(self._selected_id)
+
+    def _write_chapter(self, chapter_id: str) -> None:
+        scene_id = self._cards[chapter_id].scene_id
+        if scene_id:
+            self.scene_selected.emit(scene_id)
 
     def _request_deep_outline(self) -> None:
         if self._selected_id:
