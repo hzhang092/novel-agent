@@ -429,10 +429,16 @@ def test_project_switch_clears_pending_quick_plan_adjustment(tmp_path, qtbot):
 
     quick.adjust_button.click()
     assert window._pending_plan_patch is not None
+    quick.show_review(False, "旧项目审查")
+    quick.show_memory([{"description": "旧项目事实"}], [])
 
     window._bind_project_application(second_dir)
 
     assert window._pending_plan_patch is None
+    assert window._workspace_view.current_scene_id is None
+    assert window._workspace_view.quick_plan()["scene_goal"] == ""
+    assert not quick.review_section.isVisible()
+    assert not quick.memory_section.isVisible()
     assert quick.goal_edit.isReadOnly()
     assert quick.adjust_button.text() == "调整方案"
     assert window._application.scene_workflow.project_dir == second_dir
@@ -592,3 +598,40 @@ def test_selecting_revision_replaces_quick_memory_source(tmp_path, qtbot):
     assert window._workspace_view._editor.current_version() == "v2"
     assert window._workspace_view._quick_chapter.selected_revision == "v2"
     assert window._workspace_view.quick_plan()["scene_goal"] == "新目标"
+
+    window._on_prose_version_selected("v1")
+
+    assert window._workspace_view.quick_plan()["scene_goal"] == ""
+
+
+def test_late_workflow_callbacks_do_not_replace_new_scene_state(
+    tmp_path, qtbot
+):
+    project_dir = _project(tmp_path)
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    workspace = window._workspace_view
+    workspace.set_scene("scene-1", "ch-1")
+    observer = window._scene_workflow_observer("scene-1")
+
+    workspace.set_scene("scene-2", "ch-2")
+    workspace.set_prose_text("第二章正文")
+    observer.plan({"scene_id": "scene-1", "scene_goal": "旧计划"})
+    observer.prose("旧流式正文")
+    observer.review(False, "旧审查")
+    observer.memory("scene-1", "rev-1", [{"description": "旧事实"}], [])
+    observer.draft(
+        SceneGenerationRecord(
+            scene_id="scene-1",
+            revision_id="rev-1",
+            revision_number=1,
+            draft_text="旧完整正文",
+        )
+    )
+
+    quick = workspace.findChild(QuickChapterView)
+    assert workspace.prose_text() == "第二章正文"
+    assert workspace.quick_plan()["scene_goal"] == ""
+    assert not quick.review_section.isVisible()
+    assert not quick.memory_section.isVisible()

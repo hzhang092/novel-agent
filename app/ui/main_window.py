@@ -334,7 +334,7 @@ class MainWindow(QMainWindow):
 
     def _bind_project_application(self, project_dir: Path) -> None:
         self._cancel_quick_plan_adjustment()
-        self._workspace_view.hide_plan_checkpoint()
+        self._workspace_view.clear_scene()
         self._current_prose_version = None
         self._current_project_dir = project_dir
         self._application = build_project_application(
@@ -960,8 +960,7 @@ class MainWindow(QMainWindow):
 
     def _show_quick_revision(self, record) -> None:
         review = record.review or {}
-        if record.scene_plan:
-            self._workspace_view.show_quick_plan(record.scene_plan)
+        self._workspace_view.show_quick_plan(record.scene_plan or {})
         if self._application is not None:
             chapter_id = self._find_chapter_for_scene(record.scene_id) or ""
             self._application.scene_workflow.restore_draft(record, chapter_id)
@@ -1083,7 +1082,9 @@ class MainWindow(QMainWindow):
         if self._application is not None:
             asyncio.ensure_future(
                 self._application.scene_workflow.save_edited_draft(
-                    workspace.prose_text(), source_record, self._scene_workflow_observer()
+                    workspace.prose_text(),
+                    source_record,
+                    self._scene_workflow_observer(source_record.scene_id),
                 )
             )
 
@@ -1117,7 +1118,7 @@ class MainWindow(QMainWindow):
                     self._application.scene_workflow.regenerate(
                         source_record.scene_id,
                         source_record,
-                        self._scene_workflow_observer(),
+                        self._scene_workflow_observer(source_record.scene_id),
                         instruction=instruction,
                         plan_patch=patch,
                         target_characters=target,
@@ -1224,7 +1225,7 @@ class MainWindow(QMainWindow):
             self._application.scene_workflow.save_edited_draft(
                 self._workspace_view.prose_text(),
                 record,
-                self._scene_workflow_observer(),
+                self._scene_workflow_observer(record.scene_id),
                 analyze=False,
             )
         )
@@ -1242,7 +1243,7 @@ class MainWindow(QMainWindow):
             self._application.scene_workflow.regenerate(
                 scene_id,
                 record,
-                self._scene_workflow_observer(),
+                self._scene_workflow_observer(scene_id),
                 instruction=instruction,
                 target_characters=target,
             )
@@ -1337,7 +1338,7 @@ class MainWindow(QMainWindow):
         if self._current_project_dir is None or self._application is None:
             return
         workspace = self._workspace_view
-        observer = self._scene_workflow_observer()
+        observer = self._scene_workflow_observer(scene_id)
         _, target = self._chapter_length(
             self._find_chapter_for_scene(scene_id) or ""
         )
@@ -1353,20 +1354,36 @@ class MainWindow(QMainWindow):
             workspace.set_generating(False)
             QMessageBox.warning(self, "正在生成", str(error))
 
-    def _scene_workflow_observer(self) -> SceneWorkflowObserver:
+    def _scene_workflow_observer(
+        self, scene_id: str | None = None
+    ) -> SceneWorkflowObserver:
         """Build the current workspace's rendering adapter."""
         workspace = self._workspace_view
+        application = self._application
+        expected_scene_id = scene_id or workspace.current_scene_id
+
+        def current(callback):
+            def guarded(*args):
+                if (
+                    self._application is application
+                    and workspace.current_scene_id == expected_scene_id
+                ):
+                    return callback(*args)
+                return None
+
+            return guarded
+
         return SceneWorkflowObserver(
-            trace=workspace.update_trace,
-            prose=workspace.append_prose,
-            plan=workspace.show_plan_checkpoint,
-            status=workspace.set_status,
-            generating=workspace.set_generating,
-            review=workspace.show_review_result,
-            draft=self._on_workflow_draft,
-            memory=workspace.show_fact_approval,
-            length_warning=self._show_length_warning,
-            error=self._show_workflow_error,
+            trace=current(workspace.update_trace),
+            prose=current(workspace.append_prose),
+            plan=current(workspace.show_plan_checkpoint),
+            status=current(workspace.set_status),
+            generating=current(workspace.set_generating),
+            review=current(workspace.show_review_result),
+            draft=current(self._on_workflow_draft),
+            memory=current(workspace.show_fact_approval),
+            length_warning=current(self._show_length_warning),
+            error=current(self._show_workflow_error),
         )
 
     def _show_workflow_error(self, error: Exception) -> None:

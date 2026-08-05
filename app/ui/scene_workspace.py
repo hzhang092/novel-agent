@@ -447,9 +447,15 @@ class SceneWorkspaceView(QWidget):
         self._current_scene_id = None
         self._current_chapter_id = None
         self._quick_chapter.reset_scene_state()
+        self.hide_plan_checkpoint()
+        self.hide_review_result()
+        self.hide_fact_approval()
+        self.clear_context()
+        self.set_prose_versions([])
+        self.set_prose_text("")
+        self.clear_trace()
         self._generate_btn.setEnabled(False)
         self._regenerate_btn.setEnabled(False)
-        self.hide_fact_approval()
         self.set_next_scene_available(False)
         self._sync_quick_workflow_state()
 
