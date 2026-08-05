@@ -118,3 +118,28 @@ def test_scene_queries(tmp_path):
     assert service.chapter_for_scene("missing") is None
     assert service.scene_element_ids("wanted") == frozenset({"sect"})
     assert service.scene_element_ids("missing") == frozenset()
+
+
+def test_next_scene_query_crosses_chapter_and_volume_boundaries(tmp_path):
+    project_dir = _project(tmp_path)
+    service = OutlineApplicationService(project_dir)
+    service.save_outline(
+        [
+            VolumeOutline(
+                id="v1",
+                chapters=[
+                    ChapterOutline(id="c1", scenes=[SceneOutline(id="s1")]),
+                    ChapterOutline(id="c2", scenes=[SceneOutline(id="s2")]),
+                ],
+            ),
+            VolumeOutline(
+                id="v2",
+                chapters=[ChapterOutline(id="c3", scenes=[SceneOutline(id="s3")])],
+            ),
+        ]
+    )
+
+    assert service.next_scene_id("s1") == "s2"
+    assert service.next_scene_id("s2") == "s3"
+    assert service.next_scene_id("s3") is None
+    assert service.next_scene_id("missing") is None

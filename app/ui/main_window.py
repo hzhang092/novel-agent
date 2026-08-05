@@ -1304,11 +1304,15 @@ class MainWindow(QMainWindow):
     def _on_next_scene(self) -> None:
         """Navigate to the next scene in the outline sequence."""
         scene_id = self._workspace_view.current_scene_id
-        if not scene_id:
+        if not scene_id or self._application is None:
             return
-        next_id = self._outline_view.select_next_scene(scene_id)
+        next_id = self._application.outlines.next_scene_id(scene_id)
         if next_id is None:
             self._workspace_view.mark_last_scene()
+            return
+        self._on_scene_selected(next_id)
+        if self._experience_mode == "deep" and self._previous_destination == "outline":
+            self._outline_view.activate_scene(next_id, emit=False)
 
     def _on_generate_requested(self, scene_id: str) -> None:
         """Trigger full pipeline generation for the given scene."""

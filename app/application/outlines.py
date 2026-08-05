@@ -8,6 +8,7 @@ from pathlib import Path
 from app.application.characters import CharacterApplicationService
 from app.application.results import OutlineEditorSnapshot
 from app.application.story_bible import StoryBibleApplicationService
+from app.domain.outline_operations import find_next_scene
 from app.storage.bible_repository import rollback_files
 from app.storage.models import VolumeOutline
 from app.storage.project_files import (
@@ -68,6 +69,10 @@ class OutlineApplicationService:
                 if any(scene.id == scene_id for scene in chapter.scenes):
                     return chapter.id
         return None
+
+    def next_scene_id(self, current_scene_id: str) -> str | None:
+        scene = find_next_scene(load_all_volumes(self.project_dir), current_scene_id)
+        return scene.id if scene is not None else None
 
     def scene_element_ids(self, scene_id: str) -> frozenset[str]:
         for volume in load_all_volumes(self.project_dir):

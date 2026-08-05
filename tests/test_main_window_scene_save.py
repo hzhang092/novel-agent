@@ -134,6 +134,30 @@ def test_quick_approve_next_publishes_then_only_navigates(
     assert next_calls == [True]
 
 
+def test_quick_next_scene_uses_canonical_outline_query(tmp_path, qtbot, monkeypatch):
+    project_dir = _project(tmp_path)
+    volumes = load_all_volumes(project_dir)
+    volumes[0].chapters.append(
+        ChapterOutline(id="ch-2", scenes=[SceneOutline(id="scene-2")])
+    )
+    save_volume_outline(project_dir, volumes[0])
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    window._set_experience_mode("quick")
+    window._workspace_view.set_scene("scene-1", "ch-1")
+    monkeypatch.setattr(
+        window._outline_view,
+        "select_next_scene",
+        lambda *_args: pytest.fail("hidden Deep outline must not drive Quick navigation"),
+    )
+
+    window._on_next_scene()
+
+    assert window._workspace_view.current_scene_id == "scene-2"
+    assert window._workspace_view.current_chapter_id == "ch-2"
+
+
 def test_quick_length_change_is_a_chapter_override(tmp_path, qtbot):
     project_dir = _project(tmp_path)
     window = MainWindow(quick_creation_enabled=True)

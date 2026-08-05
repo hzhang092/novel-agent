@@ -179,15 +179,23 @@ class OutlineEditorView(QWidget):
                 self._application.load_editor_snapshot().bible_elements
             )
 
-    def activate_scene(self, scene_id: str) -> bool:
+    def activate_scene(self, scene_id: str, *, emit: bool = True) -> bool:
         """Select a scene and emit scene_selected exactly once."""
         item = self._find_tree_item(scene_id)
         if item is None or item.data(0, ROLE_NODE_TYPE) != "scene":
             return False
         if self._tree.currentItem() is item:
-            self.scene_selected.emit(scene_id)
-        else:
+            if emit:
+                self.scene_selected.emit(scene_id)
+        elif emit:
             self._tree.setCurrentItem(item)
+        else:
+            blocked = self._tree.blockSignals(True)
+            try:
+                self._tree.setCurrentItem(item)
+            finally:
+                self._tree.blockSignals(blocked)
+            self._on_tree_selection_changed(item, None, emit_scene=False)
         return True
 
     # ── UI Setup ───────────────────────────────────────────────────────────
