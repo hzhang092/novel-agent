@@ -302,6 +302,13 @@ class MainWindow(QMainWindow):
         self._quick_story_view.world_element_requested.connect(self._open_deep_world_element)
         self._quick_outline_view.scene_selected.connect(self._open_quick_scene)
         self._quick_outline_view.deep_outline_requested.connect(self._open_deep_outline)
+        self._quick_outline_view.outline_changed.connect(
+            self._on_quick_outline_changed
+        )
+        self._outline_view.saved.connect(self._quick_outline_view.refresh)
+
+    def _on_quick_outline_changed(self, _chapter_id: str) -> None:
+        self._outline_view.invalidate_external_change()
 
     def _reload_after_bootstrap(self) -> None:
         """Refresh existing canonical editors after Quick approves a bootstrap."""
@@ -427,7 +434,10 @@ class MainWindow(QMainWindow):
             and self._current_project_dir is not None
         ):
             chapter_id = self._quick_outline_view.selected_chapter_id
-            self._outline_view.load_project_dir(self._current_project_dir)
+            if not self._outline_view.is_loaded:
+                self._outline_view.load_project_dir(self._current_project_dir)
+            elif not self._outline_view.is_dirty:
+                self._outline_view.reload()
             scene_id = self._scene_for_chapter(chapter_id)
             if scene_id:
                 self._outline_view.activate_scene(scene_id)
@@ -549,6 +559,16 @@ class MainWindow(QMainWindow):
     def guard_deep_save(self, save: Callable[[], bool]) -> bool:
         if self._deep_save_in_progress:
             return save()
+        if (
+            getattr(save, "__self__", None) is self._outline_view
+            and self._outline_view.is_externally_stale
+        ):
+            QMessageBox.warning(
+                self,
+                "大纲已在别处更改",
+                "快速大纲已有更新。请重新加载后再保存，未保存的深度大纲修改仍会保留。",
+            )
+            return False
         bootstrap_revision = (
             self._application.story_designer.unapproved_bootstrap_revision()
             if self._application is not None

@@ -36,6 +36,7 @@ class QuickOutlineView(QWidget):
     scene_selected = Signal(str)
     deep_outline_requested = Signal(str)
     chapter_selected = Signal(str)
+    outline_changed = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -153,3 +154,4 @@ class QuickOutlineView(QWidget):
             return
         self._cards[card.id] = card
         self.refresh()
+        self.outline_changed.emit(card.id)

@@ -78,6 +78,21 @@ def test_quick_outline_edits_only_card_fields_and_requests_deep_outline(qtbot):
     assert requested == ["chapter-1"]
 
 
+def test_quick_outline_emits_change_only_after_successful_save(qtbot):
+    view = QuickOutlineView()
+    qtbot.addWidget(view)
+    service = FakeQuickPlanning()
+    view.bind_application(service)
+    changed = []
+    view.outline_changed.connect(changed.append)
+
+    view.select_chapter("chapter-1")
+    view.title_edit.setText("新标题")
+    view.save_button.click()
+
+    assert changed == ["chapter-1"]
+
+
 def test_quick_outline_hides_brief_drift_and_replanning_controls(qtbot):
     view = QuickOutlineView()
     qtbot.addWidget(view)

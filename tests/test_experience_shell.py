@@ -129,6 +129,38 @@ def test_switching_from_clean_deep_outline_does_not_save_before_quick_refresh(
     assert calls == ["refresh"]
 
 
+def test_quick_outline_save_refreshes_clean_deep_outline(tmp_path, qtbot):
+    window = _outline_window(tmp_path, qtbot)
+    window._quick_outline_view.refresh()
+    window._quick_outline_view.select_chapter("chapter-1")
+    window._quick_outline_view.title_edit.setText("快速标题")
+    window._quick_outline_view.summary_edit.setPlainText("快速概要")
+    window._quick_outline_view.ending_hook_edit.setText("快速钩子")
+
+    window._quick_outline_view.save_button.click()
+
+    chapter = window._outline_view._volumes[0].chapters[0]
+    assert chapter.title == "快速标题"
+    assert chapter.summary == "快速概要"
+    assert chapter.scenes[0].ending_hook == "快速钩子"
+
+
+def test_deep_outline_save_refreshes_quick_outline(tmp_path, qtbot, monkeypatch):
+    window = _outline_window(tmp_path, qtbot)
+    refreshed = []
+    real_refresh = window._quick_outline_view.refresh
+    monkeypatch.setattr(
+        window._quick_outline_view,
+        "refresh",
+        lambda: refreshed.append(True) or real_refresh(),
+    )
+    window._outline_view._scene_title.setText("深度标题")
+
+    assert window._outline_view.save() is True
+
+    assert refreshed == [True]
+
+
 @pytest.mark.parametrize(
     "answer, expected_call",
     [

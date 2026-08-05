@@ -79,6 +79,7 @@ class OutlineEditorView(QWidget):
         self._volumes: list = []
         self._baseline: list[dict] = []
         self._selected_node_id: str | None = None
+        self._externally_stale = False
         self._save_handler: Callable[[Callable[[], bool]], bool] | None = None
         self._setup_ui()
 
@@ -93,6 +94,7 @@ class OutlineEditorView(QWidget):
         snapshot = self._application.load_editor_snapshot()
         self._volumes = list(snapshot.volumes)
         self._baseline = self._outline_snapshot()
+        self._externally_stale = False
         self._selected_node_id = None
         self._scene_elements.set_selected_ids([])
         self._scene_elements.set_elements(snapshot.bible_elements)
@@ -124,6 +126,17 @@ class OutlineEditorView(QWidget):
         self._gather_current_form()
         return self._outline_snapshot() != self._baseline
 
+    @property
+    def is_externally_stale(self) -> bool:
+        return self._externally_stale
+
+    def invalidate_external_change(self) -> None:
+        """Reload external changes unless doing so would discard local edits."""
+        if self.is_dirty:
+            self._externally_stale = True
+        else:
+            self.reload()
+
     def reload(self) -> None:
         """Reload the outline from the currently bound project."""
         if self._project_dir is not None:
@@ -146,7 +159,7 @@ class OutlineEditorView(QWidget):
         return self._save()
 
     def _save(self) -> bool:
-        if self._project_dir is None:
+        if self._project_dir is None or self._externally_stale:
             return False
         self._gather_current_form()
         self._volumes = list(self._application.save_outline(self._volumes))

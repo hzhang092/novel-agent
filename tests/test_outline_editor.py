@@ -82,6 +82,34 @@ def test_outline_public_save_refresh_and_activation_contracts(
     assert reopened_selected == [scene_id]
 
 
+def test_external_change_blocks_dirty_outline_save_without_discarding_edits(
+    tmp_path, qtbot
+):
+    from app.storage.models import ChapterOutline, VolumeOutline
+    from app.storage.project_files import save_volume_outline
+    from app.ui.outline_editor import OutlineEditorView
+
+    project_dir = create_project(tmp_path, Project(title="测试", genre="玄幻"))
+    save_volume_outline(
+        project_dir,
+        VolumeOutline(
+            id="v1",
+            chapters=[ChapterOutline(id="c1", title="原标题")],
+        ),
+    )
+    widget = OutlineEditorView()
+    qtbot.addWidget(widget)
+    widget.load_project_dir(project_dir)
+    widget._tree.setCurrentItem(widget._tree.topLevelItem(0).child(0))
+    widget._ch_title.setText("未保存标题")
+
+    widget.invalidate_external_change()
+
+    assert widget.is_externally_stale is True
+    assert widget._ch_title.text() == "未保存标题"
+    assert widget.save() is False
+
+
 def test_next_scene_crosses_chapter_and_volume_boundaries(tmp_path, qtbot):
     from app.storage.models import ChapterOutline, SceneOutline, VolumeOutline
     from app.storage.project_files import save_volume_outline
