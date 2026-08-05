@@ -507,6 +507,11 @@ def test_selecting_revision_replaces_quick_memory_source(tmp_path, qtbot):
         scene_id="scene-1",
         revision_id="rev-2",
         revision_number=2,
+        scene_plan=ScenePlan(
+            scene_id="scene-1",
+            scene_goal="新目标",
+            ending_hook="新钩子",
+        ).model_dump(mode="json"),
         extracted_facts_raw=[{"description": "新事实"}],
         draft_text="新正文",
     )
@@ -538,3 +543,4 @@ def test_selecting_revision_replaces_quick_memory_source(tmp_path, qtbot):
     assert window._workspace_view.prose_text() == "新正文"
     assert window._workspace_view._editor.current_version() == "v2"
     assert window._workspace_view._quick_chapter.selected_revision == "v2"
+    assert window._workspace_view.quick_plan()["scene_goal"] == "新目标"

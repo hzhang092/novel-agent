@@ -361,6 +361,10 @@ class SceneWorkspaceView(QWidget):
         if self._experience_mode == "quick":
             self._planner_checkpoint.hide()
 
+    def show_quick_plan(self, plan: dict) -> None:
+        """Show stored plan data without reopening the Deep approval checkpoint."""
+        self._quick_chapter.show_plan(plan)
+
     def hide_plan_checkpoint(self) -> None:
         """Hide the plan approval checkpoint."""
         self._planner_checkpoint.hide_plan()
@@ -402,12 +406,24 @@ class SceneWorkspaceView(QWidget):
 
     def set_scene(self, scene_id: str, chapter_id: str) -> None:
         """Called when a scene is selected in the outline."""
+        changed = (
+            self._current_scene_id != scene_id
+            or self._current_chapter_id != chapter_id
+        )
+        if changed:
+            self._quick_chapter.reset_scene_state()
+            self.hide_plan_checkpoint()
+            self.hide_review_result()
+            self.hide_fact_approval()
+            self.clear_context()
+            self.set_prose_versions([])
+            self.set_prose_text("")
         self._current_scene_id = scene_id
         self._current_chapter_id = chapter_id
         self._quick_chapter.set_chapter(chapter_id, scene_id)
         self._generate_btn.setEnabled(True)
         self._regenerate_btn.setEnabled(True)
-        self._status_label.setText("就绪")
+        self.set_status("就绪")
         self.set_next_scene_available(True)
 
     def clear_scene(self) -> None:

@@ -46,6 +46,27 @@ def test_workspace_keeps_quick_and_deep_revision_selectors_synchronized(qtbot):
     assert selected == []
 
 
+def test_scene_change_clears_previous_quick_scene_state(qtbot):
+    workspace = SceneWorkspaceView()
+    qtbot.addWidget(workspace)
+    quick = workspace.findChild(QuickChapterView)
+    workspace.set_scene("scene-a", "chapter-a")
+    workspace.show_quick_plan({"scene_id": "scene-a", "scene_goal": "旧目标"})
+    workspace.show_review_result(False, "旧审查")
+    workspace.show_fact_approval("scene-a", "rev-a", [{"description": "旧事实"}], [])
+    workspace.set_prose_versions(["v1"], "v1")
+    workspace.show_context({"old": {}})
+
+    workspace.set_scene("scene-b", "chapter-b")
+
+    assert quick.plan()["scene_goal"] == ""
+    assert quick.review_section.isHidden()
+    assert quick.memory_section.isHidden()
+    assert quick.revision_section.isHidden()
+    assert workspace.quick_approval_batch()[:2] == ("", "")
+    assert quick.context_label.text() == ""
+
+
 def test_workspace_forwards_embedded_user_actions_once(qtbot):
     workspace = SceneWorkspaceView()
     qtbot.addWidget(workspace)
@@ -105,6 +126,7 @@ def test_workspace_trace_planner_status_and_generation_facades(qtbot, monkeypatc
     workspace.set_status("done")
 
     assert calls == [
+        ("hide-plan",),
         ("trace", ["entry"]),
         ("plan", {"scene_id": "scene-1"}),
         ("plan-wait",),

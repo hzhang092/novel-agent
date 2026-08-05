@@ -219,6 +219,24 @@ class QuickChapterView(QWidget):
         self._chapter_id = chapter_id
         self._scene_id = scene_id
 
+    def reset_scene_state(self) -> None:
+        self._chapter_id = ""
+        self._scene_id = ""
+        self._plan = {}
+        self._plan_before_adjustment = None
+        self._set_plan_editable(False)
+        self.goal_edit.clear()
+        self.key_events_edit.clear()
+        self.emotional_turn_edit.clear()
+        self.hook_edit.clear()
+        self.show_review(True, "")
+        self.show_memory([], [])
+        self.set_revisions([], "", "")
+        self.length_warning_label.clear()
+        self.revision_instruction_edit.clear()
+        self.set_context_summary("")
+        self.set_status("")
+
     def show_plan(self, plan: dict[str, Any]) -> None:
         self._plan = deepcopy(plan)
         self._scene_id = str(plan.get("scene_id", self._scene_id))

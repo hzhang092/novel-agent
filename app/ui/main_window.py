@@ -942,6 +942,8 @@ class MainWindow(QMainWindow):
 
     def _show_quick_revision(self, record) -> None:
         review = record.review or {}
+        if record.scene_plan:
+            self._workspace_view.show_quick_plan(record.scene_plan)
         if self._application is not None:
             chapter_id = self._find_chapter_for_scene(record.scene_id) or ""
             self._application.scene_workflow.restore_draft(record, chapter_id)

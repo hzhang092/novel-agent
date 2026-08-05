@@ -85,6 +85,37 @@ def test_programmatic_revision_selection_does_not_emit(qtbot):
     assert selected == []
 
 
+def test_reset_scene_state_clears_all_chapter_specific_presentation(qtbot):
+    view = QuickChapterView()
+    qtbot.addWidget(view)
+    view.set_chapter("chapter-1", "scene-1")
+    view.show_plan(
+        {
+            "scene_id": "scene-1",
+            "scene_goal": "找到出口",
+            "required_beats": ["开门"],
+            "emotional_arc": "希望到恐惧",
+            "ending_hook": "警报响起",
+        }
+    )
+    view.begin_plan_adjustment()
+    view.show_review(False, "需要复核")
+    view.show_memory([{"description": "事实"}], [])
+    view.set_revisions(["v1"], "v1", "")
+    view.set_context_summary("旧上下文")
+    view.set_status("旧状态")
+
+    view.reset_scene_state()
+
+    assert view.plan()["scene_goal"] == ""
+    assert view.goal_edit.isReadOnly()
+    assert view.revision_section.isHidden()
+    assert view.review_section.isHidden()
+    assert view.memory_section.isHidden()
+    assert view.context_label.text() == ""
+    assert view.status_label.text() == ""
+
+
 def test_plan_adjustment_preserves_hidden_fields_and_cancel_restores(qtbot):
     view = QuickChapterView()
     qtbot.addWidget(view)
