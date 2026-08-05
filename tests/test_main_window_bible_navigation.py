@@ -439,13 +439,15 @@ def test_repeated_navigation_does_not_duplicate_generation_signal(qtbot, monkeyp
     assert requested == ["scene-1"]
 
 
-def test_next_scene_exhaustion_uses_workspace_facade(qtbot, monkeypatch):
+def test_next_scene_exhaustion_uses_workspace_facade(tmp_path, qtbot, monkeypatch):
+    project_dir = create_project(tmp_path, Project(title="Story", genre="Fantasy"))
     window = MainWindow()
     qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
     window._workspace_view.set_scene("last-scene", "chapter-1")
     monkeypatch.setattr(
-        window._outline_view,
-        "select_next_scene",
+        window._application.outlines,
+        "next_scene_id",
         lambda _scene_id: None,
     )
     exhausted = []
