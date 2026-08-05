@@ -134,6 +134,22 @@ class ProseEditorWidget(QWidget):
         self._set_active_btn.setEnabled(bool(versions))
         self._updating_versions = False
 
+    def select_version(self, version: str, *, emit: bool = False) -> bool:
+        index = self._version_combo.findData(version)
+        if index < 0:
+            return False
+        updating = self._updating_versions
+        self._updating_versions = not emit
+        try:
+            self._version_combo.setCurrentIndex(index)
+        finally:
+            self._updating_versions = updating
+        return True
+
+    def set_compact_mode(self, compact: bool) -> None:
+        self._version_combo.setVisible(not compact)
+        self._set_active_btn.setVisible(not compact)
+
     def current_version(self) -> str:
         """Return the selected prose version token."""
         return self._version_combo.currentData() or ""

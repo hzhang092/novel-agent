@@ -204,6 +204,17 @@ class QuickChapterView(QWidget):
     def selected_revision(self) -> str:
         return self.revision_combo.currentData() or ""
 
+    def select_revision(self, revision: str, *, emit: bool = False) -> bool:
+        index = self.revision_combo.findData(revision)
+        if index < 0:
+            return False
+        blocked = self.revision_combo.blockSignals(not emit)
+        try:
+            self.revision_combo.setCurrentIndex(index)
+        finally:
+            self.revision_combo.blockSignals(blocked)
+        return True
+
     def set_chapter(self, chapter_id: str, scene_id: str) -> None:
         self._chapter_id = chapter_id
         self._scene_id = scene_id

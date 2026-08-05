@@ -73,6 +73,18 @@ def test_revision_review_and_memory_sections_are_hidden_until_relevant(qtbot):
     assert view.memory_section.isHidden()
 
 
+def test_programmatic_revision_selection_does_not_emit(qtbot):
+    view = QuickChapterView()
+    qtbot.addWidget(view)
+    selected = []
+    view.revision_selected.connect(selected.append)
+    view.set_revisions(["v2", "v1"], "v2", "v1")
+
+    assert view.select_revision("v1") is True
+    assert view.selected_revision == "v1"
+    assert selected == []
+
+
 def test_plan_adjustment_preserves_hidden_fields_and_cancel_restores(qtbot):
     view = QuickChapterView()
     qtbot.addWidget(view)

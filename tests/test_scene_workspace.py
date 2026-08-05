@@ -31,6 +31,21 @@ def test_scene_state_and_prose_facade(qtbot):
     assert workspace.current_chapter_id is None
 
 
+def test_workspace_keeps_quick_and_deep_revision_selectors_synchronized(qtbot):
+    workspace = SceneWorkspaceView()
+    qtbot.addWidget(workspace)
+    quick = workspace.findChild(QuickChapterView)
+    prose = workspace.findChild(ProseEditorWidget)
+    selected = []
+    workspace.prose_version_selected.connect(selected.append)
+    workspace.set_prose_versions(["v2", "v1"], "v2", "v1")
+
+    assert workspace.select_prose_version("v1") is True
+    assert prose.current_version() == "v1"
+    assert quick.selected_revision == "v1"
+    assert selected == []
+
+
 def test_workspace_forwards_embedded_user_actions_once(qtbot):
     workspace = SceneWorkspaceView()
     qtbot.addWidget(workspace)
@@ -114,6 +129,7 @@ def test_quick_mode_is_a_compact_layer_over_the_same_workspace_state(qtbot):
     qtbot.addWidget(workspace)
     quick = workspace.findChild(QuickChapterView)
     planner = workspace.findChild(PlannerCheckpointWidget)
+    prose = workspace.findChild(ProseEditorWidget)
 
     workspace.set_scene("scene-1", "chapter-1")
     workspace.set_prose_text("shared draft")
@@ -131,12 +147,16 @@ def test_quick_mode_is_a_compact_layer_over_the_same_workspace_state(qtbot):
     assert not quick.isHidden()
     assert quick.goal_edit.text() == "找到钥匙"
     assert planner.isHidden()
+    assert prose._version_combo.isHidden()
+    assert prose._set_active_btn.isHidden()
     assert workspace.prose_text() == "shared draft"
 
     workspace.set_experience_mode("deep")
 
     assert quick.isHidden()
     assert planner._plan["scene_goal"] == "找到钥匙"
+    assert not prose._version_combo.isHidden()
+    assert not prose._set_active_btn.isHidden()
     assert workspace.prose_text() == "shared draft"
 
 

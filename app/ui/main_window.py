@@ -974,9 +974,12 @@ class MainWindow(QMainWindow):
 
     def _on_prose_version_selected(self, version: str) -> None:
         """Load the selected prose version into the editor."""
-        if version == self._current_prose_version or self._current_project_dir is None:
+        if self._current_project_dir is None:
             return
         workspace = self._workspace_view
+        if version == self._current_prose_version:
+            workspace.select_prose_version(version)
+            return
         scene_id = workspace.current_scene_id
         chapter_id = workspace.current_chapter_id
         if not scene_id or not chapter_id:
@@ -1004,6 +1007,7 @@ class MainWindow(QMainWindow):
             load_scene_prose_version(self._current_project_dir, chapter_id, scene_id, version)
         )
         self._current_prose_version = version
+        workspace.select_prose_version(version)
         if self._application is not None:
             record = load_scene_generation_record(
                 self._current_project_dir, scene_id, version=version
@@ -1016,6 +1020,7 @@ class MainWindow(QMainWindow):
         """Offer publication for the selected revision; selection alone is view-only."""
         if self._current_project_dir is None:
             return
+        version = self._current_prose_version or version
         workspace = self._workspace_view
         scene_id = workspace.current_scene_id
         chapter_id = workspace.current_chapter_id

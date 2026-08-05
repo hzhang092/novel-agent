@@ -519,6 +519,7 @@ def test_selecting_revision_replaces_quick_memory_source(tmp_path, qtbot):
     qtbot.addWidget(window)
     window._bind_project_application(project_dir)
     window._workspace_view.set_scene("scene-1", "ch-1")
+    window._workspace_view.set_prose_versions(["v2", "v1"], "v1")
     window._current_prose_version = "v1"
     window._show_quick_revision(first)
 
@@ -533,3 +534,7 @@ def test_selecting_revision_replaces_quick_memory_source(tmp_path, qtbot):
         [],
         [],
     )
+    assert window._current_prose_version == "v2"
+    assert window._workspace_view.prose_text() == "新正文"
+    assert window._workspace_view._editor.current_version() == "v2"
+    assert window._workspace_view._quick_chapter.selected_revision == "v2"

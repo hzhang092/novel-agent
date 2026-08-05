@@ -232,6 +232,7 @@ class SceneWorkspaceView(QWidget):
         quick = self._experience_mode == "quick"
         self._deep_toolbar.setVisible(not quick)
         self._quick_chapter.setVisible(quick)
+        self._editor.set_compact_mode(quick)
         self._left_pane.setVisible(not quick)
         self._right_pane.setVisible(not quick)
         self._planner_checkpoint.setVisible(
@@ -307,6 +308,11 @@ class SceneWorkspaceView(QWidget):
         """Set available prose versions."""
         self._editor.set_versions(versions, current)
         self._quick_chapter.set_revisions(versions, current or "", published or "")
+
+    def select_prose_version(self, version: str) -> bool:
+        selected = self._editor.select_version(version)
+        self._quick_chapter.select_revision(version)
+        return selected
 
     def set_quick_length(self, mode: str, target: int, warning: str = "") -> None:
         """Project the active chapter length into Quick Creation."""

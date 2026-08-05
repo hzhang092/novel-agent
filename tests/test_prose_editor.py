@@ -36,3 +36,24 @@ def test_set_active_button_emits_current_version(qtbot):
     widget._set_active_btn.click()
 
     assert activated == ["v1"]
+
+
+def test_programmatic_version_selection_does_not_emit_and_compact_mode_hides_duplicates(
+    qtbot,
+):
+    widget = ProseEditorWidget()
+    qtbot.addWidget(widget)
+    selected = []
+    widget.version_selected.connect(selected.append)
+    widget.set_versions(["v2", "v1"], current="v2")
+
+    assert widget.select_version("v1") is True
+    assert widget.current_version() == "v1"
+    assert selected == []
+
+    widget.set_compact_mode(True)
+    assert widget._version_combo.isHidden()
+    assert widget._set_active_btn.isHidden()
+    widget.set_compact_mode(False)
+    assert not widget._version_combo.isHidden()
+    assert not widget._set_active_btn.isHidden()
