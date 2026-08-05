@@ -856,6 +856,15 @@ class MainWindow(QMainWindow):
             self._load_scene_prose_into_editor(
                 self._workspace_view, chapter_id, scene_id
             )
+        if (
+            self._application is not None
+            and self._application.scene_workflow.waiting_for_plan
+            and self._application.scene_workflow.state.scene_id == scene_id
+            and self._application.scene_workflow.state.planner_decision
+        ):
+            self._workspace_view.show_plan_checkpoint(
+                self._application.scene_workflow.state.planner_decision
+            )
 
     def _active_version_fallback_warning(self) -> str:
         """Return export warning text if any active prose version is missing."""
@@ -1027,6 +1036,11 @@ class MainWindow(QMainWindow):
         )
         self._current_prose_version = version
         workspace.select_prose_version(version)
+        if not version.startswith("v"):
+            workspace.show_quick_plan({})
+            workspace.hide_review_result()
+            workspace.hide_fact_approval()
+            return
         if self._application is not None:
             record = load_scene_generation_record(
                 self._current_project_dir, scene_id, version=version
@@ -1044,6 +1058,9 @@ class MainWindow(QMainWindow):
         scene_id = workspace.current_scene_id
         chapter_id = workspace.current_chapter_id
         if not scene_id or not chapter_id or not version:
+            return
+        if not version.startswith("v"):
+            QMessageBox.warning(self, "无法发布", "此旧版本没有生成记录，只能查看。")
             return
 
         from app.storage.project_files import load_scene_generation_record
@@ -1208,7 +1225,7 @@ class MainWindow(QMainWindow):
             return None
         scene_id = self._workspace_view.current_scene_id
         version = self._current_prose_version
-        if not scene_id or not version:
+        if not scene_id or not version or not version.startswith("v"):
             return None
         from app.storage.project_files import load_scene_generation_record
 
@@ -1303,6 +1320,18 @@ class MainWindow(QMainWindow):
         if not batch[0] or not batch[1]:
             QMessageBox.warning(self, "无法批准", "请先完成审查和记忆确认。")
             return False
+        record = self._selected_generation_record()
+        if (
+            record is None
+            or record.revision_id != batch[1]
+            or (
+                not record.review_overridden
+                and not (record.review or {}).get("overall_pass", False)
+            )
+            or (record.scene_summary_raw is None and record.published_at is None)
+        ):
+            QMessageBox.warning(self, "无法批准", "请先完成审查和记忆确认。")
+            return False
         return self._on_approval_batch_approved(*batch)
 
     def _show_creation_help(self) -> None:
@@ -1330,7 +1359,7 @@ class MainWindow(QMainWindow):
             self._workspace_view.mark_last_scene()
             return
         self._on_scene_selected(next_id)
-        if self._experience_mode == "deep" and self._previous_destination == "outline":
+        if self._experience_mode == "deep":
             self._outline_view.activate_scene(next_id, emit=False)
 
     def _on_generate_requested(self, scene_id: str) -> None:
@@ -1373,12 +1402,20 @@ class MainWindow(QMainWindow):
 
             return guarded
 
+        def same_application(callback):
+            def guarded(*args):
+                if self._application is application:
+                    return callback(*args)
+                return None
+
+            return guarded
+
         return SceneWorkflowObserver(
             trace=current(workspace.update_trace),
             prose=current(workspace.append_prose),
             plan=current(workspace.show_plan_checkpoint),
             status=current(workspace.set_status),
-            generating=current(workspace.set_generating),
+            generating=same_application(workspace.set_generating),
             review=current(workspace.show_review_result),
             draft=current(self._on_workflow_draft),
             memory=current(workspace.show_fact_approval),

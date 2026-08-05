@@ -106,11 +106,21 @@ def test_quick_approve_next_publishes_then_only_navigates(
     tmp_path, qtbot, monkeypatch
 ):
     project_dir = _project(tmp_path)
+    record = SceneGenerationRecord(
+        scene_id="scene-1",
+        revision_id="rev-1",
+        revision_number=1,
+        review={"overall_pass": True},
+        scene_summary_raw={"summary": "完成"},
+        draft_text="正文",
+    )
+    save_scene_generation_record(project_dir, record)
     window = MainWindow(quick_creation_enabled=True)
     qtbot.addWidget(window)
     window._bind_project_application(project_dir)
     workspace = window._workspace_view
     workspace.set_scene("scene-1", "ch-1")
+    window._current_prose_version = "v1"
     workspace.show_fact_approval(
         "scene-1", "rev-1", [{"description": "事实"}], []
     )
@@ -156,6 +166,31 @@ def test_quick_next_scene_uses_canonical_outline_query(tmp_path, qtbot, monkeypa
 
     assert window._workspace_view.current_scene_id == "scene-2"
     assert window._workspace_view.current_chapter_id == "ch-2"
+
+
+def test_deep_next_scene_updates_outline_highlight(tmp_path, qtbot, monkeypatch):
+    project_dir = _project(tmp_path)
+    volumes = load_all_volumes(project_dir)
+    volumes[0].chapters.append(
+        ChapterOutline(id="ch-2", scenes=[SceneOutline(id="scene-2")])
+    )
+    save_volume_outline(project_dir, volumes[0])
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    window._set_experience_mode("deep")
+    window._previous_destination = "workspace"
+    window._workspace_view.set_scene("scene-1", "ch-1")
+    activated = []
+    monkeypatch.setattr(
+        window._outline_view,
+        "activate_scene",
+        lambda scene_id, *, emit: activated.append((scene_id, emit)),
+    )
+
+    window._on_next_scene()
+
+    assert activated == [("scene-2", False)]
 
 
 def test_scene_selection_projects_chapter_identity_into_quick_writing(tmp_path, qtbot):
@@ -635,3 +670,109 @@ def test_late_workflow_callbacks_do_not_replace_new_scene_state(
     assert workspace.quick_plan()["scene_goal"] == ""
     assert not quick.review_section.isVisible()
     assert not quick.memory_section.isVisible()
+
+
+def test_run_completion_restores_controls_after_browsing_away(tmp_path, qtbot):
+    project_dir = _project(tmp_path)
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    workspace = window._workspace_view
+    workspace.set_scene("scene-1", "ch-1")
+    observer = window._scene_workflow_observer("scene-1")
+    observer.generating(True)
+
+    workspace.set_scene("scene-2", "ch-2")
+    observer.generating(False)
+
+    assert workspace._generating is False
+
+
+def test_returning_to_scene_restores_pending_plan(tmp_path, qtbot):
+    project_dir = _project(tmp_path)
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    workflow = window._application.scene_workflow
+    workflow.state.scene_id = "scene-1"
+    workflow.state.planner_decision = {
+        "scene_id": "scene-1",
+        "scene_goal": "等待确认",
+    }
+    loop = asyncio.new_event_loop()
+    workflow._plan_future = loop.create_future()
+
+    window._workspace_view.set_scene("scene-2", "ch-2")
+    window._on_scene_selected("scene-1")
+
+    assert window._workspace_view.quick_plan()["scene_goal"] == "等待确认"
+    workflow._plan_future.cancel()
+    loop.close()
+
+
+def test_legacy_prose_selection_cannot_reuse_latest_generation_record(
+    tmp_path, qtbot, monkeypatch
+):
+    project_dir = _project(tmp_path)
+    record = SceneGenerationRecord(
+        scene_id="scene-1",
+        revision_id="rev-1",
+        revision_number=1,
+        review={"overall_pass": True},
+        scene_summary_raw={"summary": "完成"},
+        draft_text="版本正文",
+    )
+    save_scene_generation_record(project_dir, record)
+    chapter_dir = project_dir / "scenes" / "ch-1"
+    (chapter_dir / "scene-1.v1.md").write_text("版本正文", encoding="utf-8")
+    (chapter_dir / "scene-1.md").write_text("旧正文", encoding="utf-8")
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    window._workspace_view.set_scene("scene-1", "ch-1")
+    window._current_prose_version = "v1"
+    warnings = []
+    monkeypatch.setattr(
+        "app.ui.main_window.QMessageBox.warning",
+        lambda *args: warnings.append(args),
+    )
+
+    window._on_prose_version_selected("legacy")
+    window._on_set_active_prose_version("legacy")
+
+    assert window._workspace_view.prose_text() == "旧正文"
+    assert window._selected_generation_record() is None
+    assert warnings
+
+
+def test_quick_approval_rejects_failed_review(tmp_path, qtbot, monkeypatch):
+    project_dir = _project(tmp_path)
+    record = SceneGenerationRecord(
+        scene_id="scene-1",
+        revision_id="rev-1",
+        revision_number=1,
+        review={"overall_pass": False, "summary": "需要修改"},
+        scene_summary_raw={"summary": "完成"},
+        draft_text="正文",
+    )
+    save_scene_generation_record(project_dir, record)
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    window._workspace_view.set_scene("scene-1", "ch-1")
+    window._current_prose_version = "v1"
+    window._show_quick_revision(record)
+    published, warnings = [], []
+    monkeypatch.setattr(
+        window._application.scene_workflow,
+        "publish",
+        lambda *args: published.append(args),
+    )
+    monkeypatch.setattr(
+        "app.ui.main_window.QMessageBox.warning",
+        lambda *args: warnings.append(args),
+    )
+
+    assert window._on_quick_approve() is False
+    assert published == []
+    assert warnings

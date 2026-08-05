@@ -557,7 +557,8 @@ class SceneWorkflow:
 
     async def _wait_for_plan(self, plan: Any) -> bool:
         self._plan_future = asyncio.get_running_loop().create_future()
-        self._observer.plan(plan.model_dump(mode="json"))
+        self.state.planner_decision = plan.model_dump(mode="json")
+        self._observer.plan(self.state.planner_decision)
         try:
             approved, edited = await self._plan_future
             if approved and edited is not None:

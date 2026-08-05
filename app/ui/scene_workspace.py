@@ -444,6 +444,7 @@ class SceneWorkspaceView(QWidget):
 
     def clear_scene(self) -> None:
         """Called when no scene is selected."""
+        self.set_generating(False)
         self._current_scene_id = None
         self._current_chapter_id = None
         self._quick_chapter.reset_scene_state()
