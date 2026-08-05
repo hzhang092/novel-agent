@@ -67,6 +67,27 @@ def test_scene_change_clears_previous_quick_scene_state(qtbot):
     assert quick.context_label.text() == ""
 
 
+def test_workspace_mirrors_generation_state_into_quick_actions(qtbot):
+    workspace = SceneWorkspaceView()
+    qtbot.addWidget(workspace)
+    quick = workspace.findChild(QuickChapterView)
+
+    workspace.clear_scene()
+    assert not quick.start_button.isEnabled()
+
+    workspace.set_scene("scene-1", "chapter-1")
+    workspace.set_prose_versions(["v1"], "v1")
+    workspace.set_generating(True)
+    assert not quick.start_button.isEnabled()
+    assert not quick.regenerate_button.isEnabled()
+    assert not quick.revision_instruction_button.isEnabled()
+
+    workspace.set_generating(False)
+    assert quick.start_button.isEnabled()
+    assert quick.regenerate_button.isEnabled()
+    assert quick.revision_instruction_button.isEnabled()
+
+
 def test_workspace_forwards_embedded_user_actions_once(qtbot):
     workspace = SceneWorkspaceView()
     qtbot.addWidget(workspace)

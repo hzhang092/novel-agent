@@ -61,12 +61,14 @@ class SceneWorkspaceView(QWidget):
         self._current_scene_id: str | None = None
         self._current_chapter_id: str | None = None
         self._generating = False
+        self._waiting_for_plan = False
         self._next_scene_available = False
         self._experience_mode = "deep"
         self._has_review = False
         self._has_memory = False
         self._quick_memory_source = ("", "")
         self._setup_ui()
+        self._sync_quick_workflow_state()
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -308,6 +310,7 @@ class SceneWorkspaceView(QWidget):
         """Set available prose versions."""
         self._editor.set_versions(versions, current)
         self._quick_chapter.set_revisions(versions, current or "", published or "")
+        self._sync_quick_workflow_state()
 
     def select_prose_version(self, version: str) -> bool:
         selected = self._editor.select_version(version)
@@ -356,8 +359,10 @@ class SceneWorkspaceView(QWidget):
 
     def show_plan_checkpoint(self, plan: dict) -> None:
         """Show a plan for user approval."""
+        self._waiting_for_plan = True
         self._planner_checkpoint.show_plan(plan)
         self._quick_chapter.show_plan(plan)
+        self._sync_quick_workflow_state()
         if self._experience_mode == "quick":
             self._planner_checkpoint.hide()
 
@@ -367,7 +372,9 @@ class SceneWorkspaceView(QWidget):
 
     def hide_plan_checkpoint(self) -> None:
         """Hide the plan approval checkpoint."""
+        self._waiting_for_plan = False
         self._planner_checkpoint.hide_plan()
+        self._sync_quick_workflow_state()
 
     def set_plan_checkpoint_waiting(self) -> None:
         """Disable plan decisions while generation continues."""
@@ -425,16 +432,18 @@ class SceneWorkspaceView(QWidget):
         self._regenerate_btn.setEnabled(True)
         self.set_status("就绪")
         self.set_next_scene_available(True)
+        self._sync_quick_workflow_state()
 
     def clear_scene(self) -> None:
         """Called when no scene is selected."""
         self._current_scene_id = None
         self._current_chapter_id = None
-        self._quick_chapter.set_chapter("", "")
+        self._quick_chapter.reset_scene_state()
         self._generate_btn.setEnabled(False)
         self._regenerate_btn.setEnabled(False)
         self.hide_fact_approval()
         self.set_next_scene_available(False)
+        self._sync_quick_workflow_state()
 
     def show_context(self, context: dict) -> None:
         """Display assembled context in the preview panel."""
@@ -460,6 +469,7 @@ class SceneWorkspaceView(QWidget):
             self._status_label.setText("生成中...")
         else:
             self._status_label.setText("就绪")
+        self._sync_quick_workflow_state()
 
     def show_review_result(self, passed: bool, summary: str) -> None:
         """Show the review result bar."""
@@ -503,6 +513,7 @@ class SceneWorkspaceView(QWidget):
         self._has_memory = True
         self._quick_chapter.show_memory(facts, state_changes)
         self._fact_approval.setVisible(self._experience_mode == "deep")
+        self._sync_quick_workflow_state()
 
     def hide_fact_approval(self) -> None:
         """Hide the fact approval panel."""
@@ -510,6 +521,7 @@ class SceneWorkspaceView(QWidget):
         self._has_memory = False
         self._quick_memory_source = ("", "")
         self._quick_chapter.show_memory([], [])
+        self._sync_quick_workflow_state()
 
     def quick_plan(self) -> dict:
         return self._quick_chapter.plan()
@@ -535,6 +547,16 @@ class SceneWorkspaceView(QWidget):
         self._quick_memory_source = (scene_id, revision_id)
         self._quick_chapter.show_review(review_passed, review_summary)
         self._quick_chapter.show_memory(facts, changes)
+        self._sync_quick_workflow_state()
+
+    def _sync_quick_workflow_state(self) -> None:
+        self._quick_chapter.set_workflow_state(
+            has_scene=self._current_scene_id is not None,
+            generating=self._generating,
+            waiting_for_plan=self._waiting_for_plan,
+            has_revision=bool(self._quick_chapter.selected_revision),
+            publication_ready=all(self._quick_memory_source),
+        )
 
     # ── Actions ────────────────────────────────────────────────────────────
 

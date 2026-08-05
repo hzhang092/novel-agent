@@ -116,6 +116,44 @@ def test_reset_scene_state_clears_all_chapter_specific_presentation(qtbot):
     assert view.status_label.text() == ""
 
 
+def test_workflow_state_disables_conflicting_quick_actions(qtbot):
+    view = QuickChapterView()
+    qtbot.addWidget(view)
+    view.set_chapter("chapter-1", "scene-1")
+    view.set_revisions(["v1"], "v1", "")
+    view.set_workflow_state(
+        has_scene=True,
+        generating=True,
+        waiting_for_plan=False,
+        has_revision=True,
+        publication_ready=True,
+    )
+
+    for control in (
+        view.start_button,
+        view.adjust_button,
+        view.regenerate_button,
+        view.revision_instruction_button,
+        view.revision_combo,
+        view.approve_button,
+        view.approve_next_button,
+    ):
+        assert not control.isEnabled()
+
+    view.set_workflow_state(
+        has_scene=True,
+        generating=False,
+        waiting_for_plan=False,
+        has_revision=True,
+        publication_ready=True,
+    )
+
+    assert view.start_button.isEnabled()
+    assert view.regenerate_button.isEnabled()
+    assert view.revision_instruction_button.isEnabled()
+    assert view.approve_button.isEnabled()
+
+
 def test_plan_adjustment_preserves_hidden_fields_and_cancel_restores(qtbot):
     view = QuickChapterView()
     qtbot.addWidget(view)

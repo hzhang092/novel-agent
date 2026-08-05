@@ -237,6 +237,32 @@ class QuickChapterView(QWidget):
         self.set_context_summary("")
         self.set_status("")
 
+    def set_workflow_state(
+        self,
+        *,
+        has_scene: bool,
+        generating: bool,
+        waiting_for_plan: bool,
+        has_revision: bool,
+        publication_ready: bool,
+    ) -> None:
+        idle = has_scene and not generating
+        self.start_button.setEnabled(idle or (has_scene and waiting_for_plan))
+        self.adjust_button.setEnabled(idle or (has_scene and waiting_for_plan))
+        self.save_button.setEnabled(idle and has_revision)
+        self.regenerate_button.setEnabled(idle and has_revision)
+        self.revision_instruction_edit.setEnabled(idle and has_revision)
+        self.revision_instruction_button.setEnabled(idle and has_revision)
+        self.revision_combo.setEnabled(
+            idle and has_revision and self.revision_combo.count() > 1
+        )
+        self.length_combo.setEnabled(idle)
+        self.custom_length_spin.setEnabled(idle)
+        self.ai_fix_button.setEnabled(idle and has_revision)
+        self.override_button.setEnabled(idle and has_revision)
+        self.approve_button.setEnabled(idle and publication_ready)
+        self.approve_next_button.setEnabled(idle and publication_ready)
+
     def show_plan(self, plan: dict[str, Any]) -> None:
         self._plan = deepcopy(plan)
         self._scene_id = str(plan.get("scene_id", self._scene_id))
