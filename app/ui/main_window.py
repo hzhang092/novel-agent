@@ -241,6 +241,21 @@ class MainWindow(QMainWindow):
         mode = setting.preset if setting is not None else project.chapter_length.preset
         return mode, resolve_chapter_target(project, chapter)
 
+    def _quick_chapter_metadata(self, chapter_id: str) -> tuple[int, str, str]:
+        if self._current_project_dir is None:
+            return 0, "", ""
+        from app.storage.project_files import load_all_volumes
+
+        previous_summary = ""
+        chapter_number = 0
+        for volume in load_all_volumes(self._current_project_dir):
+            for chapter in volume.chapters:
+                chapter_number += 1
+                if chapter.id == chapter_id:
+                    return chapter_number, chapter.title, previous_summary
+                previous_summary = chapter.summary
+        return 0, "", ""
+
     def _connect_view_signals(self) -> None:
         """Connect view signals once during UI construction."""
         self._bible_view.elements_changed.connect(
@@ -814,6 +829,9 @@ class MainWindow(QMainWindow):
         chapter_id = self._find_chapter_for_scene(scene_id)
         self._workspace_view.set_scene(scene_id, chapter_id or "")
         if chapter_id and self._application is not None:
+            self._workspace_view.set_quick_chapter_metadata(
+                *self._quick_chapter_metadata(chapter_id)
+            )
             self._application.scene_workflow.remember_active_chapter(chapter_id)
             mode, target = self._chapter_length(chapter_id)
             self._workspace_view.set_quick_length(mode, target)

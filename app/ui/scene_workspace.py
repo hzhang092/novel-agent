@@ -198,6 +198,7 @@ class SceneWorkspaceView(QWidget):
         splitter.setStretchFactor(2, 1)
         splitter.setSizes([280, 500, 200])
         layout.addWidget(splitter)
+        layout.setStretchFactor(splitter, 1)
 
         # ── Review result bar (shown after review completes) ──
         self._review_bar = QWidget()
@@ -320,6 +321,13 @@ class SceneWorkspaceView(QWidget):
     def set_quick_length(self, mode: str, target: int, warning: str = "") -> None:
         """Project the active chapter length into Quick Creation."""
         self._quick_chapter.set_length(mode, target, warning)
+
+    def set_quick_chapter_metadata(
+        self, chapter_number: int, title: str, previous_summary: str = ""
+    ) -> None:
+        self._quick_chapter.set_chapter_metadata(
+            chapter_number, title, previous_summary
+        )
 
     def begin_quick_plan_adjustment(self) -> None:
         self._quick_chapter.begin_plan_adjustment()

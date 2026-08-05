@@ -158,6 +158,30 @@ def test_quick_next_scene_uses_canonical_outline_query(tmp_path, qtbot, monkeypa
     assert window._workspace_view.current_chapter_id == "ch-2"
 
 
+def test_scene_selection_projects_chapter_identity_into_quick_writing(tmp_path, qtbot):
+    project_dir = _project(tmp_path)
+    volume = load_all_volumes(project_dir)[0]
+    volume.chapters[0].title = "起点"
+    volume.chapters[0].summary = "主角发现线索"
+    volume.chapters.append(
+        ChapterOutline(
+            id="ch-2",
+            title="追踪",
+            scenes=[SceneOutline(id="scene-2")],
+        )
+    )
+    save_volume_outline(project_dir, volume)
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+
+    window._on_scene_selected("scene-2")
+
+    quick = window._workspace_view.findChild(QuickChapterView)
+    assert "第 2 章：追踪" == quick.chapter_identity_label.text()
+    assert "主角发现线索" in quick.previous_chapter_label.text()
+
+
 def test_quick_length_change_is_a_chapter_override(tmp_path, qtbot):
     project_dir = _project(tmp_path)
     window = MainWindow(quick_creation_enabled=True)
@@ -364,7 +388,7 @@ def test_scene_change_exits_initial_quick_plan_adjustment(
     window._on_scene_selected("scene-2")
 
     assert quick.goal_edit.isReadOnly()
-    assert quick.adjust_button.text() == "调整"
+    assert quick.adjust_button.text() == "调整方案"
     assert window._pending_plan_patch is None
     assert not future.done()
 
@@ -410,7 +434,7 @@ def test_project_switch_clears_pending_quick_plan_adjustment(tmp_path, qtbot):
 
     assert window._pending_plan_patch is None
     assert quick.goal_edit.isReadOnly()
-    assert quick.adjust_button.text() == "调整"
+    assert quick.adjust_button.text() == "调整方案"
     assert window._application.scene_workflow.project_dir == second_dir
 
 
@@ -449,24 +473,24 @@ def test_deep_plan_resolution_exits_quick_adjustment(
     quick = window._workspace_view.findChild(QuickChapterView)
 
     quick.adjust_button.click()
-    quick.context_button.click()
+    quick._advanced_actions["context"].trigger()
     window._on_plan_rejected()
 
     assert window._pending_plan_patch is None
     assert quick.goal_edit.isReadOnly()
-    assert quick.adjust_button.text() == "调整"
+    assert quick.adjust_button.text() == "调整方案"
 
     window._set_experience_mode("quick")
     window._select_destination("workspace")
     quick.adjust_button.click()
-    quick.context_button.click()
+    quick._advanced_actions["context"].trigger()
     edited = record.scene_plan | {"ending_hook": "警报响起"}
     window._on_plan_approved(edited)
 
     assert len(calls) == 1
     assert window._pending_plan_patch is None
     assert quick.hook_edit.isReadOnly()
-    assert quick.adjust_button.text() == "调整"
+    assert quick.adjust_button.text() == "调整方案"
     assert quick.plan() == edited
 
 

@@ -47,6 +47,18 @@ def test_companion_shows_plan_review_memory_and_advanced_information(qtbot):
     assert not hasattr(view, "prose_edit")
 
 
+def test_companion_shows_chapter_identity_and_previous_summary(qtbot):
+    view = QuickChapterView()
+    qtbot.addWidget(view)
+
+    view.set_chapter_metadata(4, "第一次交锋", "发现仙门印记")
+
+    assert "第 4 章" in view.chapter_identity_label.text()
+    assert "第一次交锋" in view.chapter_identity_label.text()
+    assert "发现仙门印记" in view.previous_chapter_label.text()
+    assert not view.previous_chapter_label.isHidden()
+
+
 def test_revision_review_and_memory_sections_are_hidden_until_relevant(qtbot):
     view = QuickChapterView()
     qtbot.addWidget(view)
@@ -243,10 +255,8 @@ def test_review_memory_approval_and_deep_links_are_explicit(qtbot):
     facts, changes = view.memory_selections()
     view.approve_button.click()
     view.approve_next_button.click()
-    view.context_button.click()
-    view.review_button.click()
-    view.memory_button.click()
-    view.status_button.click()
+    for action in view._advanced_actions.values():
+        action.trigger()
 
     assert fixes == [True]
     assert details == [True]

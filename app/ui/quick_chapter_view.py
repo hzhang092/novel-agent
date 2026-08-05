@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QSpinBox,
     QTextEdit,
@@ -48,7 +49,15 @@ class QuickChapterView(QWidget):
         self._plan_before_adjustment: dict[str, Any] | None = None
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("快速章节"))
+        layout.setContentsMargins(4, 4, 4, 4)
+        self.chapter_identity_label = QLabel("选择章节")
+        self.chapter_identity_label.setStyleSheet("font-weight: bold; font-size: 15px")
+        layout.addWidget(self.chapter_identity_label)
+        self.previous_chapter_label = QLabel()
+        self.previous_chapter_label.setWordWrap(True)
+        self.previous_chapter_label.hide()
+        layout.addWidget(self.previous_chapter_label)
+        layout.addWidget(QLabel("本章写作方案"))
 
         form = QFormLayout()
         self.goal_edit = QLineEdit()
@@ -89,7 +98,7 @@ class QuickChapterView(QWidget):
         layout.addWidget(self.length_warning_label)
         actions = QHBoxLayout()
         self.start_button = QPushButton("开始")
-        self.adjust_button = QPushButton("调整")
+        self.adjust_button = QPushButton("调整方案")
         self.start_button.clicked.connect(self._start)
         self.adjust_button.clicked.connect(self._adjust)
         actions.addWidget(self.start_button)
@@ -110,23 +119,29 @@ class QuickChapterView(QWidget):
         layout.addWidget(self.prose_section)
         prose_layout = QVBoxLayout(self.prose_section)
         prose_actions = QHBoxLayout()
-        self.save_button = QPushButton("保存")
+        self.save_button = QPushButton("保存修改")
         self.regenerate_button = QPushButton("重新生成")
         self.save_button.clicked.connect(self.save_requested.emit)
         self.regenerate_button.clicked.connect(self.regenerate_requested.emit)
-        prose_actions.addWidget(self.save_button)
         prose_actions.addWidget(self.regenerate_button)
-        prose_layout.addLayout(prose_actions)
         self.revision_instruction_edit = QLineEdit()
-        self.revision_instruction_edit.setPlaceholderText("修订指令")
-        self.revision_instruction_button = QPushButton("提交修订指令")
+        self.revision_instruction_edit.setPlaceholderText("告诉 AI 如何修改")
+        self.revision_instruction_button = QPushButton("告诉 AI 如何修改")
         self.revision_instruction_button.clicked.connect(
             lambda: self.revision_instruction_requested.emit(
                 self.revision_instruction_edit.text().strip()
             )
         )
-        prose_layout.addWidget(self.revision_instruction_edit)
-        prose_layout.addWidget(self.revision_instruction_button)
+        prose_actions.addWidget(self.revision_instruction_edit)
+        prose_actions.addWidget(self.revision_instruction_button)
+        prose_actions.addWidget(self.save_button)
+        self.approve_button = QPushButton("批准本章")
+        self.approve_next_button = QPushButton("批准并进入下一章")
+        self.approve_button.clicked.connect(self.approve_requested.emit)
+        self.approve_next_button.clicked.connect(self.approve_next_requested.emit)
+        prose_actions.addWidget(self.approve_button)
+        prose_actions.addWidget(self.approve_next_button)
+        prose_layout.addLayout(prose_actions)
 
         self.review_section = QWidget()
         layout.addWidget(self.review_section)
@@ -160,36 +175,30 @@ class QuickChapterView(QWidget):
         self.fact_checks: list[QCheckBox] = []
         self.change_checks: list[QCheckBox] = []
 
-        self.approval_section = QWidget()
-        layout.addWidget(self.approval_section)
-        approval_actions = QHBoxLayout(self.approval_section)
-        self.approve_button = QPushButton("批准本章")
-        self.approve_next_button = QPushButton("批准并进入下一章")
-        self.approve_button.clicked.connect(self.approve_requested.emit)
-        self.approve_next_button.clicked.connect(self.approve_next_requested.emit)
-        approval_actions.addWidget(self.approve_button)
-        approval_actions.addWidget(self.approve_next_button)
-        layout.addWidget(QLabel("高级信息"))
+        self.approval_section = self.prose_section
         self.context_label = QLabel()
         self.review_label = QLabel()
         self.status_label = QLabel()
         for label in (self.context_label, self.review_label, self.status_label):
-            label.setWordWrap(True)
-            layout.addWidget(label)
-        advanced_actions = QHBoxLayout()
-        self.context_button = QPushButton("上下文")
-        self.review_button = QPushButton("审查")
-        self.memory_button = QPushButton("记忆")
-        self.status_button = QPushButton("状态")
-        for name, button in (
-            ("context", self.context_button),
-            ("review", self.review_button),
-            ("memory", self.memory_button),
-            ("status", self.status_button),
+            label.hide()
+        self.advanced_button = QPushButton("高级信息 ▸")
+        advanced_menu = QMenu(self.advanced_button)
+        self._advanced_actions = {}
+        for name, text in (
+            ("context", "上下文"),
+            ("review", "审查"),
+            ("memory", "记忆"),
+            ("status", "状态"),
         ):
-            button.clicked.connect(lambda _checked=False, value=name: self.deep_control_requested.emit(value))
-            advanced_actions.addWidget(button)
-        layout.addLayout(advanced_actions)
+            action = advanced_menu.addAction(text)
+            action.triggered.connect(
+                lambda _checked=False, value=name: self.deep_control_requested.emit(
+                    value
+                )
+            )
+            self._advanced_actions[name] = action
+        self.advanced_button.setMenu(advanced_menu)
+        layout.addWidget(self.advanced_button)
         layout.addStretch()
         for section in (
             self.revision_section,
@@ -219,9 +228,20 @@ class QuickChapterView(QWidget):
         self._chapter_id = chapter_id
         self._scene_id = scene_id
 
+    def set_chapter_metadata(
+        self, chapter_number: int, title: str, previous_summary: str = ""
+    ) -> None:
+        prefix = f"第 {chapter_number} 章" if chapter_number else "当前章节"
+        self.chapter_identity_label.setText(f"{prefix}：{title}" if title else prefix)
+        self.previous_chapter_label.setText(
+            f"上一章：{previous_summary}" if previous_summary else ""
+        )
+        self.previous_chapter_label.setVisible(bool(previous_summary))
+
     def reset_scene_state(self) -> None:
         self._chapter_id = ""
         self._scene_id = ""
+        self.set_chapter_metadata(0, "")
         self._plan = {}
         self._plan_before_adjustment = None
         self._set_plan_editable(False)
@@ -371,7 +391,7 @@ class QuickChapterView(QWidget):
         ):
             editor.setReadOnly(not editable)
         self.start_button.setText("应用" if editable else "开始")
-        self.adjust_button.setText("取消" if editable else "调整")
+        self.adjust_button.setText("取消" if editable else "调整方案")
 
     def _select_revision(self, revision_id: str) -> None:
         if revision_id:
