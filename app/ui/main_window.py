@@ -320,17 +320,21 @@ class MainWindow(QMainWindow):
         self._quick_outline_view.outline_changed.connect(
             self._on_quick_outline_changed
         )
-        self._outline_view.saved.connect(self._quick_outline_view.refresh)
+        self._outline_view.saved.connect(self._refresh_quick_outline_if_clean)
 
     def _on_quick_outline_changed(self, _chapter_id: str) -> None:
         self._outline_view.invalidate_external_change()
+
+    def _refresh_quick_outline_if_clean(self) -> None:
+        if not self._quick_outline_view.is_dirty:
+            self._quick_outline_view.refresh()
 
     def _reload_after_bootstrap(self) -> None:
         """Refresh existing canonical editors after Quick approves a bootstrap."""
         self._bible_view.reload()
         if self._current_project_dir is not None:
             self._outline_view.load_project_dir(self._current_project_dir)
-            self._quick_outline_view.refresh()
+            self._refresh_quick_outline_if_clean()
 
     def _bind_project_application(self, project_dir: Path) -> None:
         self._cancel_quick_plan_adjustment()
@@ -434,7 +438,7 @@ class MainWindow(QMainWindow):
                 )
                 del blocker
                 return
-            self._quick_outline_view.refresh()
+            self._refresh_quick_outline_if_clean()
         elif self._experience_mode == "quick" and current == "outline":
             if not self._maybe_leave_quick_outline():
                 blocker = QSignalBlocker(self._experience_switch)
@@ -507,6 +511,13 @@ class MainWindow(QMainWindow):
                 self.sidebar.setCurrentRow(self._previous_tab_index)
                 del blocker
                 return
+
+        if (
+            self._experience_mode == "quick"
+            and key == "outline"
+            and previous_key != "outline"
+        ):
+            self._refresh_quick_outline_if_clean()
 
         # Wire event bus to Bible Editor's character editor when navigating to Bible
         if key == "bible":
@@ -1503,6 +1514,7 @@ class MainWindow(QMainWindow):
         if record.stale_input and not record.stale_input_reviewed:
             self._workspace_view.show_stale_warning()
         self._update_status_bar_tokens()
+        self._refresh_quick_outline_if_clean()
 
     def _on_continue_review_requested(self) -> None:
         if self._application is None:
@@ -1582,6 +1594,7 @@ class MainWindow(QMainWindow):
             if record is not None:
                 self._refresh_prose_versions(chapter_id, scene_id, f"v{record.revision_number}")
         workspace.set_status("已发布")
+        self._refresh_quick_outline_if_clean()
         return True
 
 

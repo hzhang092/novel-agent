@@ -81,6 +81,92 @@ def test_publish_action_delegates_to_project_workflow(tmp_path, qtbot, monkeypat
     assert not workspace.fact_approval_is_visible
 
 
+def test_workflow_draft_refreshes_quick_outline_status(tmp_path, qtbot):
+    project_dir = _project(tmp_path)
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    quick = window._quick_outline_view
+    quick.select_chapter("ch-1")
+    assert "待写" in quick._card_widgets["ch-1"]["status"].text()
+
+    record = SceneGenerationRecord(
+        scene_id="scene-1",
+        revision_id="rev-1",
+        revision_number=1,
+        status="draft",
+        review={"overall_pass": True},
+        scene_summary_raw={"summary": "完成"},
+        draft_text="正文",
+    )
+    save_scene_generation_record(project_dir, record)
+
+    window._on_workflow_draft(record)
+
+    assert "草稿" in quick._card_widgets["ch-1"]["status"].text()
+    assert quick.selected_chapter_id == "ch-1"
+
+    assert window._on_approval_batch_approved("scene-1", "rev-1", [], [])
+    assert "已批准" in quick._card_widgets["ch-1"]["status"].text()
+    assert quick.selected_chapter_id == "ch-1"
+
+
+def test_entering_quick_outline_refreshes_status(tmp_path, qtbot):
+    project_dir = _project(tmp_path)
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    quick = window._quick_outline_view
+    quick.select_chapter("ch-1")
+
+    save_scene_generation_record(
+        project_dir,
+        SceneGenerationRecord(
+            scene_id="scene-1",
+            revision_id="rev-1",
+            revision_number=1,
+            status="draft",
+            draft_text="正文",
+        ),
+    )
+    assert "待写" in quick._card_widgets["ch-1"]["status"].text()
+
+    window._set_experience_mode("quick")
+    window._select_destination("outline")
+
+    assert "草稿" in quick._card_widgets["ch-1"]["status"].text()
+    assert quick.selected_chapter_id == "ch-1"
+
+
+def test_quick_outline_status_refresh_defers_for_dirty_card(tmp_path, qtbot):
+    project_dir = _project(tmp_path)
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    quick = window._quick_outline_view
+    quick.select_chapter("ch-1")
+    quick.title_edit.setText("未保存标题")
+
+    record = SceneGenerationRecord(
+        scene_id="scene-1",
+        revision_id="rev-1",
+        revision_number=1,
+        status="draft",
+        draft_text="正文",
+    )
+    save_scene_generation_record(project_dir, record)
+    window._on_workflow_draft(record)
+
+    assert quick.title_edit.text() == "未保存标题"
+    assert quick.is_dirty is True
+    assert "待写" in quick._card_widgets["ch-1"]["status"].text()
+
+    assert quick.discard_edits() is True
+    assert quick.title_edit.text() == ""
+    assert "草稿" in quick._card_widgets["ch-1"]["status"].text()
+    assert quick.selected_chapter_id == "ch-1"
+
+
 def test_rejected_generation_does_not_clear_workspace_buffer(tmp_path, qtbot, monkeypatch):
     project_dir = _project(tmp_path)
     window = MainWindow()
