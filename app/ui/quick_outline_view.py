@@ -149,14 +149,16 @@ class QuickOutlineView(QWidget):
         groups.addStretch()
         self.card_scroll.setWidget(container)
         if selected in self._cards:
-            self.select_chapter(selected)
+            self._show_card(selected)
         elif self._cards:
             self.select_chapter(next(iter(self._cards)))
 
     def select_chapter(self, chapter_id: str) -> bool:
         if chapter_id not in self._cards:
             return False
-        if chapter_id != self._selected_id and self.is_dirty:
+        if chapter_id == self._selected_id:
+            return True
+        if self.is_dirty:
             return False
         self._show_card(chapter_id)
         self.chapter_selected.emit(chapter_id)

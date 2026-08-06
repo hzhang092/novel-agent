@@ -134,6 +134,18 @@ def test_quick_outline_selection_does_not_discard_dirty_card(qtbot):
     assert view.title_edit.text() == "未保存标题"
 
 
+def test_quick_outline_reselecting_dirty_card_does_not_reload_it(qtbot):
+    view = QuickOutlineView()
+    qtbot.addWidget(view)
+    view.bind_application(FakeQuickPlanning())
+    view.select_chapter("chapter-1")
+    view.title_edit.setText("未保存标题")
+
+    assert view.select_chapter("chapter-1") is True
+    assert view.title_edit.text() == "未保存标题"
+    assert view.is_dirty is True
+
+
 def test_quick_outline_public_save_clears_dirty_state(qtbot):
     view = QuickOutlineView()
     qtbot.addWidget(view)
