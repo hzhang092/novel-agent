@@ -866,6 +866,38 @@ def test_existing_quick_revision_cannot_start_fresh_generation(
     assert starts == []
 
 
+def test_existing_canonical_revision_blocks_start_with_stale_ui(
+    tmp_path, qtbot, monkeypatch
+):
+    project_dir = _project(tmp_path)
+    save_scene_generation_record(
+        project_dir,
+        SceneGenerationRecord(
+            scene_id="scene-1",
+            revision_id="rev-1",
+            revision_number=1,
+            status="draft",
+            draft_text="正文",
+        ),
+    )
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    window._workspace_view.set_scene("scene-1", "ch-1")
+    window._workspace_view.set_prose_versions([], "")
+    window._current_prose_version = ""
+    starts = []
+    monkeypatch.setattr(
+        window,
+        "_on_generate_requested",
+        lambda scene_id: starts.append(scene_id),
+    )
+
+    window._on_quick_start("ch-1", "scene-1")
+
+    assert starts == []
+
+
 def test_legacy_prose_selection_cannot_reuse_latest_generation_record(
     tmp_path, qtbot, monkeypatch
 ):

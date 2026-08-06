@@ -349,6 +349,43 @@ def test_switching_dirty_quick_outline_resolves_before_destination_change(
         )
 
 
+def test_dirty_quick_outline_blocks_project_close(tmp_path, qtbot, monkeypatch):
+    window = _outline_window(tmp_path, qtbot)
+    _switch(window, "quick")
+    quick = window._quick_outline_view
+    quick.select_chapter("chapter-1")
+    quick.title_edit.setText("快速未保存")
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args: QMessageBox.StandardButton.Cancel,
+    )
+
+    assert window._maybe_close_current_project() is False
+    assert quick.title_edit.text() == "快速未保存"
+
+
+def test_dirty_quick_outline_blocks_advanced_outline_shortcut(
+    tmp_path, qtbot, monkeypatch
+):
+    window = _outline_window(tmp_path, qtbot)
+    _switch(window, "quick")
+    quick = window._quick_outline_view
+    quick.select_chapter("chapter-1")
+    quick.title_edit.setText("快速未保存")
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args: QMessageBox.StandardButton.Cancel,
+    )
+
+    window._open_deep_outline("chapter-1")
+
+    assert window._experience_mode == "quick"
+    assert window._previous_destination == "outline"
+    assert quick.title_edit.text() == "快速未保存"
+
+
 def test_quick_advanced_links_open_the_exact_deep_element(
     tmp_path, qtbot, monkeypatch
 ):

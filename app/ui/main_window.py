@@ -28,7 +28,7 @@ from app.application.project_context import (
     build_project_application,
 )
 from app.application.scene_workflow import SceneWorkflowObserver
-from app.storage.models import Project as ProjectModel
+from app.storage.models import ChapterCardStatus, Project as ProjectModel
 from app.storage.repository import Repository
 from app.storage.editor_layout import EditorLayoutStore
 from app.storage.project_files import create_quick_project
@@ -198,6 +198,12 @@ class MainWindow(QMainWindow):
         self._bible_view.open_world_element(element_id)
 
     def _open_deep_outline(self, chapter_id: str) -> None:
+        if (
+            self._experience_mode == "quick"
+            and self._previous_destination == "outline"
+            and not self._maybe_leave_quick_outline()
+        ):
+            return
         self._set_experience_mode("deep")
         self._select_destination("outline")
         if self._current_project_dir is not None:
@@ -562,6 +568,8 @@ class MainWindow(QMainWindow):
                 self._bible_view.reload()
             else:
                 return False
+        if not self._maybe_leave_quick_outline():
+            return False
         return self._maybe_leave_deep_outline()
 
     def _maybe_leave_deep_outline(self) -> bool:
@@ -1236,7 +1244,13 @@ class MainWindow(QMainWindow):
                 return
             workflow.approve_plan(self._workspace_view.quick_plan())
             self._workspace_view.hide_plan_checkpoint()
-        elif scene_id and self._selected_generation_record() is None:
+        elif scene_id and any(
+            card.id == _chapter_id
+            and card.scene_id == scene_id
+            and card.status == ChapterCardStatus.UNWRITTEN
+            for arc in self._application.quick_planning.story_projection().arcs
+            for card in arc.chapter_cards
+        ):
             self._on_generate_requested(scene_id)
 
     def _on_quick_adjust(self, _chapter_id: str) -> None:
