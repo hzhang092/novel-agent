@@ -76,6 +76,7 @@ def test_workspace_mirrors_generation_state_into_quick_actions(qtbot):
     assert not quick.start_button.isEnabled()
 
     workspace.set_scene("scene-1", "chapter-1")
+    assert quick.start_button.isEnabled()
     workspace.set_prose_versions(["v1"], "v1")
     workspace.set_generating(True)
     assert not quick.start_button.isEnabled()
@@ -83,7 +84,7 @@ def test_workspace_mirrors_generation_state_into_quick_actions(qtbot):
     assert not quick.revision_instruction_button.isEnabled()
 
     workspace.set_generating(False)
-    assert quick.start_button.isEnabled()
+    assert not quick.start_button.isEnabled()
     assert quick.regenerate_button.isEnabled()
     assert quick.revision_instruction_button.isEnabled()
 

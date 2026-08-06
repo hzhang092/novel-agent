@@ -47,6 +47,7 @@ class QuickChapterView(QWidget):
         self._changes: list[Any] = []
         self._plan: dict[str, Any] = {}
         self._plan_before_adjustment: dict[str, Any] | None = None
+        self._start_allowed = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -267,7 +268,12 @@ class QuickChapterView(QWidget):
         publication_ready: bool,
     ) -> None:
         idle = has_scene and not generating
-        self.start_button.setEnabled(idle or (has_scene and waiting_for_plan))
+        self._start_allowed = has_scene and not generating and (
+            waiting_for_plan or not has_revision
+        )
+        self.start_button.setEnabled(
+            self._start_allowed or self._plan_before_adjustment is not None
+        )
         self.adjust_button.setEnabled(idle or (has_scene and waiting_for_plan))
         self.save_button.setEnabled(idle and has_revision)
         self.regenerate_button.setEnabled(idle and has_revision)
@@ -390,6 +396,7 @@ class QuickChapterView(QWidget):
             self.hook_edit,
         ):
             editor.setReadOnly(not editable)
+        self.start_button.setEnabled(editable or self._start_allowed)
         self.start_button.setText("应用" if editable else "开始")
         self.adjust_button.setText("取消" if editable else "调整方案")
 

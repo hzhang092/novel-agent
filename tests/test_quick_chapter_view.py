@@ -160,10 +160,28 @@ def test_workflow_state_disables_conflicting_quick_actions(qtbot):
         publication_ready=True,
     )
 
-    assert view.start_button.isEnabled()
+    assert not view.start_button.isEnabled()
     assert view.regenerate_button.isEnabled()
     assert view.revision_instruction_button.isEnabled()
     assert view.approve_button.isEnabled()
+
+    view.set_workflow_state(
+        has_scene=True,
+        generating=False,
+        waiting_for_plan=True,
+        has_revision=True,
+        publication_ready=True,
+    )
+    assert view.start_button.isEnabled()
+
+    view.set_workflow_state(
+        has_scene=True,
+        generating=False,
+        waiting_for_plan=False,
+        has_revision=False,
+        publication_ready=False,
+    )
+    assert view.start_button.isEnabled()
 
 
 def test_plan_adjustment_preserves_hidden_fields_and_cancel_restores(qtbot):

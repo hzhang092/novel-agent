@@ -344,6 +344,7 @@ def test_initial_quick_plan_adjustment_approves_the_merged_full_plan(
     workflow._plan_future = future
     workflow.state.scene_id = "scene-1"
     quick = window._workspace_view.findChild(QuickChapterView)
+    assert quick.start_button.isEnabled()
 
     quick.adjust_button.click()
     assert window._experience_mode == "quick"
@@ -805,6 +806,64 @@ def test_returning_to_scene_restores_pending_plan(tmp_path, qtbot):
     assert window._workspace_view.quick_plan()["scene_goal"] == "等待确认"
     workflow._plan_future.cancel()
     loop.close()
+
+
+def test_unwritten_quick_start_starts_initial_generation(tmp_path, qtbot, monkeypatch):
+    project_dir = _project(tmp_path)
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    window._workspace_view.set_scene("scene-1", "ch-1")
+    starts = []
+    monkeypatch.setattr(
+        window,
+        "_on_generate_requested",
+        lambda scene_id: starts.append(scene_id),
+    )
+
+    quick = window._workspace_view.findChild(QuickChapterView)
+    assert quick.start_button.isEnabled()
+
+    window._on_quick_start("ch-1", "scene-1")
+
+    assert starts == ["scene-1"]
+
+
+def test_existing_quick_revision_cannot_start_fresh_generation(
+    tmp_path, qtbot, monkeypatch
+):
+    project_dir = _project(tmp_path)
+    for revision_number in (1, 2):
+        save_scene_generation_record(
+            project_dir,
+            SceneGenerationRecord(
+                scene_id="scene-1",
+                revision_id=f"rev-{revision_number}",
+                revision_number=revision_number,
+                status="draft",
+                draft_text=f"正文 {revision_number}",
+            ),
+        )
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    window._workspace_view.set_scene("scene-1", "ch-1")
+    window._workspace_view.set_prose_versions(["v2", "v1"], "v2")
+    window._current_prose_version = "v2"
+    starts = []
+    monkeypatch.setattr(
+        window,
+        "_on_generate_requested",
+        lambda scene_id: starts.append(scene_id),
+    )
+
+    quick = window._workspace_view.findChild(QuickChapterView)
+    assert not quick.start_button.isEnabled()
+    assert quick.regenerate_button.isEnabled()
+
+    window._on_quick_start("ch-1", "scene-1")
+
+    assert starts == []
 
 
 def test_legacy_prose_selection_cannot_reuse_latest_generation_record(

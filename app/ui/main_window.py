@@ -1236,7 +1236,7 @@ class MainWindow(QMainWindow):
                 return
             workflow.approve_plan(self._workspace_view.quick_plan())
             self._workspace_view.hide_plan_checkpoint()
-        elif scene_id:
+        elif scene_id and self._selected_generation_record() is None:
             self._on_generate_requested(scene_id)
 
     def _on_quick_adjust(self, _chapter_id: str) -> None:
