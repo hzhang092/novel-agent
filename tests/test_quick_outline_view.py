@@ -94,6 +94,72 @@ def test_quick_outline_emits_change_only_after_successful_save(qtbot):
     assert changed == ["chapter-1"]
 
 
+def test_quick_outline_refresh_does_not_overwrite_dirty_card(qtbot):
+    view = QuickOutlineView()
+    qtbot.addWidget(view)
+    service = FakeQuickPlanning()
+    view.bind_application(service)
+    view.select_chapter("chapter-1")
+    view.title_edit.setText("未保存标题")
+
+    assert view.is_dirty is True
+
+    view.refresh()
+
+    assert view.title_edit.text() == "未保存标题"
+
+
+def test_quick_outline_selection_does_not_discard_dirty_card(qtbot):
+    view = QuickOutlineView()
+    qtbot.addWidget(view)
+    service = FakeQuickPlanning()
+    second = service.card.model_copy(update={"id": "chapter-2", "title": "第二章"})
+    service.projection = QuickStoryProjection(
+        arcs=[
+            StoryArcProjection(
+                id="volume-1",
+                story_id="story-1",
+                title="第一卷",
+                summary="开端",
+                chapter_cards=[service.card, second],
+            )
+        ]
+    )
+    view.bind_application(service)
+    view.select_chapter("chapter-1")
+    view.title_edit.setText("未保存标题")
+
+    assert view.select_chapter("chapter-2") is False
+    assert view.selected_chapter_id == "chapter-1"
+    assert view.title_edit.text() == "未保存标题"
+
+
+def test_quick_outline_public_save_clears_dirty_state(qtbot):
+    view = QuickOutlineView()
+    qtbot.addWidget(view)
+    service = FakeQuickPlanning()
+    view.bind_application(service)
+    view.select_chapter("chapter-1")
+    view.title_edit.setText("新标题")
+
+    assert view.save_current_card() is True
+    assert view.is_dirty is False
+    assert service.card.title == "新标题"
+
+
+def test_quick_outline_discard_restores_canonical_card(qtbot):
+    view = QuickOutlineView()
+    qtbot.addWidget(view)
+    service = FakeQuickPlanning()
+    view.bind_application(service)
+    view.select_chapter("chapter-1")
+    view.title_edit.setText("未保存标题")
+
+    assert view.discard_edits() is True
+    assert view.title_edit.text() == "第一章"
+    assert view.is_dirty is False
+
+
 def test_quick_outline_groups_cards_in_canonical_order_and_preserves_selection(qtbot):
     view = QuickOutlineView()
     qtbot.addWidget(view)

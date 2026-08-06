@@ -435,6 +435,14 @@ class MainWindow(QMainWindow):
                 del blocker
                 return
             self._quick_outline_view.refresh()
+        elif self._experience_mode == "quick" and current == "outline":
+            if not self._maybe_leave_quick_outline():
+                blocker = QSignalBlocker(self._experience_switch)
+                self._experience_switch.setCurrentIndex(
+                    self._experience_switch.findData(self._experience_mode)
+                )
+                del blocker
+                return
         self._experience_mode = mode
         if mode == "quick" and self._application is not None:
             self._application.story_designer.ensure_quick_brief()
@@ -483,6 +491,18 @@ class MainWindow(QMainWindow):
             and self._outline_view.is_loaded
         ):
             if not self._maybe_leave_deep_outline():
+                blocker = QSignalBlocker(self.sidebar)
+                self.sidebar.setCurrentRow(self._previous_tab_index)
+                del blocker
+                return
+
+        if (
+            self._experience_mode == "quick"
+            and previous_key == "outline"
+            and key != "outline"
+            and self._quick_outline_view.is_dirty
+        ):
+            if not self._maybe_leave_quick_outline():
                 blocker = QSignalBlocker(self.sidebar)
                 self.sidebar.setCurrentRow(self._previous_tab_index)
                 del blocker
@@ -551,6 +571,25 @@ class MainWindow(QMainWindow):
         if reply == QMessageBox.StandardButton.Discard:
             self._outline_view.reload()
             return True
+        return False
+
+    def _maybe_leave_quick_outline(self) -> bool:
+        if not self._quick_outline_view.is_dirty:
+            return True
+
+        reply = QMessageBox.question(
+            self,
+            "未保存的快速大纲更改",
+            "快速大纲有未保存的更改。是否保存？",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if reply == QMessageBox.StandardButton.Save:
+            return self._quick_outline_view.save_current_card()
+        if reply == QMessageBox.StandardButton.Discard:
+            return self._quick_outline_view.discard_edits()
         return False
 
     def _confirm_bootstrap_discard(self) -> bool:

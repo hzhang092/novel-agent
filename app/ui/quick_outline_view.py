@@ -47,6 +47,7 @@ class QuickOutlineView(QWidget):
         self._card_widgets = {}
         self._arc_groups = {}
         self._selected_id = ""
+        self._baseline = None
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("快速大纲"))
@@ -71,7 +72,7 @@ class QuickOutlineView(QWidget):
         self.save_button = QPushButton("保存卡片")
         self.write_button = QPushButton("开始写作")
         self.advanced_outline_button = QPushButton("高级大纲")
-        self.save_button.clicked.connect(self._preview_card_edit)
+        self.save_button.clicked.connect(self.save_current_card)
         self.write_button.clicked.connect(self._write_selected)
         self.advanced_outline_button.clicked.connect(self._request_deep_outline)
         for button in (self.save_button, self.write_button, self.advanced_outline_button):
@@ -82,8 +83,8 @@ class QuickOutlineView(QWidget):
         self._service = service
         self.refresh()
 
-    def refresh(self) -> None:
-        if self._service is None:
+    def refresh(self, *, force: bool = False) -> None:
+        if self._service is None or (self.is_dirty and not force):
             return
         projection = self._service.story_projection()
         selected = self._selected_id
@@ -155,6 +156,8 @@ class QuickOutlineView(QWidget):
     def select_chapter(self, chapter_id: str) -> bool:
         if chapter_id not in self._cards:
             return False
+        if chapter_id != self._selected_id and self.is_dirty:
+            return False
         self._show_card(chapter_id)
         self.chapter_selected.emit(chapter_id)
         return True
@@ -171,7 +174,19 @@ class QuickOutlineView(QWidget):
         self.title_edit.setText(card.title)
         self.summary_edit.setPlainText(card.summary)
         self.ending_hook_edit.setText(card.ending_hook)
+        self._baseline = (card.title, card.summary, card.ending_hook)
         self.status_label.setText(f"状态：{card.status.value}")
+
+    @property
+    def is_dirty(self) -> bool:
+        return bool(
+            self._selected_id
+            and self._baseline != (
+                self.title_edit.text(),
+                self.summary_edit.toPlainText(),
+                self.ending_hook_edit.text(),
+            )
+        )
 
     def _write_selected(self) -> None:
         if self._selected_id:
@@ -186,9 +201,9 @@ class QuickOutlineView(QWidget):
         if self._selected_id:
             self.deep_outline_requested.emit(self._selected_id)
 
-    def _preview_card_edit(self) -> None:
+    def save_current_card(self) -> bool:
         if self._service is None or not self._selected_id:
-            return
+            return False
         try:
             preview = self._service.preview_card_edit(
                 self._selected_id,
@@ -199,7 +214,15 @@ class QuickOutlineView(QWidget):
             card = self._service.apply_card_edit(preview)
         except _PLANNING_ERRORS as error:
             self.status_label.setText(f"保存失败：{error}")
-            return
+            return False
         self._cards[card.id] = card
+        self._baseline = (card.title, card.summary, card.ending_hook)
         self.refresh()
         self.outline_changed.emit(card.id)
+        return True
+
+    def discard_edits(self) -> bool:
+        if self._service is None or not self._selected_id:
+            return False
+        self.refresh(force=True)
+        return True

@@ -272,6 +272,83 @@ def test_project_leave_guard_cannot_skip_dirty_deep_outline(
     assert window._outline_view.is_dirty is True
 
 
+@pytest.mark.parametrize(
+    "answer",
+    [
+        QMessageBox.StandardButton.Save,
+        QMessageBox.StandardButton.Discard,
+        QMessageBox.StandardButton.Cancel,
+    ],
+)
+def test_switching_dirty_quick_outline_resolves_before_experience_change(
+    tmp_path, qtbot, monkeypatch, answer
+):
+    window = _outline_window(tmp_path, qtbot)
+    _switch(window, "quick")
+    quick = window._quick_outline_view
+    quick.select_chapter("chapter-1")
+    quick.title_edit.setText("快速未保存")
+    prompts = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args: prompts.append(True) or answer,
+    )
+
+    _switch(window, "deep")
+
+    assert prompts == [True]
+    if answer == QMessageBox.StandardButton.Cancel:
+        assert window._experience_mode == "quick"
+        assert window._previous_destination == "outline"
+        assert quick.title_edit.text() == "快速未保存"
+        assert quick.is_dirty is True
+    else:
+        assert window._experience_mode == "deep"
+        assert quick.is_dirty is False
+        assert window._outline_view._volumes[0].chapters[0].title == (
+            "快速未保存" if answer == QMessageBox.StandardButton.Save else ""
+        )
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        QMessageBox.StandardButton.Save,
+        QMessageBox.StandardButton.Discard,
+        QMessageBox.StandardButton.Cancel,
+    ],
+)
+def test_switching_dirty_quick_outline_resolves_before_destination_change(
+    tmp_path, qtbot, monkeypatch, answer
+):
+    window = _outline_window(tmp_path, qtbot)
+    _switch(window, "quick")
+    quick = window._quick_outline_view
+    quick.select_chapter("chapter-1")
+    quick.title_edit.setText("快速未保存")
+    prompts = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args: prompts.append(True) or answer,
+    )
+
+    window._select_destination("workspace")
+
+    assert prompts == [True]
+    if answer == QMessageBox.StandardButton.Cancel:
+        assert window._previous_destination == "outline"
+        assert quick.title_edit.text() == "快速未保存"
+        assert quick.is_dirty is True
+    else:
+        assert window._previous_destination == "workspace"
+        assert quick.is_dirty is False
+        assert window._outline_view._volumes[0].chapters[0].title == (
+            "快速未保存" if answer == QMessageBox.StandardButton.Save else ""
+        )
+
+
 def test_quick_advanced_links_open_the_exact_deep_element(
     tmp_path, qtbot, monkeypatch
 ):
