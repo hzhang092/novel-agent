@@ -317,6 +317,36 @@ def test_quick_length_change_is_a_chapter_override(tmp_path, qtbot):
     assert chapter.chapter_length_override.resolved_target == 4200
 
 
+def test_quick_start_approves_waiting_initial_plan(tmp_path, qtbot, monkeypatch):
+    project_dir = _project(tmp_path)
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    window._set_experience_mode("quick")
+    window._select_destination("workspace")
+    window._workspace_view.set_scene("scene-1", "ch-1")
+    window._workspace_view.set_generating(True)
+    plan = ScenePlan(scene_id="scene-1", scene_goal="找到出口").model_dump(
+        mode="json"
+    )
+    window._workspace_view.show_plan_checkpoint(plan)
+    loop = asyncio.new_event_loop()
+    future = loop.create_future()
+    workflow = window._application.scene_workflow
+    workflow._plan_future = future
+    workflow.state.scene_id = "scene-1"
+    starts = []
+    monkeypatch.setattr(window, "_on_generate_requested", starts.append)
+    quick = window._workspace_view.findChild(QuickChapterView)
+
+    quick.start_button.click()
+
+    assert future.result() == (True, plan)
+    assert starts == []
+    assert not quick.start_button.isEnabled()
+    loop.close()
+
+
 def test_initial_quick_plan_adjustment_approves_the_merged_full_plan(
     tmp_path, qtbot
 ):

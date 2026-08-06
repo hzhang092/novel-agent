@@ -268,8 +268,8 @@ class QuickChapterView(QWidget):
         publication_ready: bool,
     ) -> None:
         idle = has_scene and not generating
-        self._start_allowed = has_scene and not generating and (
-            waiting_for_plan or not has_revision
+        self._start_allowed = has_scene and (
+            waiting_for_plan or (not generating and not has_revision)
         )
         self.start_button.setEnabled(
             self._start_allowed or self._plan_before_adjustment is not None

@@ -167,9 +167,9 @@ def test_workflow_state_disables_conflicting_quick_actions(qtbot):
 
     view.set_workflow_state(
         has_scene=True,
-        generating=False,
+        generating=True,
         waiting_for_plan=True,
-        has_revision=True,
+        has_revision=False,
         publication_ready=True,
     )
     assert view.start_button.isEnabled()
