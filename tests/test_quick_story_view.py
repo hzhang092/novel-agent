@@ -170,7 +170,103 @@ async def test_generating_proposal_reports_progress_and_reenables_actions(tmp_pa
 
     assert view.action_status_label.text() == "故事提案已生成"
     assert view.save_button.isEnabled()
-    assert view.generate_button.isEnabled()
+    assert not view.generate_button.isEnabled()
+
+
+@pytest.mark.asyncio
+async def test_adjusting_proposal_uses_shared_busy_state_and_restores_draft_actions(
+    tmp_path, qtbot
+):
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class WaitingProvider(MockProvider):
+        async def generate_structured(self, *args, **kwargs):
+            started.set()
+            await release.wait()
+            return await super().generate_structured(*args, **kwargs)
+
+    project_dir = create_project(tmp_path, Project(title="调整进度"))
+    application = build_project_application(project_dir)
+    application.story_designer._provider_factory = lambda: MockProvider(
+        structured_response=_proposal()
+    )
+    view = QuickStoryView()
+    qtbot.addWidget(view)
+    view.bind_application(application)
+    await view._generate_proposal()
+
+    application.story_designer._provider_factory = lambda: WaitingProvider(
+        structured_response=_proposal()
+    )
+    view.adjust_edit.setText("更紧张")
+    view.adjust_button.click()
+    await started.wait()
+
+    assert view.action_status_label.text() == "正在调整故事提案…"
+    assert not view.save_button.isEnabled()
+    assert not view.adopt_button.isEnabled()
+    assert not view.adjust_button.isEnabled()
+    assert not view.another_button.isEnabled()
+    active_task = view._proposal_task
+    view.another_button.click()
+    assert view._proposal_task is active_task
+
+    release.set()
+    await active_task
+
+    assert view.action_status_label.text() == "故事提案已调整"
+    assert view.adopt_button.isEnabled()
+    assert view.adjust_button.isEnabled()
+    assert view.another_button.isEnabled()
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_generation_keeps_busy_status_persistent_across_stage_changes(
+    tmp_path, qtbot
+):
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class WaitingProvider(MockProvider):
+        async def generate_structured(self, *args, **kwargs):
+            started.set()
+            await release.wait()
+            return await super().generate_structured(*args, **kwargs)
+
+    project_dir = create_project(tmp_path, Project(title="启动包进度"))
+    application = build_project_application(project_dir)
+    application.story_designer._provider_factory = lambda: MockProvider(
+        structured_response=_proposal()
+    )
+    view = QuickStoryView()
+    qtbot.addWidget(view)
+    view.bind_application(application)
+    await view._generate_proposal()
+    await view._adopt_proposal()
+
+    application.story_designer._provider_factory = lambda: WaitingProvider(
+        structured_response=_bootstrap()
+    )
+    view.bootstrap_button.click()
+    await started.wait()
+
+    assert view.action_status_label.text() == "正在生成故事启动包…"
+    assert not view.save_button.isEnabled()
+    assert not view.bootstrap_button.isEnabled()
+    assert not view.approve_bootstrap_button.isEnabled()
+    view._set_creation_stage("proposal")
+    assert view.action_status_label.text() == "正在生成故事启动包…"
+    assert not view.action_status_label.isHidden()
+
+    task = view._proposal_task
+    release.set()
+    await task
+
+    assert view.action_status_label.text() == "故事启动包已生成"
+    assert view.save_bootstrap_button.isEnabled()
+    assert view.adjust_bootstrap_button.isEnabled()
+    assert view.approve_bootstrap_button.isEnabled()
 
 
 @pytest.mark.asyncio

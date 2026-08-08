@@ -35,6 +35,13 @@ _CHIPS = {
     "tone_tags": ("气质", ("热血", "轻松", "悬疑", "治愈")),
 }
 _ROMANCE_CHIPS = {"恋人", "暧昧"}
+_BUSY_MESSAGES = {
+    "_generate_proposal": "正在生成故事提案…",
+    "_adjust_proposal": "正在调整故事提案…",
+    "_generate_bootstrap": "正在生成故事启动包…",
+    "_adjust_bootstrap": "正在生成启动包调整建议…",
+    "_adopt_proposal": "正在采用故事提案…",
+}
 
 
 class QuickStoryView(QWidget):
@@ -48,6 +55,9 @@ class QuickStoryView(QWidget):
         super().__init__()
         self._application = None
         self._proposal_task = None
+        self._busy = False
+        self._busy_application = None
+        self._busy_task = None
         self._chips: dict[str, dict[str, QCheckBox]] = {}
         self._custom: dict[str, QLineEdit] = {}
         root_layout = QVBoxLayout(self)
@@ -57,6 +67,10 @@ class QuickStoryView(QWidget):
         content_layout = QVBoxLayout(content)
         scroll.setWidget(content)
         root_layout.addWidget(scroll)
+
+        self.action_status_label = QLabel("")
+        self.action_status_label.setWordWrap(True)
+        content_layout.addWidget(self.action_status_label)
 
         self.brief_section = QWidget()
         content_layout.addWidget(self.brief_section)
@@ -115,9 +129,6 @@ class QuickStoryView(QWidget):
         self.save_button = QPushButton("保存故事意向")
         self.save_button.clicked.connect(self._save_brief)
         layout.addWidget(self.save_button)
-        self.action_status_label = QLabel("")
-        self.action_status_label.setWordWrap(True)
-        layout.addWidget(self.action_status_label)
 
         self.generate_button = QPushButton("生成故事提案")
         self.generate_button.clicked.connect(self._start_proposal_generation)
@@ -157,9 +168,18 @@ class QuickStoryView(QWidget):
         self.adopt_button = QPushButton("采用这个故事")
         self.adjust_button = QPushButton("调整")
         self.another_button = QPushButton("换一个方向")
-        self.adopt_button.clicked.connect(lambda: self._start_task(self._adopt_proposal()))
-        self.adjust_button.clicked.connect(lambda: self._start_task(self._adjust_proposal()))
-        self.another_button.clicked.connect(lambda: self._start_task(self._generate_proposal()))
+        self.adopt_button.clicked.connect(
+            lambda: self._start_task(self._adopt_proposal())
+        )
+        self.adjust_button.clicked.connect(
+            lambda: self._start_task(self._adjust_proposal())
+        )
+        self.another_button.clicked.connect(
+            lambda: self._start_task(
+                self._generate_proposal(operation="replace"),
+                busy_message="正在更换故事方向…",
+            )
+        )
         for button in (self.adopt_button, self.adjust_button, self.another_button):
             actions.addWidget(button)
         layout.addLayout(actions)
@@ -211,9 +231,10 @@ class QuickStoryView(QWidget):
     def bind_application(self, application) -> None:
         self.cancel_generation()
         self._proposal_task = None
+        self._busy = False
+        self._busy_application = None
+        self._busy_task = None
         self._application = application
-        self.save_button.setEnabled(True)
-        self.generate_button.setEnabled(True)
         self.action_status_label.clear()
         planning = load_planning(application.project_dir)
         self._set_brief(planning.story_brief or StoryBrief())
@@ -224,6 +245,7 @@ class QuickStoryView(QWidget):
         self.refresh_quick_projection()
         self._show_bootstrap(planning.active_draft if isinstance(planning.active_draft, ActiveBootstrapDraft) else None)
         self._refresh_creation_stage()
+        self._refresh_action_state()
 
     def refresh_brief(self) -> None:
         if self._application is None:
@@ -323,15 +345,95 @@ class QuickStoryView(QWidget):
                 )
                 self.quick_projection_actions.addWidget(button)
 
-    def _start_task(self, coroutine) -> None:
-        if self._proposal_task is None or self._proposal_task.done():
-            self._proposal_task = asyncio.ensure_future(coroutine)
-        else:
+    def _set_busy(self, busy: bool, message: str = "") -> None:
+        self._busy = busy
+        if busy:
+            self._busy_application = self._application
+            if message:
+                self.action_status_label.setText(message)
+            self._refresh_action_state()
+            return
+        self._busy_application = None
+        self._busy_task = None
+        self._refresh_action_state()
+
+    def _refresh_action_state(self) -> None:
+        controls = (
+            self.save_button,
+            self.generate_button,
+            self.adopt_button,
+            self.adjust_button,
+            self.another_button,
+            self.bootstrap_button,
+            self.save_bootstrap_button,
+            self.adjust_bootstrap_button,
+            self.apply_bootstrap_patch_button,
+            self.cancel_bootstrap_patch_button,
+            self.approve_bootstrap_button,
+        )
+        if self._application is None:
+            for control in controls:
+                control.setEnabled(False)
+            return
+
+        planning = load_planning(self._application.project_dir)
+        active = getattr(planning, "active_draft", None)
+        proposal_draft = hasattr(active, "proposal")
+        bootstrap_draft = isinstance(active, ActiveBootstrapDraft)
+        approved_proposal = planning.approved_proposal is not None
+        can_generate_bootstrap = self._application.story_designer.can_generate_bootstrap()
+        patch_preview = self._bootstrap_preview is not None
+
+        if self._busy:
+            for control in controls:
+                control.setEnabled(False)
+            return
+
+        self.save_button.setEnabled(True)
+        self.generate_button.setVisible(not proposal_draft and not approved_proposal)
+        self.generate_button.setEnabled(not proposal_draft and not approved_proposal)
+
+        self.adopt_button.setVisible(proposal_draft)
+        self.adopt_button.setEnabled(proposal_draft)
+        self.adjust_button.setVisible(proposal_draft)
+        self.adjust_button.setEnabled(proposal_draft)
+        self.another_button.setVisible(proposal_draft)
+        self.another_button.setEnabled(proposal_draft)
+
+        self.bootstrap_button.setVisible(can_generate_bootstrap and not bootstrap_draft)
+        self.bootstrap_button.setEnabled(can_generate_bootstrap and not bootstrap_draft)
+        self.save_bootstrap_button.setEnabled(bootstrap_draft)
+        self.adjust_bootstrap_button.setEnabled(bootstrap_draft)
+        self.approve_bootstrap_button.setEnabled(bootstrap_draft)
+        self.apply_bootstrap_patch_button.setEnabled(bootstrap_draft and patch_preview)
+        self.cancel_bootstrap_patch_button.setEnabled(bootstrap_draft and patch_preview)
+
+    def _start_task(self, coroutine, *, busy_message: str | None = None) -> None:
+        if self._proposal_task is not None and not self._proposal_task.done():
             coroutine.close()
+            return
+        name = getattr(getattr(coroutine, "cr_code", None), "co_name", "")
+        self._set_busy(True, busy_message or _BUSY_MESSAGES.get(name, "正在处理…"))
+        application = self._application
+        task = asyncio.ensure_future(coroutine)
+        self._proposal_task = task
+        self._busy_task = task
+        task.add_done_callback(
+            lambda completed, bound_application=application: self._task_finished(
+                completed, bound_application
+            )
+        )
+
+    def _task_finished(self, task, application) -> None:
+        if self._application is not application or self._proposal_task is not task:
+            return
+        self._set_busy(False)
 
     def cancel_generation(self) -> None:
         if self._proposal_task is not None and not self._proposal_task.done():
             self._proposal_task.cancel()
+        if self._busy_task is self._proposal_task:
+            self._set_busy(False)
 
     def _set_brief(self, brief: StoryBrief) -> None:
         self.premise_edit.setPlainText(brief.premise)
@@ -405,11 +507,6 @@ class QuickStoryView(QWidget):
         if self._application is None:
             self.action_status_label.setText("请先创建或打开项目")
             return
-        if self._proposal_task is not None and not self._proposal_task.done():
-            return
-        self.action_status_label.setText("正在生成故事提案…")
-        self.save_button.setEnabled(False)
-        self.generate_button.setEnabled(False)
         self._start_task(self._generate_proposal())
 
     def _prepare_brief(self) -> None:
@@ -430,7 +527,9 @@ class QuickStoryView(QWidget):
             brief, provisional_destination=destination
         )
 
-    async def _generate_proposal(self, *, prepared: bool = False) -> None:
+    async def _generate_proposal(
+        self, *, prepared: bool = False, operation: str = "initial"
+    ) -> None:
         application = self._application
         if application is None:
             self.action_status_label.setText("请先创建或打开项目")
@@ -445,21 +544,25 @@ class QuickStoryView(QWidget):
         except ProviderConfigurationError as error:
             if self._application is application:
                 self._provider_error(str(error), self._generate_proposal)
-                self.action_status_label.setText("生成失败，请重试")
+                self.action_status_label.setText(
+                    "更换失败，请重试" if operation == "replace" else "生成失败，请重试"
+                )
             return
         except (StoryDesignerProviderError, ConcurrentModificationError, OperationBlockedError) as error:
             if self._application is application:
                 self._provider_error(f"生成失败：{error}", self._generate_proposal)
-                self.action_status_label.setText("生成失败，请重试")
+                self.action_status_label.setText(
+                    "更换失败，请重试" if operation == "replace" else "生成失败，请重试"
+                )
             return
         else:
             if self._application is application:
                 self._show_proposal(draft)
-                self.action_status_label.setText("故事提案已生成")
-        finally:
-            if self._application is application:
-                self.save_button.setEnabled(True)
-                self.generate_button.setEnabled(True)
+                self.action_status_label.setText(
+                    "已生成新的故事方向"
+                    if operation == "replace"
+                    else "故事提案已生成"
+                )
 
     async def _adjust_proposal(self) -> None:
         application = self._application
@@ -476,13 +579,16 @@ class QuickStoryView(QWidget):
         except ProviderConfigurationError as error:
             if self._application is application:
                 self._provider_error(str(error), self._adjust_proposal)
+                self.action_status_label.setText("调整失败，请重试")
             return
         except (StoryDesignerProviderError, ConcurrentModificationError, OperationBlockedError) as error:
             if self._application is application:
                 self._provider_error(f"调整失败：{error}", self._adjust_proposal)
+                self.action_status_label.setText("调整失败，请重试")
             return
         if self._application is application:
             self._show_proposal(draft)
+            self.action_status_label.setText("故事提案已调整")
 
     async def _adopt_proposal(self) -> None:
         if self._application is None:
@@ -496,9 +602,11 @@ class QuickStoryView(QWidget):
             )
         except (ConcurrentModificationError, OperationBlockedError) as error:
             self._provider_error(f"采用失败：{error}")
+            self.action_status_label.setText("采用失败，请重试")
             return
         self._show_proposal(approved)
         self._show_bootstrap(None)
+        self.action_status_label.setText("故事提案已采用")
 
     async def _generate_bootstrap(self) -> None:
         application = self._application
@@ -509,13 +617,16 @@ class QuickStoryView(QWidget):
         except ProviderConfigurationError as error:
             if self._application is application:
                 self._provider_error(str(error), self._generate_bootstrap)
+                self.action_status_label.setText("生成失败，请重试")
             return
         except (StoryDesignerProviderError, ConcurrentModificationError, OperationBlockedError) as error:
             if self._application is application:
                 self._provider_error(f"生成失败：{error}", self._generate_bootstrap)
+                self.action_status_label.setText("生成失败，请重试")
             return
         if self._application is application:
             self._show_bootstrap(draft)
+            self.action_status_label.setText("故事启动包已生成")
 
     def _show_bootstrap(self, draft) -> None:
         self._bootstrap_draft = draft
@@ -540,6 +651,7 @@ class QuickStoryView(QWidget):
             self.bootstrap_label.setText("采用故事后可生成" if not approved else ("尚未生成" if can_generate else "已采用"))
             self.bootstrap_advanced.clear()
             self._refresh_creation_stage()
+            self._refresh_action_state()
             return
         bootstrap = draft.bootstrap
         self.bootstrap_label.setText(f"v{draft.revision}：可编辑简要卡片；高级字段只读。")
@@ -569,6 +681,7 @@ class QuickStoryView(QWidget):
             self._add_bootstrap_field(f"风格 {field}", getattr(bootstrap.style, field), ("style", field))
         self.bootstrap_advanced.setPlainText(bootstrap.model_dump_json(indent=2))
         self._refresh_creation_stage()
+        self._refresh_action_state()
 
     def _add_bootstrap_field(self, label: str, value: str | list[str], path: tuple) -> None:
         row = QHBoxLayout()
@@ -609,6 +722,7 @@ class QuickStoryView(QWidget):
         if self._application is None or self._bootstrap_draft is None:
             return
         if not self._save_bootstrap():
+            self.action_status_label.setText("调整失败，请重试")
             return
         application = self._application
         try:
@@ -618,12 +732,13 @@ class QuickStoryView(QWidget):
         except (ProviderConfigurationError, StoryDesignerProviderError, ConcurrentModificationError, OperationBlockedError) as error:
             if self._application is application:
                 self._provider_error(f"调整失败：{error}", self._adjust_bootstrap)
+                self.action_status_label.setText("调整失败，请重试")
             return
         if self._application is application:
             self._bootstrap_preview = preview
             self.bootstrap_patch_label.setText("变更：" + "；".join(preview.changes) + "\n影响：" + "；".join(preview.consequences))
-            self.apply_bootstrap_patch_button.setEnabled(True)
-            self.cancel_bootstrap_patch_button.setEnabled(True)
+            self.action_status_label.setText("启动包调整建议已生成，请确认是否应用")
+            self._refresh_action_state()
 
     def _apply_bootstrap_patch(self) -> None:
         if self._application is None or self._bootstrap_preview is None:
@@ -660,6 +775,7 @@ class QuickStoryView(QWidget):
             self.adjust_button.setEnabled(False)
             self.another_button.setVisible(False)
             self._refresh_creation_stage()
+            self._refresh_action_state()
             return
         self.generate_button.setVisible(False)
         is_draft = hasattr(value, "proposal")
@@ -674,6 +790,7 @@ class QuickStoryView(QWidget):
             f"看点：{'、'.join(proposal.story_promises)}\n结局方向：{proposal.ending_direction}"
         )
         self._refresh_creation_stage()
+        self._refresh_action_state()
 
     def _provider_error(self, message: str, retry=None) -> None:
         application = self._application
