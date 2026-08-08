@@ -184,6 +184,12 @@ class MainWindow(QMainWindow):
         self._outline_view.activate_scene(scene_id)
 
     def _open_quick_scene(self, scene_id: str) -> None:
+        if (
+            self._experience_mode == "quick"
+            and self._previous_destination == "outline"
+            and not self._maybe_leave_quick_outline()
+        ):
+            return
         self._on_scene_selected(scene_id)
         self._select_destination("workspace")
 

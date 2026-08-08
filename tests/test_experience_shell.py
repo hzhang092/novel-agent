@@ -2,7 +2,12 @@ import pytest
 from PySide6.QtWidgets import QMessageBox
 
 from app.storage.models import ChapterOutline, Project, SceneOutline, VolumeOutline
-from app.storage.project_files import create_project, load_all_volumes, save_volume_outline
+from app.storage.project_files import (
+    create_project,
+    load_all_volumes,
+    load_project,
+    save_volume_outline,
+)
 from app.ui.main_window import MainWindow
 
 
@@ -384,6 +389,67 @@ def test_dirty_quick_outline_blocks_advanced_outline_shortcut(
     assert window._experience_mode == "quick"
     assert window._previous_destination == "outline"
     assert quick.title_edit.text() == "快速未保存"
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        QMessageBox.StandardButton.Save,
+        QMessageBox.StandardButton.Discard,
+        QMessageBox.StandardButton.Cancel,
+    ],
+)
+def test_quick_outline_write_chapter_resolves_dirty_card_before_scene_navigation(
+    tmp_path, qtbot, monkeypatch, answer
+):
+    window = _window(tmp_path, qtbot)
+    save_volume_outline(
+        window._current_project_dir,
+        VolumeOutline(
+            id="volume-1",
+            chapters=[
+                ChapterOutline(
+                    id="chapter-a",
+                    scenes=[SceneOutline(id="scene-a", title="A")],
+                ),
+                ChapterOutline(
+                    id="chapter-b",
+                    scenes=[SceneOutline(id="scene-b", title="B")],
+                ),
+            ],
+        ),
+    )
+    window._outline_view.load_project_dir(window._current_project_dir)
+    window._quick_outline_view.refresh()
+    _switch(window, "quick")
+    window._select_destination("outline")
+    quick = window._quick_outline_view
+    quick.select_chapter("chapter-a")
+    quick.title_edit.setText("快速未保存")
+    window._on_scene_selected("scene-a")
+    monkeypatch.setattr(QMessageBox, "question", lambda *_args: answer)
+
+    quick._card_widgets["chapter-b"]["write"].click()
+
+    if answer == QMessageBox.StandardButton.Cancel:
+        assert window._previous_destination == "outline"
+        assert window._workspace_view.current_scene_id == "scene-a"
+        assert window._workspace_view.current_chapter_id == "chapter-a"
+        assert load_project(window._current_project_dir).last_active_chapter_id == "chapter-a"
+        assert quick.title_edit.text() == "快速未保存"
+        assert quick.is_dirty is True
+    else:
+        assert window._previous_destination == "workspace"
+        assert window._workspace_view.current_scene_id == "scene-b"
+        assert window._workspace_view.current_chapter_id == "chapter-b"
+        assert quick.is_dirty is False
+        assert load_project(window._current_project_dir).last_active_chapter_id == "chapter-b"
+        if answer == QMessageBox.StandardButton.Save:
+            assert load_all_volumes(window._current_project_dir)[0].chapters[0].title == (
+                "快速未保存"
+            )
+        else:
+            assert load_all_volumes(window._current_project_dir)[0].chapters[0].title == ""
 
 
 def test_quick_advanced_links_open_the_exact_deep_element(
