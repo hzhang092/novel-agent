@@ -73,7 +73,7 @@ def test_story_view_saves_brief_and_none_romance_clears_romance_chip(tmp_path, q
     view.romance_combo.setCurrentIndex(view.romance_combo.findData("none"))
     view.target_combo.setCurrentIndex(view.target_combo.findData("ongoing"))
     view.ending_edit.setText("可调整的远方")
-    qtbot.mouseClick(_button(view, "保存故事意向"), Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(_button(view, "保存草稿"), Qt.MouseButton.LeftButton)
 
     brief = load_planning(project_dir).story_brief
     assert brief is not None
@@ -89,6 +89,50 @@ def test_story_view_saves_brief_and_none_romance_clears_romance_chip(tmp_path, q
     assert reopened.ending_edit.text() == "可调整的远方"
     assert not reopened.generate_button.isHidden()
     assert not reopened.adopt_button.isEnabled()
+
+
+def test_story_brief_conditional_rows_follow_selected_modes_and_persist_cleanly(
+    tmp_path, qtbot
+):
+    project_dir = create_project(tmp_path, Project(title="条件字段"))
+    view = QuickStoryView()
+    qtbot.addWidget(view)
+    view.bind_application(build_project_application(project_dir))
+
+    assert view.custom_target.isHidden()
+    assert view.ending_edit.isHidden()
+    assert view.chapter_chars.isHidden()
+
+    view.target_combo.setCurrentIndex(view.target_combo.findData("custom"))
+    assert not view.custom_target.isHidden()
+    assert view.ending_edit.isHidden()
+    view.target_combo.setCurrentIndex(view.target_combo.findData("ongoing"))
+    assert view.custom_target.isHidden()
+    assert not view.ending_edit.isHidden()
+    view.chapter_combo.setCurrentIndex(view.chapter_combo.findData("custom"))
+    assert not view.chapter_chars.isHidden()
+
+    view.custom_target.setValue(77)
+    view.chapter_chars.setValue(4321)
+    view._save_brief()
+    saved = load_planning(project_dir).story_brief
+    assert saved.custom_target_chapters is None
+    assert saved.chapter_length.target_chinese_characters == 4321
+    assert load_planning(project_dir).provisional_destination == ""
+
+    view.target_combo.setCurrentIndex(view.target_combo.findData("custom"))
+    view.chapter_combo.setCurrentIndex(view.chapter_combo.findData("standard"))
+    view.chapter_chars.setValue(9999)
+    view._save_brief()
+    saved = load_planning(project_dir).story_brief
+    assert saved.custom_target_chapters == 77
+    assert saved.chapter_length.target_chinese_characters == 3000
+
+    reopened = QuickStoryView()
+    qtbot.addWidget(reopened)
+    reopened.bind_application(build_project_application(project_dir))
+    assert not reopened.custom_target.isHidden()
+    assert reopened.chapter_chars.isHidden()
 
 
 def test_story_projection_offers_outline_continuation_only_with_chapters(tmp_path, qtbot):

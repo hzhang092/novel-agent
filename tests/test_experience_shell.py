@@ -1,6 +1,7 @@
 import pytest
 from PySide6.QtWidgets import QMessageBox
 
+import app.ui.main_window as main_window_module
 from app.storage.models import ChapterOutline, Project, SceneOutline, VolumeOutline
 from app.storage.project_files import (
     create_project,
@@ -148,6 +149,41 @@ def test_bootstrap_reload_refreshes_story_continuation_cta(tmp_path, qtbot):
     assert not window._quick_story_view.continue_outline_button.isHidden()
 
 
+def test_quick_project_creation_uses_status_bar_instead_of_modal(
+    tmp_path, qtbot, monkeypatch
+):
+    class Dialog:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def exec(self):
+            return True
+
+        def get_result(self):
+            return {
+                "title": "快速新作",
+                "storage_dir": str(tmp_path),
+                "creation_mode": "quick",
+            }
+
+    information_calls = []
+    monkeypatch.setattr(main_window_module, "CreateProjectDialog", Dialog)
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda *args: information_calls.append(args),
+    )
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+
+    window._on_new_project()
+
+    assert information_calls == []
+    assert window._current_project_dir is not None
+    assert window._experience_mode == "quick"
+    assert window._previous_destination == "story"
+    assert window.stack.currentWidget() is window._quick_story_view
+    assert window.statusBar().currentMessage() == "项目已创建，开始构思故事"
 def test_switching_from_clean_deep_outline_does_not_save_before_quick_refresh(
     tmp_path, qtbot, monkeypatch
 ):

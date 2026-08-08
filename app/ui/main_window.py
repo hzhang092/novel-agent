@@ -763,9 +763,14 @@ class MainWindow(QMainWindow):
         self._workspace_view.load_project_dir(proj_dir)
         settings.setValue("projects/last_parent", str(proj_dir.parent))
 
-        QMessageBox.information(
-            self, "创建成功", f"项目「{project.title}」已创建\n{proj_dir}"
-        )
+        if result.get("creation_mode", "blank") == "quick":
+            self._set_experience_mode("quick")
+            self._select_destination("story")
+            self.statusBar().showMessage("项目已创建，开始构思故事", 5000)
+        else:
+            QMessageBox.information(
+                self, "创建成功", f"项目「{project.title}」已创建\n{proj_dir}"
+            )
 
     def _on_open_project(self) -> None:
         dir_path = QFileDialog.getExistingDirectory(

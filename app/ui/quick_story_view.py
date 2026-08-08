@@ -104,6 +104,9 @@ class QuickStoryView(QWidget):
         self.custom_target.setRange(1, 100000)
         self.custom_target.setValue(30)
         form.addRow("自定义章节", self.custom_target)
+        custom_target_row = form.rowCount() - 1
+        custom_target_label = form.labelForField(self.custom_target)
+        self.target_combo.currentIndexChanged.connect(self._update_conditional_fields)
         self.romance_combo = QComboBox()
         for label, value in (("无", "none"), ("次要", "secondary"), ("主要", "primary")):
             self.romance_combo.addItem(label, value)
@@ -122,17 +125,33 @@ class QuickStoryView(QWidget):
         self.chapter_chars.setRange(1, 100000)
         self.chapter_chars.setValue(3000)
         form.addRow("目标汉字数", self.chapter_chars)
+        chapter_chars_row = form.rowCount() - 1
+        chapter_chars_label = form.labelForField(self.chapter_chars)
+        self.chapter_combo.currentIndexChanged.connect(self._update_conditional_fields)
         self.ending_edit = QLineEdit()
         self.ending_edit.setPlaceholderText("长篇连载的暂定远方（可调整）")
         form.addRow("暂定去向", self.ending_edit)
+        ending_row = form.rowCount() - 1
+        ending_label = form.labelForField(self.ending_edit)
+        self._conditional_rows = {
+            "custom_target": (custom_target_row, custom_target_label, self.custom_target),
+            "chapter_chars": (chapter_chars_row, chapter_chars_label, self.chapter_chars),
+            "ending": (ending_row, ending_label, self.ending_edit),
+        }
+        self._brief_form = form
         layout.addLayout(form)
-        self.save_button = QPushButton("保存故事意向")
+        self.save_button = QPushButton("保存草稿")
         self.save_button.clicked.connect(self._save_brief)
-        layout.addWidget(self.save_button)
 
         self.generate_button = QPushButton("生成故事提案")
         self.generate_button.clicked.connect(self._start_proposal_generation)
-        layout.addWidget(self.generate_button)
+        brief_actions = QHBoxLayout()
+        brief_actions.addWidget(self.generate_button)
+        brief_actions.addWidget(self.save_button)
+        layout.addLayout(brief_actions)
+        self.brief_save_hint = QLabel("生成故事提案时会自动保存当前意向")
+        self.brief_save_hint.setStyleSheet("color: #777; font-size: 11px;")
+        layout.addWidget(self.brief_save_hint)
 
         self.projection_section = QWidget()
         content_layout.addWidget(self.projection_section)
@@ -226,6 +245,7 @@ class QuickStoryView(QWidget):
         self._bootstrap_fields = []
         self._set_story_projection(None)
         self._set_creation_stage("brief")
+        self._update_conditional_fields()
         content_layout.addStretch()
 
     def bind_application(self, application) -> None:
@@ -450,6 +470,7 @@ class QuickStoryView(QWidget):
         self._set_combo(self.chapter_combo, brief.chapter_length.preset)
         self.chapter_chars.setValue(brief.chapter_length.target_chinese_characters)
         self._update_romance_chips()
+        self._update_conditional_fields()
 
     @staticmethod
     def _set_combo(combo: QComboBox, value: str) -> None:
@@ -465,6 +486,21 @@ class QuickStoryView(QWidget):
             if disabled:
                 chip.setChecked(False)
 
+    def _update_conditional_fields(self, _index: int = -1) -> None:
+        visible = {
+            "custom_target": self.target_combo.currentData() == "custom",
+            "ending": self.target_combo.currentData() == "ongoing",
+            "chapter_chars": self.chapter_combo.currentData() == "custom",
+        }
+        form = self._brief_form
+        for name, (row, label, widget) in self._conditional_rows.items():
+            show = visible[name]
+            if hasattr(form, "setRowVisible"):
+                form.setRowVisible(row, show)
+            else:
+                label.setVisible(show)
+                widget.setVisible(show)
+
     def _brief(self) -> StoryBrief:
         values: dict[str, list[str]] = {}
         for field, chips in self._chips.items():
@@ -478,6 +514,12 @@ class QuickStoryView(QWidget):
                 value for value in values["relationship_tags"] if value not in _ROMANCE_CHIPS
             ]
         target = self.target_combo.currentData()
+        chapter_preset = self.chapter_combo.currentData()
+        chapter_chars = self.chapter_chars.value()
+        if chapter_preset != "custom":
+            chapter_chars = ChapterLength(
+                preset=chapter_preset, target_chinese_characters=chapter_chars
+            ).resolved_target
         return StoryBrief(
             **values,
             premise=self.premise_edit.toPlainText(),
@@ -486,8 +528,8 @@ class QuickStoryView(QWidget):
             romance_emphasis=self.romance_combo.currentData(),
             protagonist_structure=self.protagonist_combo.currentData(),
             chapter_length=ChapterLength(
-                preset=self.chapter_combo.currentData(),
-                target_chinese_characters=self.chapter_chars.value(),
+                preset=chapter_preset,
+                target_chinese_characters=chapter_chars,
             ),
         )
 
