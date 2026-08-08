@@ -184,6 +184,156 @@ def test_workflow_state_disables_conflicting_quick_actions(qtbot):
     assert view.start_button.isEnabled()
 
 
+def test_unwritten_scene_uses_generate_plan_action_and_disables_adjustment(qtbot):
+    view = QuickChapterView()
+    qtbot.addWidget(view)
+    view.set_chapter("chapter-1", "scene-1")
+
+    view.set_workflow_state(
+        has_scene=True,
+        generating=False,
+        waiting_for_plan=False,
+        has_revision=False,
+        publication_ready=False,
+    )
+
+    assert view.start_button.text() == "生成写作方案"
+    assert view.start_button.isEnabled()
+    assert view.adjust_button.text() == "调整方案"
+    assert not view.adjust_button.isEnabled()
+
+
+def test_waiting_for_plan_uses_start_writing_and_allows_adjustment_while_generating(qtbot):
+    view = QuickChapterView()
+    qtbot.addWidget(view)
+    view.set_chapter("chapter-1", "scene-1")
+    view.show_plan(
+        {
+            "scene_id": "scene-1",
+            "scene_goal": "找到出口",
+            "required_beats": ["开门"],
+            "hidden_constraint": "主角仍然受伤",
+        }
+    )
+
+    view.set_workflow_state(
+        has_scene=True,
+        generating=True,
+        waiting_for_plan=True,
+        has_revision=False,
+        publication_ready=False,
+    )
+
+    assert view.start_button.text() == "开始写作"
+    assert view.start_button.isEnabled()
+    assert view.adjust_button.text() == "调整方案"
+    assert view.adjust_button.isEnabled()
+
+
+def test_plan_adjustment_uses_apply_and_cancel_labels_and_restores_waiting_state(qtbot):
+    view = QuickChapterView()
+    qtbot.addWidget(view)
+    view.set_chapter("chapter-1", "scene-1")
+    plan = {
+        "scene_id": "scene-1",
+        "scene_goal": "找到出口",
+        "required_beats": ["开门"],
+        "hidden_constraint": "主角仍然受伤",
+        "emotional_arc": "紧张",
+        "ending_hook": "门响了",
+    }
+    view.show_plan(plan)
+    view.set_workflow_state(
+        has_scene=True,
+        generating=True,
+        waiting_for_plan=True,
+        has_revision=False,
+        publication_ready=False,
+    )
+
+    view.begin_plan_adjustment()
+    assert view.start_button.text() == "应用调整"
+    assert view.start_button.isEnabled()
+    assert view.adjust_button.text() == "取消"
+    assert view.adjust_button.isEnabled()
+    assert not view.goal_edit.isReadOnly()
+
+    view.goal_edit.setText("找到出口并报警")
+    assert view.cancel_plan_adjustment() is True
+    assert view.start_button.text() == "开始写作"
+    assert view.adjust_button.text() == "调整方案"
+    assert view.goal_edit.isReadOnly()
+    assert view.plan() == plan
+
+
+def test_accepting_plan_adjustment_returns_to_waiting_label_and_preserves_hidden_fields(qtbot):
+    view = QuickChapterView()
+    qtbot.addWidget(view)
+    view.set_chapter("chapter-1", "scene-1")
+    plan = {
+        "scene_id": "scene-1",
+        "scene_goal": "找到出口",
+        "required_beats": ["开门"],
+        "hidden_constraint": "主角仍然受伤",
+        "emotional_arc": "紧张",
+        "ending_hook": "门响了",
+    }
+    view.show_plan(plan)
+    view.set_workflow_state(
+        has_scene=True,
+        generating=True,
+        waiting_for_plan=True,
+        has_revision=False,
+        publication_ready=False,
+    )
+    view.begin_plan_adjustment()
+    view.goal_edit.setText("找到出口并报警")
+
+    view.accept_plan_adjustment()
+
+    assert view.start_button.text() == "开始写作"
+    assert view.adjust_button.text() == "调整方案"
+    assert view.goal_edit.isReadOnly()
+    assert view.plan() == plan | {"scene_goal": "找到出口并报警"}
+
+
+def test_revision_idle_disables_start_but_allows_plan_adjustment(qtbot):
+    view = QuickChapterView()
+    qtbot.addWidget(view)
+    view.set_chapter("chapter-1", "scene-1")
+    view.show_plan({"scene_id": "scene-1", "scene_goal": "已有方案"})
+    view.set_revisions(["v1"], "v1", "")
+
+    view.set_workflow_state(
+        has_scene=True,
+        generating=False,
+        waiting_for_plan=False,
+        has_revision=True,
+        publication_ready=False,
+    )
+
+    assert view.start_button.text() == "生成写作方案"
+    assert not view.start_button.isEnabled()
+    assert view.adjust_button.text() == "调整方案"
+    assert view.adjust_button.isEnabled()
+
+
+def test_ordinary_generation_disables_plan_actions(qtbot):
+    view = QuickChapterView()
+    qtbot.addWidget(view)
+    view.set_chapter("chapter-1", "scene-1")
+    view.set_workflow_state(
+        has_scene=True,
+        generating=True,
+        waiting_for_plan=False,
+        has_revision=False,
+        publication_ready=False,
+    )
+
+    assert not view.start_button.isEnabled()
+    assert not view.adjust_button.isEnabled()
+
+
 def test_plan_adjustment_preserves_hidden_fields_and_cancel_restores(qtbot):
     view = QuickChapterView()
     qtbot.addWidget(view)

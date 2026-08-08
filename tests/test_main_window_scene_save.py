@@ -386,7 +386,7 @@ def test_existing_plan_adjustment_cancels_or_applies_in_quick(
     window._set_experience_mode("quick")
     window._select_destination("workspace")
     window._workspace_view.set_scene("scene-1", "ch-1")
-    window._current_prose_version = "v1"
+    window._refresh_prose_versions("ch-1", "scene-1", "v1")
     calls = []
     monkeypatch.setattr(
         window._application.scene_workflow,
@@ -453,7 +453,7 @@ def test_scene_and_revision_changes_cancel_the_pending_quick_plan_patch(
     window._set_experience_mode("quick")
     window._select_destination("workspace")
     window._workspace_view.set_scene("scene-1", "ch-1")
-    window._current_prose_version = "v1"
+    window._refresh_prose_versions("ch-1", "scene-1", "v1")
     calls = []
     monkeypatch.setattr(
         window._application.scene_workflow,
@@ -518,7 +518,10 @@ def test_scene_change_exits_initial_quick_plan_adjustment(
     quick.start_button.click()
 
     assert quick.goal_edit.isReadOnly()
-    assert len(warnings) == 2
+    assert quick.start_button.text() == "生成写作方案"
+    assert quick.start_button.isEnabled()
+    assert not quick.adjust_button.isEnabled()
+    assert len(warnings) == 1
     assert not future.done()
     loop.close()
 
@@ -546,7 +549,7 @@ def test_project_switch_clears_pending_quick_plan_adjustment(tmp_path, qtbot):
     window._set_experience_mode("quick")
     window._select_destination("workspace")
     window._workspace_view.set_scene("scene-1", "ch-1")
-    window._current_prose_version = "v1"
+    window._refresh_prose_versions("ch-1", "scene-1", "v1")
     quick = window._workspace_view.findChild(QuickChapterView)
 
     quick.adjust_button.click()
@@ -591,7 +594,7 @@ def test_deep_plan_resolution_exits_quick_adjustment(
     window._set_experience_mode("quick")
     window._select_destination("workspace")
     window._workspace_view.set_scene("scene-1", "ch-1")
-    window._current_prose_version = "v1"
+    window._refresh_prose_versions("ch-1", "scene-1", "v1")
     calls = []
     monkeypatch.setattr(
         window._application.scene_workflow,

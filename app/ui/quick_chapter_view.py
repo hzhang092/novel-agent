@@ -48,6 +48,10 @@ class QuickChapterView(QWidget):
         self._plan: dict[str, Any] = {}
         self._plan_before_adjustment: dict[str, Any] | None = None
         self._start_allowed = False
+        self._adjust_allowed = False
+        self._waiting_for_plan = False
+        self._has_revision = False
+        self._has_scene = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -245,6 +249,11 @@ class QuickChapterView(QWidget):
         self.set_chapter_metadata(0, "")
         self._plan = {}
         self._plan_before_adjustment = None
+        self._start_allowed = False
+        self._adjust_allowed = False
+        self._waiting_for_plan = False
+        self._has_revision = False
+        self._has_scene = False
         self._set_plan_editable(False)
         self.goal_edit.clear()
         self.key_events_edit.clear()
@@ -267,14 +276,17 @@ class QuickChapterView(QWidget):
         has_revision: bool,
         publication_ready: bool,
     ) -> None:
+        self._has_scene = has_scene
+        self._waiting_for_plan = waiting_for_plan
+        self._has_revision = has_revision
         idle = has_scene and not generating
-        self._start_allowed = has_scene and not generating and (
-            waiting_for_plan or not has_revision
+        self._start_allowed = has_scene and (
+            waiting_for_plan or (not generating and not has_revision)
         )
-        self.start_button.setEnabled(
-            self._start_allowed or self._plan_before_adjustment is not None
+        self._adjust_allowed = has_scene and (
+            waiting_for_plan or (idle and has_revision)
         )
-        self.adjust_button.setEnabled(idle or (has_scene and waiting_for_plan))
+        self._refresh_plan_actions()
         self.save_button.setEnabled(idle and has_revision)
         self.regenerate_button.setEnabled(idle and has_revision)
         self.revision_instruction_edit.setEnabled(idle and has_revision)
@@ -396,9 +408,22 @@ class QuickChapterView(QWidget):
             self.hook_edit,
         ):
             editor.setReadOnly(not editable)
-        self.start_button.setEnabled(editable or self._start_allowed)
-        self.start_button.setText("应用" if editable else "开始")
-        self.adjust_button.setText("取消" if editable else "调整方案")
+        self._refresh_plan_actions()
+
+    def _refresh_plan_actions(self) -> None:
+        editing = self._plan_before_adjustment is not None
+        if editing:
+            self.start_button.setText("应用调整")
+            self.adjust_button.setText("取消")
+        elif self._waiting_for_plan:
+            self.start_button.setText("开始写作")
+            self.adjust_button.setText("调整方案")
+        else:
+            self.start_button.setText("生成写作方案")
+            self.adjust_button.setText("调整方案")
+
+        self.start_button.setEnabled(editing or self._start_allowed)
+        self.adjust_button.setEnabled(editing or self._adjust_allowed)
 
     def _select_revision(self, revision_id: str) -> None:
         if revision_id:
