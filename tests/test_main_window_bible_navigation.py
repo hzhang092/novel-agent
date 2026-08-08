@@ -342,7 +342,10 @@ def test_open_project_wires_scene_selection_once(tmp_path, qtbot, monkeypatch):
     assert selected == ["scene-open"]
 
 
-def test_quick_reopen_last_scene_selects_workspace_destination(tmp_path, qtbot, monkeypatch):
+@pytest.mark.parametrize("destination", ["story", "outline", "workspace"])
+def test_quick_reopen_restores_destination_and_resumes_workspace_lazily(
+    tmp_path, qtbot, monkeypatch, destination
+):
     project_dir = create_project(tmp_path, Project(title="Open", genre="Fantasy"))
     from app.storage.models import ChapterOutline, SceneOutline, VolumeOutline
     from app.storage.project_files import save_volume_outline
@@ -355,6 +358,7 @@ def test_quick_reopen_last_scene_selects_workspace_destination(tmp_path, qtbot, 
     )
     layout = EditorLayoutStore(project_dir)
     layout.layout.experience_mode = "quick"
+    layout.layout.quick_destination = destination
     layout.save()
 
     class Settings:
@@ -374,7 +378,62 @@ def test_quick_reopen_last_scene_selects_workspace_destination(tmp_path, qtbot, 
     window._on_open_project()
 
     assert window._experience_mode == "quick"
-    assert window.sidebar.currentItem().data(Qt.ItemDataRole.UserRole) == "workspace"
+    assert window.sidebar.currentItem().data(Qt.ItemDataRole.UserRole) == destination
+    if destination == "workspace":
+        assert window._workspace_view.current_scene_id == "scene"
+        assert window._workspace_view.current_chapter_id == "chapter"
+    else:
+        assert window._workspace_view.current_scene_id is None
+        window._select_destination("workspace")
+        assert window._workspace_view.current_scene_id == "scene"
+        assert window._workspace_view.current_chapter_id == "chapter"
+
+
+def test_quick_workspace_resume_uses_actionable_chapter_without_last_scene(
+    tmp_path, qtbot, monkeypatch
+):
+    from app.storage.models import ChapterOutline, SceneOutline, VolumeOutline
+    from app.storage.project_files import save_volume_outline
+
+    project_dir = create_project(tmp_path, Project(title="Open", genre="Fantasy"))
+    save_volume_outline(
+        project_dir,
+        VolumeOutline(
+            id="volume",
+            chapters=[
+                ChapterOutline(id="chapter-a", scenes=[SceneOutline(id="scene-a")]),
+                ChapterOutline(
+                    id="chapter-b",
+                    needs_review=True,
+                    scenes=[SceneOutline(id="scene-b")],
+                ),
+            ],
+        ),
+    )
+    layout = EditorLayoutStore(project_dir)
+    layout.layout.experience_mode = "quick"
+    layout.layout.quick_destination = "workspace"
+    layout.save()
+
+    class Settings:
+        def value(self, _key):
+            return None
+
+        def setValue(self, _key, _value):
+            pass
+
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    monkeypatch.setattr(
+        "app.ui.main_window.QFileDialog.getExistingDirectory", lambda *_args: str(project_dir)
+    )
+    monkeypatch.setattr("PySide6.QtCore.QSettings", Settings)
+
+    window._on_open_project()
+
+    assert window._previous_destination == "workspace"
+    assert window._workspace_view.current_scene_id == "scene-b"
+    assert window._workspace_view.current_chapter_id == "chapter-b"
 
 
 def test_bible_navigation_uses_event_bus_facade(qtbot, monkeypatch):

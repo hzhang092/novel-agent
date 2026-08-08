@@ -233,6 +233,35 @@ class MainWindow(QMainWindow):
             None,
         )
 
+    def _resume_scene_id(self) -> str | None:
+        if self._current_project_dir is None:
+            return None
+        from PySide6.QtCore import QSettings
+
+        settings = QSettings()
+        last_scene_id = settings.value(f"last_scene/{self._current_project_dir}")
+        if isinstance(last_scene_id, str) and self._find_chapter_for_scene(last_scene_id):
+            return last_scene_id
+        from app.application.scene_workflow import choose_resume_chapter
+
+        chapter_id = choose_resume_chapter(self._current_project_dir)
+        return self._scene_for_chapter(chapter_id) if chapter_id else None
+
+    def _ensure_workspace_resume_scene(self) -> None:
+        if self._current_project_dir is None:
+            return
+        current_scene_id = self._workspace_view.current_scene_id
+        if current_scene_id and self._find_chapter_for_scene(current_scene_id):
+            if self._experience_mode == "deep" and self._outline_view.is_loaded:
+                self._outline_view.activate_scene(current_scene_id, emit=False)
+            return
+        scene_id = self._resume_scene_id()
+        if scene_id is None:
+            return
+        self._on_scene_selected(scene_id)
+        if self._experience_mode == "deep" and self._outline_view.is_loaded:
+            self._outline_view.activate_scene(scene_id, emit=False)
+
     def _chapter_length(self, chapter_id: str) -> tuple[str, int]:
         if self._current_project_dir is None:
             return "standard", 3000
@@ -539,6 +568,7 @@ class MainWindow(QMainWindow):
         # Load workspace when navigating to it
         if key == "workspace" and self._current_project_dir is not None:
             self._workspace_view.load_project_dir(self._current_project_dir)
+            self._ensure_workspace_resume_scene()
 
         self._previous_tab_index = index
         self._previous_destination = key
@@ -781,23 +811,12 @@ class MainWindow(QMainWindow):
         from PySide6.QtCore import QSettings
         settings = QSettings()
         settings.setValue("projects/last_parent", str(project_dir.parent))
-        key = f"last_scene/{Path(dir_path)}"
-        last_scene_id = settings.value(key)
-        resume_scene_id = None
-        if last_scene_id and isinstance(last_scene_id, str):
-            chapter_id = self._find_chapter_for_scene(last_scene_id)
-            if chapter_id:
-                resume_scene_id = last_scene_id
-        if resume_scene_id is None:
-            from app.application.scene_workflow import choose_resume_chapter
-
-            chapter_id = choose_resume_chapter(project_dir)
-            resume_scene_id = self._scene_for_chapter(chapter_id) if chapter_id else None
-        if resume_scene_id:
-            self._select_destination("workspace")
-            self._outline_view.activate_scene(resume_scene_id)
-        else:
-            self.sidebar.setCurrentRow(0)
+        current_item = self.sidebar.currentItem()
+        if current_item is not None:
+            self._previous_tab_index = self.sidebar.currentRow()
+            self._previous_destination = current_item.data(Qt.ItemDataRole.UserRole)
+        if self._previous_destination == "workspace":
+            self._ensure_workspace_resume_scene()
 
         # Check for legacy character files and offer migration
         self._check_legacy_migration(Path(dir_path))
