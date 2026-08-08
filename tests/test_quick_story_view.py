@@ -24,7 +24,13 @@ from app.storage.models import (
     StyleGuide,
     VolumeOutline,
 )
-from app.storage.project_files import create_project, create_quick_project, load_planning, load_project
+from app.storage.project_files import (
+    create_project,
+    create_quick_project,
+    load_planning,
+    load_project,
+    save_volume_outline,
+)
 from app.ui.quick_story_view import QuickStoryView
 from app.providers.config import ProviderConfigurationError, get_configured_provider_for_step
 
@@ -83,6 +89,34 @@ def test_story_view_saves_brief_and_none_romance_clears_romance_chip(tmp_path, q
     assert reopened.ending_edit.text() == "可调整的远方"
     assert not reopened.generate_button.isHidden()
     assert not reopened.adopt_button.isEnabled()
+
+
+def test_story_projection_offers_outline_continuation_only_with_chapters(tmp_path, qtbot):
+    project_dir = create_project(tmp_path, Project(title="继续"))
+    view = QuickStoryView()
+    qtbot.addWidget(view)
+    view.bind_application(build_project_application(project_dir))
+
+    assert view.continue_outline_button.isHidden()
+
+    save_volume_outline(
+        project_dir,
+        VolumeOutline(
+            id="volume-1",
+            chapters=[
+                ChapterOutline(
+                    id="chapter-1",
+                    scenes=[SceneOutline(id="scene-1")],
+                )
+            ],
+        ),
+    )
+    view.refresh_quick_projection()
+
+    assert not view.continue_outline_button.isHidden()
+    assert view.continue_outline_button.isEnabled()
+    with qtbot.waitSignal(view.outline_requested, timeout=1000):
+        view.continue_outline_button.click()
 
 
 @pytest.mark.asyncio

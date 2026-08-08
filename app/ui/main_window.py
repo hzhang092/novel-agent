@@ -193,6 +193,10 @@ class MainWindow(QMainWindow):
         self._on_scene_selected(scene_id)
         self._select_destination("workspace")
 
+    def _open_quick_outline(self) -> None:
+        self._set_experience_mode("quick")
+        self._select_destination("outline")
+
     def _open_deep_character(self, character_id: str) -> None:
         self._set_experience_mode("deep")
         self._select_destination("bible")
@@ -354,6 +358,7 @@ class MainWindow(QMainWindow):
         )
         self._quick_story_view.settings_requested.connect(self._on_llm_settings)
         self._quick_story_view.bootstrap_approved.connect(self._reload_after_bootstrap)
+        self._quick_story_view.outline_requested.connect(self._open_quick_outline)
         self._quick_story_view.character_requested.connect(self._open_deep_character)
         self._quick_story_view.world_element_requested.connect(self._open_deep_world_element)
         self._quick_outline_view.scene_selected.connect(self._open_quick_scene)
@@ -376,6 +381,7 @@ class MainWindow(QMainWindow):
         if self._current_project_dir is not None:
             self._outline_view.load_project_dir(self._current_project_dir)
             self._refresh_quick_outline_if_clean()
+            self._quick_story_view.refresh_quick_projection()
 
     def _bind_project_application(self, project_dir: Path) -> None:
         self._cancel_quick_plan_adjustment()

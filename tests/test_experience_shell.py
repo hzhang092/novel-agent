@@ -111,6 +111,43 @@ def test_switching_preserves_shared_writing_and_outline_state(tmp_path, qtbot):
     assert window._outline_view._selected_node_id == "chapter-1"
 
 
+def test_story_continuation_cta_opens_quick_outline(tmp_path, qtbot):
+    window = _outline_window(tmp_path, qtbot)
+    _switch(window, "quick")
+    window._quick_story_view.refresh_quick_projection()
+    window._select_destination("story")
+
+    button = window._quick_story_view.continue_outline_button
+    assert not button.isHidden()
+
+    button.click()
+
+    assert window._experience_mode == "quick"
+    assert window._previous_destination == "outline"
+    assert window.stack.currentWidget() is window._quick_outline_view
+
+
+def test_bootstrap_reload_refreshes_story_continuation_cta(tmp_path, qtbot):
+    window = _window(tmp_path, qtbot)
+    save_volume_outline(
+        window._current_project_dir,
+        VolumeOutline(
+            id="volume-1",
+            chapters=[
+                ChapterOutline(
+                    id="chapter-1",
+                    scenes=[SceneOutline(id="scene-1")],
+                )
+            ],
+        ),
+    )
+
+    assert window._quick_story_view.continue_outline_button.isHidden()
+    window._reload_after_bootstrap()
+
+    assert not window._quick_story_view.continue_outline_button.isHidden()
+
+
 def test_switching_from_clean_deep_outline_does_not_save_before_quick_refresh(
     tmp_path, qtbot, monkeypatch
 ):

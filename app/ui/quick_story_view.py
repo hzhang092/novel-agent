@@ -40,6 +40,7 @@ _ROMANCE_CHIPS = {"恋人", "暧昧"}
 class QuickStoryView(QWidget):
     settings_requested = Signal()
     bootstrap_approved = Signal()
+    outline_requested = Signal()
     character_requested = Signal(str)
     world_element_requested = Signal(str)
 
@@ -137,6 +138,10 @@ class QuickStoryView(QWidget):
         layout.addWidget(self.quick_projection_label)
         self.quick_projection_actions = QHBoxLayout()
         layout.addLayout(self.quick_projection_actions)
+        self.continue_outline_button = QPushButton("继续到大纲 →")
+        self.continue_outline_button.clicked.connect(self.outline_requested)
+        self.continue_outline_button.setVisible(False)
+        layout.addWidget(self.continue_outline_button)
 
         self.proposal_section = QWidget()
         content_layout.addWidget(self.proposal_section)
@@ -281,6 +286,7 @@ class QuickStoryView(QWidget):
             if item.widget():
                 item.widget().deleteLater()
         self.quick_projection_label.clear()
+        self.continue_outline_button.setVisible(False)
         if projection is None:
             return
         characters = "、".join(
@@ -293,6 +299,8 @@ class QuickStoryView(QWidget):
             f"主角：{characters}\n"
             f"核心世界：{setting.geography or '未设定'}；规则：{'、'.join(setting.rules) or '未设定'}"
         )
+        has_chapters = any(arc.chapter_cards for arc in projection.arcs)
+        self.continue_outline_button.setVisible(has_chapters)
         for character in projection.main_characters:
             button = QPushButton(f"高级角色：{character.name}")
             button.clicked.connect(
