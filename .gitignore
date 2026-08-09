@@ -3,6 +3,7 @@
 .agents/
 .claude/
 .codex/
+.ai-bridge/
 CLAUDE.md
 AGENTS.md
 docs/*
