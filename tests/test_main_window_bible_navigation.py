@@ -342,6 +342,96 @@ def test_open_project_wires_scene_selection_once(tmp_path, qtbot, monkeypatch):
     assert selected == ["scene-open"]
 
 
+def test_open_project_recovers_publication_before_resuming_workspace(
+    tmp_path, qtbot, monkeypatch
+):
+    import app.storage.timeline_repository as timeline
+    from app.storage.models import ChapterOutline, SceneOutline, VolumeOutline
+    from app.storage.project_files import save_volume_outline
+
+    project_dir = create_project(tmp_path, Project(title="Open", genre="Fantasy"))
+    save_volume_outline(
+        project_dir,
+        VolumeOutline(
+            id="volume", chapters=[ChapterOutline(id="chapter", scenes=[SceneOutline(id="scene")])]
+        ),
+    )
+    layout = EditorLayoutStore(project_dir)
+    layout.layout.experience_mode = "quick"
+    layout.layout.quick_destination = "workspace"
+    layout.save()
+
+    events = []
+
+    def recover(_project_dir):
+        events.append("recover")
+
+    class Settings:
+        def value(self, _key):
+            return "scene"
+
+        def setValue(self, _key, _value):
+            pass
+
+    monkeypatch.setattr(timeline, "recover_pending_publication", recover)
+    monkeypatch.setattr(
+        "app.ui.main_window.QFileDialog.getExistingDirectory",
+        lambda *_args: str(project_dir),
+    )
+    monkeypatch.setattr("PySide6.QtCore.QSettings", Settings)
+
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    original_scene_selected = window._on_scene_selected
+
+    def scene_selected(scene_id):
+        events.append(f"scene:{scene_id}")
+        return original_scene_selected(scene_id)
+
+    monkeypatch.setattr(window, "_on_scene_selected", scene_selected)
+
+    window._on_open_project()
+
+    assert events.index("recover") < events.index("scene:scene")
+
+
+def test_open_project_recovery_failure_keeps_previous_project_bound(
+    tmp_path, qtbot, monkeypatch
+):
+    import app.storage.timeline_repository as timeline
+
+    current_dir = create_project(
+        tmp_path / "current", Project(title="Current", genre="Fantasy")
+    )
+    other_dir = create_project(
+        tmp_path / "other", Project(title="Other", genre="Fantasy")
+    )
+    window = MainWindow()
+    qtbot.addWidget(window)
+    current_project = window._repo.open(current_dir)
+    window._current_project = current_project
+    window._bind_project_application(current_dir)
+    current_application = window._application
+
+    monkeypatch.setattr(
+        "app.ui.main_window.QFileDialog.getExistingDirectory",
+        lambda *_args: str(other_dir),
+    )
+
+    def recover(_project_dir):
+        raise ValueError("recovery failed")
+
+    monkeypatch.setattr(timeline, "recover_pending_publication", recover)
+
+    with pytest.raises(ValueError, match="recovery failed"):
+        window._on_open_project()
+
+    assert window._current_project is current_project
+    assert window._current_project_dir == current_dir
+    assert window._application is current_application
+    assert window._application.project_dir == current_dir
+
+
 @pytest.mark.parametrize("destination", ["story", "outline", "workspace"])
 def test_quick_reopen_restores_destination_and_resumes_workspace_lazily(
     tmp_path, qtbot, monkeypatch, destination

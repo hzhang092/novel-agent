@@ -800,11 +800,11 @@ class MainWindow(QMainWindow):
         if not self._maybe_close_current_project():
             return
 
+        from app.storage.timeline_repository import recover_pending_publication
+        recover_pending_publication(project_dir)
         self._current_project = project
         self._current_project_dir = project_dir
         self._bind_project_application(project_dir)
-        from app.storage.timeline_repository import recover_pending_publication
-        recover_pending_publication(project_dir)
         self.setWindowTitle(f"NovelForge — {project.title}")
 
         self._set_nav_items_enabled(True)
