@@ -11,6 +11,7 @@ from app.storage.models import (
     ReviewResult,
     SceneGenerationRecord,
     SceneOutline,
+    ScenePlan,
     VolumeOutline,
 )
 from app.storage.project_files import (
@@ -65,6 +66,63 @@ async def test_scene_workflow_start_owns_a_real_pipeline_task(tmp_path):
     workflow.start("scene-1", "chapter-1", SceneWorkflowObserver())
     await workflow.task
     assert workflow.state.draft_record.revision_number == 2
+
+
+@pytest.mark.asyncio
+async def test_plan_checkpoint_reports_waiting_and_continuation_without_busy_cycle(
+    tmp_path,
+):
+    project_dir = _project_with_scenes(tmp_path, ("scene-1", "chapter-1"))
+    plan_seen = asyncio.Event()
+    events = []
+
+    class Provider:
+        async def close(self):
+            pass
+
+    class Pipeline:
+        async def generate_stream(self, *_args, **kwargs):
+            plan = ScenePlan(scene_id="scene-1", scene_goal="开场冲突")
+            approved = await kwargs["on_plan_ready"](plan)
+            events.append(("pipeline", approved))
+            yield None, GenerationResult(scene_id="scene-1", plan=plan, prose="draft")
+
+    def on_plan(plan):
+        events.append(("plan", plan))
+        plan_seen.set()
+
+    workflow = SceneWorkflow(
+        project_dir,
+        provider_loader=lambda: (Provider(), Provider(), Provider(), Provider()),
+        pipeline_factory=Pipeline,
+    )
+    workflow.start(
+        "scene-1",
+        "chapter-1",
+        SceneWorkflowObserver(
+            plan=on_plan,
+            generating=lambda value: events.append(("generating", value)),
+            status=lambda value: events.append(("status", value)),
+        ),
+    )
+
+    await plan_seen.wait()
+    assert workflow.waiting_for_plan is True
+    assert [value for kind, value in events if kind == "generating"] == [True]
+    plan_index = next(index for index, event in enumerate(events) if event[0] == "plan")
+    assert events[plan_index + 1] == ("status", "写作方案已生成，等待确认后继续…")
+
+    workflow.approve_plan(events[plan_index][1])
+    await workflow.task
+
+    continuation_index = next(
+        index
+        for index, event in enumerate(events)
+        if event == ("status", "正在继续生成…")
+    )
+    pipeline_index = next(index for index, event in enumerate(events) if event[0] == "pipeline")
+    assert continuation_index < pipeline_index
+    assert [value for kind, value in events if kind == "generating"] == [True, False]
 
 
 def test_blocked_start_does_not_emit_false_busy(tmp_path):

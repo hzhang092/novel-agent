@@ -570,12 +570,15 @@ class SceneWorkflow:
         self._plan_future = asyncio.get_running_loop().create_future()
         self.state.planner_decision = plan.model_dump(mode="json")
         self._observer.plan(self.state.planner_decision)
+        self._observer.status("写作方案已生成，等待确认后继续…")
         try:
             approved, edited = await self._plan_future
             if approved and edited is not None:
                 validated = type(plan).model_validate(edited)
                 for field, value in validated.model_dump().items():
                     setattr(plan, field, value)
+            if approved:
+                self._observer.status("正在继续生成…")
             return approved
         finally:
             self._plan_future = None

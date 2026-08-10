@@ -19,7 +19,7 @@ from app.storage.project_files import (
     save_volume_outline,
 )
 from app.application.errors import OperationBlockedError
-from app.pipeline.pipeline import AgentTraceEntry
+from app.pipeline.pipeline import AgentTraceEntry, GenerationResult
 from app.ui.quick_chapter_view import QuickChapterView
 from app.ui.main_window import MainWindow
 
@@ -830,6 +830,116 @@ def test_quick_scene_activity_keeps_origin_identity_while_scene_guard_holds(
 
     assert window.findChild(QProgressBar, "quick_activity_progress").isHidden()
     assert "第 1 章" in window.statusBar().currentMessage()
+
+
+@pytest.mark.asyncio
+async def test_quick_scene_activity_uses_real_plan_checkpoint_while_browsing_away(
+    tmp_path, qtbot
+):
+    project_dir = _project(tmp_path)
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    window._set_experience_mode("quick")
+    workspace = window._workspace_view
+    workspace.set_scene("scene-1", "ch-1")
+    workflow = window._application.scene_workflow
+    continuation_reached = asyncio.Event()
+    writer_started = asyncio.Event()
+    release_continuation = asyncio.Event()
+    release_writer = asyncio.Event()
+
+    class Provider:
+        async def close(self):
+            pass
+
+    class Pipeline:
+        async def generate_stream(self, *_args, **kwargs):
+            on_trace = kwargs["on_trace"]
+            plan = ScenePlan(scene_id="scene-1", scene_goal="开场冲突")
+            on_trace(
+                [
+                    AgentTraceEntry(
+                        agent_name="Scene Planner", stage="planner", status="running"
+                    )
+                ]
+            )
+            on_trace(
+                [
+                    AgentTraceEntry(
+                        agent_name="Scene Planner", stage="planner", status="completed"
+                    )
+                ]
+            )
+            approved = await kwargs["on_plan_ready"](plan)
+            assert approved is True
+            continuation_reached.set()
+            await release_continuation.wait()
+            on_trace(
+                [
+                    AgentTraceEntry(
+                        agent_name="Writer", stage="writer", status="running"
+                    )
+                ]
+            )
+            writer_started.set()
+            await release_writer.wait()
+            yield None, GenerationResult(
+                scene_id="scene-1", plan=plan, prose="draft"
+            )
+
+    workflow._provider_loader = lambda: (
+        Provider(),
+        Provider(),
+        Provider(),
+        Provider(),
+    )
+    workflow._pipeline_factory = Pipeline
+    workflow.start(
+        "scene-1", "ch-1", window._scene_workflow_observer("scene-1")
+    )
+    workspace.begin_generation()
+
+    async def wait_for_plan_checkpoint():
+        while not workflow.waiting_for_plan:
+            await asyncio.sleep(0)
+
+    try:
+        await asyncio.wait_for(wait_for_plan_checkpoint(), timeout=1)
+        assert workspace.quick_plan()["scene_goal"] == "开场冲突"
+        assert window.statusBar().currentMessage() == (
+            "快速创作 · 第 1 章：写作方案已生成，等待确认后继续…"
+        )
+        assert "正在规划本章" not in window.statusBar().currentMessage()
+
+        window._select_destination("outline")
+        assert window.statusBar().currentMessage() == (
+            "快速创作 · 第 1 章：写作方案已生成，等待确认后继续…"
+        )
+
+        window._on_plan_approved(workspace.quick_plan())
+        await continuation_reached.wait()
+        assert window.statusBar().currentMessage() == (
+            "快速创作 · 第 1 章：正在继续生成…"
+        )
+
+        release_continuation.set()
+        await writer_started.wait()
+        assert window.statusBar().currentMessage() == "快速创作 · 第 1 章：正在写作…"
+
+        release_writer.set()
+        await workflow.task
+        assert workflow.state.active is False
+    finally:
+        if workflow.waiting_for_plan:
+            workflow.reject_plan()
+        release_continuation.set()
+        release_writer.set()
+        if workflow.task is not None and not workflow.task.done():
+            try:
+                await workflow.task
+            except asyncio.CancelledError:
+                pass
 
 
 def test_quick_scene_activity_reports_failure_after_finishing_while_away(
