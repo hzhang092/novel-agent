@@ -164,6 +164,95 @@ async def test_stale_run_records_source_and_blocks_publication_until_explicit_co
 
 
 @pytest.mark.asyncio
+async def test_continue_stale_uses_supplied_observer_for_busy_callbacks(
+    tmp_path, monkeypatch
+):
+    project_dir = _project(tmp_path)
+    record = SceneGenerationRecord(
+        scene_id="scene-1",
+        source_chapter_id="chapter-1",
+        status="draft",
+        draft_text="旧设定正文",
+        review={"overall_pass": True},
+        stale_input=True,
+    )
+    from app.storage.project_files import save_scene_generation_record
+
+    save_scene_generation_record(project_dir, record)
+    workflow = SceneWorkflow(project_dir)
+    workflow.restore_draft(record, "chapter-1")
+    monkeypatch.setattr(workflow, "_analyze_draft", AsyncMock())
+    events = []
+
+    await workflow.continue_stale(
+        record.revision_id,
+        observer=SceneWorkflowObserver(
+            generating=lambda value: events.append(("generating", value)),
+            status=lambda value: events.append(("status", value)),
+        ),
+    )
+
+    assert events[:2] == [
+        ("generating", True),
+        ("status", "正在复核旧设定..."),
+    ]
+    assert events.count(("generating", False)) == 1
+
+
+@pytest.mark.asyncio
+async def test_cancel_stops_external_secondary_analysis_without_late_write(
+    tmp_path, monkeypatch
+):
+    project_dir = _project(tmp_path)
+    started = asyncio.Event()
+    analysis_providers = [_Provider(), _Provider()]
+    provider_iter = iter(analysis_providers)
+    writes = []
+    from app.storage import project_files
+
+    original_save = project_files.save_scene_generation_record
+
+    def save_record(*args, **kwargs):
+        writes.append(args[1])
+        return original_save(*args, **kwargs)
+
+    monkeypatch.setattr(project_files, "save_scene_generation_record", save_record)
+    monkeypatch.setattr("app.providers.config.load_provider_config", lambda: {})
+    monkeypatch.setattr(
+        "app.providers.config.get_provider_for_step",
+        lambda *_args: next(provider_iter),
+    )
+
+    class Pipeline:
+        async def analyze_draft(self, *_args, **_kwargs):
+            started.set()
+            await asyncio.Event().wait()
+
+    events = []
+    workflow = SceneWorkflow(project_dir, pipeline_factory=Pipeline)
+    task = asyncio.create_task(
+        workflow.save_edited_draft(
+            "edited", SceneGenerationRecord(scene_id="scene-1"),
+            SceneWorkflowObserver(generating=lambda value: events.append(value)),
+        )
+    )
+
+    await started.wait()
+    workflow.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert task.cancelled()
+    assert all(provider.cancel_called for provider in analysis_providers)
+    assert workflow._providers == []
+    assert workflow.state.active is False
+    assert workflow.run_guard.active_owner is None
+    assert events.count(False) == 1
+    assert len(writes) == 1
+
+
+@pytest.mark.asyncio
 async def test_cancel_stops_provider_and_saves_partial_prose_as_unpublished_draft(
     tmp_path,
 ):
@@ -398,6 +487,33 @@ async def test_failed_stale_continuation_releases_the_project_run(
 
     assert workflow.state.active is False
     assert workflow.run_guard.active_owner is None
+
+
+@pytest.mark.asyncio
+async def test_blocked_continuations_do_not_emit_false_busy(tmp_path):
+    workflow = SceneWorkflow(tmp_path)
+    workflow.state.scene_id = "scene-1"
+    workflow.state.active = True
+    workflow.state.draft_record = SceneGenerationRecord(scene_id="scene-1")
+    workflow._pipeline = object()
+    workflow._result = object()
+    workflow.run_guard.acquire("scene_workflow")
+    workflow._task = asyncio.get_running_loop().create_future()
+    review_events = []
+    stale_events = []
+
+    with pytest.raises(OperationBlockedError):
+        await workflow.continue_review(
+            SceneWorkflowObserver(generating=review_events.append)
+        )
+    with pytest.raises(OperationBlockedError):
+        await workflow.continue_stale(
+            observer=SceneWorkflowObserver(generating=stale_events.append)
+        )
+
+    assert review_events == []
+    assert stale_events == []
+    workflow._task.cancel()
 
 
 @pytest.mark.asyncio

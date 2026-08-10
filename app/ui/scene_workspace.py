@@ -413,6 +413,7 @@ class SceneWorkspaceView(QWidget):
     def begin_generation(self, waiting_message: str = "正在组装上下文...") -> None:
         """Reset the workspace and enter generation state."""
         self.set_generating(True)
+        self.set_status(waiting_message)
         self.set_prose_text("")
         self.clear_trace()
         self.show_trace_waiting(waiting_message)
@@ -436,9 +437,10 @@ class SceneWorkspaceView(QWidget):
         self._current_scene_id = scene_id
         self._current_chapter_id = chapter_id
         self._quick_chapter.set_chapter(chapter_id, scene_id)
-        self._generate_btn.setEnabled(True)
-        self._regenerate_btn.setEnabled(True)
-        self.set_status("就绪")
+        self._generate_btn.setEnabled(not self._generating)
+        self._regenerate_btn.setEnabled(not self._generating)
+        if not self._generating:
+            self.set_status("就绪")
         self.set_next_scene_available(True)
         self._sync_quick_workflow_state()
 

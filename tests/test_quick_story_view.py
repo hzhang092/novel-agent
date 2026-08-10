@@ -15,6 +15,8 @@ from app.storage.models import (
     CharacterCore,
     CharacterState,
     ChapterOutline,
+    BootstrapPatchOperation,
+    BootstrapPatchPreview,
     Project,
     ProviderConfig,
     SceneOutline,
@@ -314,6 +316,112 @@ async def test_bootstrap_generation_keeps_busy_status_persistent_across_stage_ch
 
 
 @pytest.mark.asyncio
+async def test_story_provider_action_is_rejected_while_scene_workflow_runs(tmp_path, qtbot):
+    project_dir = create_project(tmp_path, Project(title="场景运行中"))
+    application = build_project_application(project_dir)
+    view = QuickStoryView()
+    qtbot.addWidget(view)
+    view.bind_application(application)
+
+    events = []
+    view.activity_changed.connect(lambda active, message: events.append((active, message)))
+    assert application.scene_workflow.run_guard.acquire("scene_workflow")
+    try:
+        view.generate_button.click()
+
+        assert view.action_status_label.text() == "已有任务正在运行"
+        assert view.generate_button.isEnabled()
+        assert events == []
+    finally:
+        view.cancel_generation()
+        await asyncio.sleep(0)
+        application.scene_workflow.run_guard.release("scene_workflow")
+
+
+@pytest.mark.asyncio
+async def test_provider_story_operations_emit_activity_but_adoption_does_not(tmp_path, qtbot):
+    project_dir = create_project(tmp_path, Project(title="活动信号"))
+    application = build_project_application(project_dir)
+    application.story_designer._provider_factory = lambda: MockProvider(
+        structured_response=_proposal()
+    )
+    view = QuickStoryView()
+    qtbot.addWidget(view)
+    view.bind_application(application)
+
+    events = []
+    view.activity_changed.connect(lambda active, message: events.append((active, message)))
+
+    async def run_blocked(action, response, running, completed):
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class WaitingProvider(MockProvider):
+            async def generate_structured(self, *args, **kwargs):
+                started.set()
+                await release.wait()
+                return await super().generate_structured(*args, **kwargs)
+
+        application.story_designer._provider_factory = lambda: WaitingProvider(
+            structured_response=response
+        )
+        events.clear()
+        action()
+        await started.wait()
+        assert events == [(True, running)]
+        task = view._proposal_task
+        release.set()
+        await task
+        await asyncio.sleep(0)
+        assert events == [(True, running), (False, completed)]
+
+    await run_blocked(
+        view.generate_button.click,
+        _proposal(),
+        "正在生成故事提案…",
+        "故事提案已生成",
+    )
+    view.adjust_edit.setText("更紧张")
+    await run_blocked(
+        view.adjust_button.click,
+        _proposal(),
+        "正在调整故事提案…",
+        "故事提案已调整",
+    )
+    await run_blocked(
+        view.another_button.click,
+        _proposal(),
+        "正在更换故事方向…",
+        "已生成新的故事方向",
+    )
+
+    events.clear()
+    view.adopt_button.click()
+    await view._proposal_task
+    await asyncio.sleep(0)
+    assert events == []
+
+    await run_blocked(
+        view.bootstrap_button.click,
+        _bootstrap(),
+        "正在生成故事启动包…",
+        "故事启动包已生成",
+    )
+    view.bootstrap_adjust_edit.setText("更明快")
+    await run_blocked(
+        view.adjust_bootstrap_button.click,
+        BootstrapPatchPreview(
+            base_revision=1,
+            operations=[BootstrapPatchOperation(path="/overview/geography", value="城")],
+            changes=["地理"],
+            consequences=["氛围"],
+        ),
+        "正在生成启动包调整建议…",
+        "启动包调整建议已生成，请确认是否应用",
+    )
+
+
+@pytest.mark.asyncio
 async def test_adjusting_or_replacing_an_unchanged_brief_keeps_the_draft_current(tmp_path, qtbot):
     project_dir = create_project(tmp_path, Project(title="调整"))
     application = build_project_application(project_dir)
@@ -405,19 +513,25 @@ async def test_rebinding_cancels_a_late_proposal_without_updating_the_next_proje
     second_dir = create_project(tmp_path / "second", Project(title="第二本"))
     view = QuickStoryView()
     qtbot.addWidget(view)
+    events = []
+    view.activity_changed.connect(lambda active, message: events.append((active, message)))
     view.bind_application(first_application)
     view.premise_edit.setPlainText("第一本故事")
     view._start_task(view._generate_proposal())
     first_task = view._proposal_task
     await started.wait()
+    assert events == [(True, "正在生成故事提案…")]
 
     view.bind_application(build_project_application(second_dir))
+    assert events == [(True, "正在生成故事提案…"), (False, "")]
     release.set()
     await first_task
+    await asyncio.sleep(0)
 
     assert load_planning(second_dir).active_draft is None
     assert view.proposal_label.text() == "尚未生成"
     assert view.premise_edit.toPlainText() == ""
+    assert events == [(True, "正在生成故事提案…"), (False, "")]
 
 
 @pytest.mark.asyncio

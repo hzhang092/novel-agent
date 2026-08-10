@@ -17,12 +17,13 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QProgressBar,
     QSplitter,
     QStackedWidget,
     QWidget,
 )
 
-from app.application.errors import ConcurrentModificationError
+from app.application.errors import ConcurrentModificationError, OperationBlockedError
 from app.application.project_context import (
     ProjectApplicationContext,
     build_project_application,
@@ -77,9 +78,85 @@ class MainWindow(QMainWindow):
         self._token_status_label = QLabel("Tokens: —")
         self._token_status_label.setStyleSheet("color: #888; font-size: 11px; padding: 0 8px;")
         self.statusBar().addPermanentWidget(self._token_status_label)
+        self._quick_activity_message = ""
+        self._quick_activity_owner = None
+        self._scheduled_workflow_tasks = set()
+        self._quick_activity_progress = QProgressBar()
+        self._quick_activity_progress.setObjectName("quick_activity_progress")
+        self._quick_activity_progress.setRange(0, 0)
+        self._quick_activity_progress.setTextVisible(False)
+        self._quick_activity_progress.setFixedWidth(120)
+        self._quick_activity_progress.hide()
+        self.statusBar().addWidget(self._quick_activity_progress)
+
+    def _set_quick_activity(
+        self, active: bool, message: str = "", *, owner=None
+    ) -> None:
+        previous_message = self._quick_activity_message
+        if active:
+            self._quick_activity_owner = owner if owner is not None else self
+            self._quick_activity_progress.show()
+            if message:
+                self._quick_activity_message = message
+                self.statusBar().showMessage(message)
+            return
+
+        if owner is not None:
+            if self._quick_activity_owner not in (None, owner):
+                return
+            self._quick_activity_owner = owner
+        else:
+            self._quick_activity_owner = None
+        self._quick_activity_progress.hide()
+        if message:
+            self._quick_activity_message = message
+            self.statusBar().showMessage(message, 5000)
+        else:
+            self._quick_activity_message = ""
+            if self.statusBar().currentMessage() == previous_message:
+                self.statusBar().clearMessage()
+
+    def _on_quick_story_activity(self, active: bool, message: str) -> None:
+        text = f"快速创作 · {message}" if message else ""
+        self._set_quick_activity(active, text, owner=self._quick_story_view)
+
+    def _quick_trace_phase(self, entries) -> str:
+        phases = {
+            "planner": "正在规划本章…",
+            "characters": "正在分析角色意图…",
+            "character": "正在分析角色意图…",
+            "character_intent": "正在分析角色意图…",
+            "writer": "正在写作…",
+            "reviewer": "正在审查…",
+            "fact_extractor": "正在整理记忆…",
+            "state_updater": "正在整理记忆…",
+        }
+        for entry in reversed(entries):
+            child_phase = self._quick_trace_phase(getattr(entry, "children", []))
+            if child_phase:
+                return child_phase
+            if getattr(entry, "status", "") == "running":
+                phase = phases.get(getattr(entry, "stage", ""))
+                if phase:
+                    return phase
+        return ""
+
+    def _cancel_active_project_work(self) -> None:
+        for task in tuple(self._scheduled_workflow_tasks):
+            if not task.done():
+                task.cancel()
+        self._scheduled_workflow_tasks.clear()
+        self._quick_story_view.cancel_generation()
+        if self._application is not None:
+            workflow = self._application.scene_workflow
+            task = workflow.task
+            if workflow.state.active or (task is not None and not task.done()):
+                workflow.cancel()
+        self._set_quick_activity(False)
 
     def closeEvent(self, event) -> None:
         if self._maybe_close_current_project():
+            self._cancel_active_project_work()
             event.accept()
         else:
             event.ignore()
@@ -357,6 +434,9 @@ class MainWindow(QMainWindow):
             self._open_deep_control
         )
         self._quick_story_view.settings_requested.connect(self._on_llm_settings)
+        activity_changed = getattr(self._quick_story_view, "activity_changed", None)
+        if activity_changed is not None:
+            activity_changed.connect(self._on_quick_story_activity)
         self._quick_story_view.bootstrap_approved.connect(self._reload_after_bootstrap)
         self._quick_story_view.outline_requested.connect(self._open_quick_outline)
         self._quick_story_view.character_requested.connect(self._open_deep_character)
@@ -384,6 +464,7 @@ class MainWindow(QMainWindow):
             self._quick_story_view.refresh_quick_projection()
 
     def _bind_project_application(self, project_dir: Path) -> None:
+        self._cancel_active_project_work()
         self._cancel_quick_plan_adjustment()
         self._workspace_view.clear_scene()
         self._current_prose_version = None
@@ -1179,6 +1260,43 @@ class MainWindow(QMainWindow):
         )
         workspace.show_fact_approval(scene_id, record.revision_id, facts, changes)
 
+    def _show_operation_blocked(self, application) -> None:
+        if self._application is not application:
+            return
+        message = "已有任务正在运行，请稍后再试"
+        self._workspace_view.set_status(message)
+        QMessageBox.warning(self, "操作未执行", message)
+
+    def _schedule_workflow_task(
+        self,
+        operation,
+        *,
+        application,
+        scene_id: str,
+        on_blocked=None,
+        on_error=None,
+    ):
+        async def run():
+            try:
+                await operation()
+            except OperationBlockedError:
+                self._show_operation_blocked(application)
+                if (
+                    on_blocked is not None
+                    and self._application is application
+                    and self._workspace_view.current_scene_id == scene_id
+                ):
+                    on_blocked()
+            except Exception as error:
+                logger.exception("Scheduled scene workflow task failed")
+                if on_error is not None and self._application is application:
+                    on_error(error)
+
+        task = asyncio.ensure_future(run())
+        self._scheduled_workflow_tasks.add(task)
+        task.add_done_callback(self._scheduled_workflow_tasks.discard)
+        return task
+
     def _continue_with_edited_draft(self, workspace, source_record) -> None:
         """Save edited prose as a new overridden draft, then re-analyze its memory."""
         answer = QMessageBox.question(
@@ -1191,12 +1309,16 @@ class MainWindow(QMainWindow):
         if answer != QMessageBox.StandardButton.Yes:
             return
         if self._application is not None:
-            asyncio.ensure_future(
-                self._application.scene_workflow.save_edited_draft(
-                    workspace.prose_text(),
-                    source_record,
-                    self._scene_workflow_observer(source_record.scene_id),
-                )
+            application = self._application
+            prose = workspace.prose_text()
+            observer = self._scene_workflow_observer(source_record.scene_id)
+            self._schedule_workflow_task(
+                lambda: application.scene_workflow.save_edited_draft(
+                    prose, source_record, observer
+                ),
+                application=application,
+                scene_id=source_record.scene_id,
+                on_error=observer.error,
             )
 
     def _on_plan_approved(self, edited_plan: dict) -> None:
@@ -1338,13 +1460,16 @@ class MainWindow(QMainWindow):
         if record is None or self._application is None:
             QMessageBox.warning(self, "无法保存", "请先生成章节草稿。")
             return
-        asyncio.ensure_future(
-            self._application.scene_workflow.save_edited_draft(
-                self._workspace_view.prose_text(),
-                record,
-                self._scene_workflow_observer(record.scene_id),
-                analyze=False,
-            )
+        application = self._application
+        prose = self._workspace_view.prose_text()
+        observer = self._scene_workflow_observer(record.scene_id)
+        self._schedule_workflow_task(
+            lambda: application.scene_workflow.save_edited_draft(
+                prose, record, observer, analyze=False
+            ),
+            application=application,
+            scene_id=record.scene_id,
+            on_error=observer.error,
         )
 
     def _regenerate_quick(self, instruction: str = "") -> None:
@@ -1490,6 +1615,26 @@ class MainWindow(QMainWindow):
         workspace = self._workspace_view
         application = self._application
         expected_scene_id = scene_id or workspace.current_scene_id
+        chapter_id = (
+            self._find_chapter_for_scene(expected_scene_id)
+            if expected_scene_id
+            else None
+        )
+        chapter_number, chapter_title, _ = self._quick_chapter_metadata(
+            chapter_id or ""
+        )
+        chapter_label = (
+            f"第 {chapter_number} 章"
+            if chapter_number
+            else chapter_title or "当前章节"
+        )
+        quick_origin = self._experience_mode == "quick"
+        activity = {
+            "owner": object(),
+            "active": False,
+            "failed": False,
+            "status": "正在处理…",
+        }
 
         def current(callback):
             def guarded(*args):
@@ -1502,27 +1647,109 @@ class MainWindow(QMainWindow):
 
             return guarded
 
+        def activity_message(status: str) -> str:
+            return f"快速创作 · {chapter_label}：{status}"
+
+        def completion_message() -> str:
+            if activity["failed"]:
+                result = f"{chapter_label}处理失败"
+            elif "取消" in activity["status"]:
+                result = f"{chapter_label}处理已取消"
+            else:
+                result = f"{chapter_label}处理完成"
+            if workspace.current_scene_id != expected_scene_id:
+                result += "，可返回查看"
+            return result
+
+        def set_trace(entries) -> None:
+            current(workspace.update_trace)(entries)
+            if (
+                not quick_origin
+                or self._application is not application
+                or not activity["active"]
+            ):
+                return
+            phase = self._quick_trace_phase(entries)
+            if phase:
+                activity["status"] = phase
+                self._set_quick_activity(
+                    True, activity_message(phase), owner=activity["owner"]
+                )
+
+        def set_status(status: str) -> None:
+            current(workspace.set_status)(status)
+            if (
+                not quick_origin
+                or self._application is not application
+                or not status
+            ):
+                return
+            activity["status"] = status
+            if "失败" in status or "错误" in status:
+                activity["failed"] = True
+            if activity["active"]:
+                self._set_quick_activity(
+                    True, activity_message(status), owner=activity["owner"]
+                )
+            else:
+                self._set_quick_activity(
+                    False, completion_message(), owner=activity["owner"]
+                )
+
         def set_generating(value: bool) -> None:
             if self._application is not application:
                 return
             workspace.set_generating(value)
+            activity["active"] = value
+            if quick_origin:
+                if value:
+                    self._set_quick_activity(
+                        True,
+                        activity_message(activity["status"]),
+                        owner=activity["owner"],
+                    )
+                else:
+                    self._set_quick_activity(
+                        False,
+                        completion_message()
+                        if workspace.current_scene_id != expected_scene_id
+                        else "",
+                        owner=activity["owner"],
+                    )
             if not value and workspace.current_scene_id != expected_scene_id:
                 record = self._selected_generation_record()
                 chapter_id = workspace.current_chapter_id
                 if record is not None and chapter_id:
                     application.scene_workflow.restore_draft(record, chapter_id)
 
+        def show_error(error: Exception) -> None:
+            current(self._show_workflow_error)(error)
+            if (
+                not quick_origin
+                or self._application is not application
+            ):
+                return
+            activity["failed"] = True
+            activity["status"] = "生成失败"
+            self._set_quick_activity(
+                activity["active"],
+                activity_message("生成失败")
+                if activity["active"]
+                else completion_message(),
+                owner=activity["owner"],
+            )
+
         return SceneWorkflowObserver(
-            trace=current(workspace.update_trace),
+            trace=set_trace,
             prose=current(workspace.append_prose),
             plan=current(workspace.show_plan_checkpoint),
-            status=current(workspace.set_status),
+            status=set_status,
             generating=set_generating,
             review=current(workspace.show_review_result),
             draft=current(self._on_workflow_draft),
             memory=current(workspace.show_fact_approval),
             length_warning=current(self._show_length_warning),
-            error=current(self._show_workflow_error),
+            error=show_error,
         )
 
     def _show_workflow_error(self, error: Exception) -> None:
@@ -1569,7 +1796,8 @@ class MainWindow(QMainWindow):
     def _on_continue_review_requested(self) -> None:
         if self._application is None:
             return
-        workflow = self._application.scene_workflow
+        application = self._application
+        workflow = application.scene_workflow
         record = workflow.state.draft_record
         selected = self._selected_generation_record()
         if (
@@ -1579,28 +1807,70 @@ class MainWindow(QMainWindow):
             or record.revision_id != selected.revision_id
         ):
             return
+        scene_id = record.scene_id
         if record.stale_input and not record.stale_input_reviewed:
             self._workspace_view.hide_continue_review()
-            asyncio.ensure_future(self._continue_stale_record(record.revision_id))
+            self._schedule_workflow_task(
+                lambda: self._continue_stale_record(record.revision_id, scene_id),
+                application=application,
+                scene_id=scene_id,
+                on_blocked=lambda: self._restore_continue_review(record),
+            )
             return
         self._workspace_view.hide_continue_review()
-        asyncio.ensure_future(workflow.continue_review())
+        observer = self._scene_workflow_observer(scene_id)
+        self._schedule_workflow_task(
+            lambda: workflow.continue_review(observer),
+            application=application,
+            scene_id=scene_id,
+            on_blocked=lambda: self._restore_continue_review(record),
+            on_error=observer.error,
+        )
 
-    async def _continue_stale_record(self, revision_id: str) -> None:
-        if self._application is None:
-            return
-        try:
-            record = await self._application.scene_workflow.continue_stale(revision_id)
-        except Exception:
-            logger.exception("Could not continue stale scene revision %s", revision_id)
+    def _restore_continue_review(self, record) -> None:
+        if record.stale_input and not record.stale_input_reviewed:
             self._workspace_view.show_stale_warning()
-            self._workspace_view.set_status("复核失败，请重试")
             return
         review = record.review or {}
         self._workspace_view.show_review_result(
             bool(review.get("overall_pass")), review.get("summary", "")
         )
-        self._workspace_view.set_status("已复核旧设定，可继续发布或重新生成")
+
+    async def _continue_stale_record(
+        self, revision_id: str, scene_id: str | None = None
+    ) -> None:
+        if self._application is None:
+            return
+        application = self._application
+        workflow = application.scene_workflow
+        origin_scene_id = (
+            scene_id or workflow.state.scene_id or self._workspace_view.current_scene_id
+        )
+        observer = self._scene_workflow_observer(origin_scene_id)
+        try:
+            record = await workflow.continue_stale(revision_id, observer=observer)
+        except OperationBlockedError:
+            raise
+        except Exception:
+            logger.exception("Could not continue stale scene revision %s", revision_id)
+            if (
+                self._application is not application
+                or self._workspace_view.current_scene_id != origin_scene_id
+            ):
+                return
+            self._workspace_view.show_stale_warning()
+            self._workspace_view.set_status("复核失败，请重试")
+            return
+        if (
+            self._application is not application
+            or self._workspace_view.current_scene_id != origin_scene_id
+        ):
+            return
+        review = record.review or {}
+        observer.review(
+            bool(review.get("overall_pass")), review.get("summary", "")
+        )
+        observer.status("已复核旧设定，可继续发布或重新生成")
 
     def _on_approval_batch_approved(
         self,

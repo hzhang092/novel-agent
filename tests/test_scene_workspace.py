@@ -89,6 +89,29 @@ def test_workspace_mirrors_generation_state_into_quick_actions(qtbot):
     assert quick.revision_instruction_button.isEnabled()
 
 
+def test_begin_generation_preserves_explicit_waiting_status(qtbot):
+    workspace = SceneWorkspaceView()
+    qtbot.addWidget(workspace)
+    workspace.set_scene("scene-1", "chapter-1")
+
+    workspace.begin_generation("正在写作...")
+
+    assert workspace.status_text == "正在写作..."
+
+
+def test_set_scene_preserves_active_generation_status(qtbot):
+    workspace = SceneWorkspaceView()
+    qtbot.addWidget(workspace)
+    workspace.set_scene("scene-a", "chapter-a")
+    workspace.begin_generation("正在写作...")
+
+    workspace.set_scene("scene-b", "chapter-b")
+
+    assert workspace.status_text == "正在写作..."
+    assert not workspace._generate_btn.isEnabled()
+    assert not workspace._regenerate_btn.isEnabled()
+
+
 def test_workspace_forwards_embedded_user_actions_once(qtbot):
     workspace = SceneWorkspaceView()
     qtbot.addWidget(workspace)

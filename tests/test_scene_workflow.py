@@ -40,7 +40,15 @@ async def test_scene_workflow_start_owns_a_real_pipeline_task(tmp_path):
         provider_loader=lambda: (Provider(), Provider(), Provider(), Provider()),
         pipeline_factory=Pipeline,
     )
-    workflow.start("scene-1", "chapter-1", SceneWorkflowObserver())
+    events = []
+    workflow.start(
+        "scene-1",
+        "chapter-1",
+        SceneWorkflowObserver(
+            generating=lambda value: events.append(("generating", value)),
+            status=lambda value: events.append(("status", value)),
+        ),
+    )
 
     assert workflow.task is not None
     await workflow.task
@@ -48,10 +56,31 @@ async def test_scene_workflow_start_owns_a_real_pipeline_task(tmp_path):
     assert workflow.state.selected_revision == workflow.state.draft_record.revision_id
     assert workflow.state.active is False
     assert workflow.run_guard.active_owner is None
+    assert events[:2] == [
+        ("generating", True),
+        ("status", "正在组装上下文..."),
+    ]
+    assert events.count(("generating", False)) == 1
 
     workflow.start("scene-1", "chapter-1", SceneWorkflowObserver())
     await workflow.task
     assert workflow.state.draft_record.revision_number == 2
+
+
+def test_blocked_start_does_not_emit_false_busy(tmp_path):
+    project_dir = _project_with_scenes(tmp_path, ("scene-1", "chapter-1"))
+    workflow = SceneWorkflow(project_dir)
+    workflow.run_guard.acquire("story_designer")
+    events = []
+
+    with pytest.raises(OperationBlockedError):
+        workflow.start(
+            "scene-1",
+            "chapter-1",
+            SceneWorkflowObserver(generating=events.append),
+        )
+
+    assert events == []
 
 
 @pytest.mark.asyncio
@@ -204,6 +233,66 @@ async def test_edited_draft_uses_its_own_scene_chapter_and_current_observer(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("analyze", "initial_status"),
+    [
+        (False, "正在保存修改..."),
+        (True, "正在保存并重新审查修改..."),
+    ],
+)
+async def test_edited_draft_announces_busy_with_its_observer(
+    tmp_path, monkeypatch, analyze, initial_status
+):
+    project_dir = _project_with_scenes(tmp_path, ("scene-1", "chapter-1"))
+    _patch_analysis_providers(monkeypatch)
+    events = []
+    observer = SceneWorkflowObserver(
+        generating=lambda value: events.append(("generating", value)),
+        status=lambda value: events.append(("status", value)),
+    )
+    workflow = SceneWorkflow(project_dir, pipeline_factory=_AnalysisPipeline)
+
+    await workflow.save_edited_draft(
+        "edited", SceneGenerationRecord(scene_id="scene-1"), observer, analyze=analyze
+    )
+
+    assert events[:2] == [("generating", True), ("status", initial_status)]
+    assert events.count(("generating", False)) == 1
+
+
+@pytest.mark.asyncio
+async def test_continue_review_uses_supplied_observer_for_busy_callbacks(
+    tmp_path, monkeypatch
+):
+    workflow = SceneWorkflow(tmp_path)
+    workflow.state.scene_id = "scene-1"
+    workflow.state.draft_record = SceneGenerationRecord(scene_id="scene-1")
+    workflow._pipeline = object()
+    workflow._result = object()
+    monkeypatch.setattr(
+        "app.storage.project_files.save_scene_generation_record", lambda *_args: None
+    )
+    async def analyze_draft():
+        pass
+
+    monkeypatch.setattr(workflow, "_analyze_draft", analyze_draft)
+    events = []
+
+    await workflow.continue_review(
+        observer=SceneWorkflowObserver(
+            generating=lambda value: events.append(("generating", value)),
+            status=lambda value: events.append(("status", value)),
+        )
+    )
+
+    assert events[:2] == [
+        ("generating", True),
+        ("status", "正在继续审查..."),
+    ]
+    assert events.count(("generating", False)) == 1
+
+
+@pytest.mark.asyncio
 async def test_completed_edit_and_recovery_can_move_to_another_scene(tmp_path, monkeypatch):
     project_dir = _project_with_scenes(
         tmp_path, ("scene-1", "chapter-1"), ("scene-2", "chapter-2")
@@ -238,11 +327,16 @@ async def test_edit_cannot_replace_a_live_same_scene_task(tmp_path, monkeypatch)
     workflow.state.chapter_id = "chapter-1"
     workflow.state.active = True
     workflow._task = asyncio.get_running_loop().create_future()
+    events = []
 
     with pytest.raises(OperationBlockedError):
         await workflow.save_edited_draft(
-            "edited", SceneGenerationRecord(scene_id="scene-1"), SceneWorkflowObserver()
+            "edited",
+            SceneGenerationRecord(scene_id="scene-1"),
+            SceneWorkflowObserver(generating=events.append),
         )
+
+    assert events == []
 
 
 @pytest.mark.asyncio

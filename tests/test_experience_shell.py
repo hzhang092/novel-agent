@@ -1,5 +1,5 @@
 import pytest
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QMessageBox, QProgressBar
 
 import app.ui.main_window as main_window_module
 from app.storage.models import ChapterOutline, Project, SceneOutline, VolumeOutline
@@ -54,6 +54,151 @@ def test_existing_project_defaults_to_deep_with_separate_presentations(tmp_path,
     assert _labels(window) == ["总览", "设定集", "大纲", "写作台"]
     assert window._deep_presentation is not window._quick_presentation
     assert window._deep_presentation.sidebar is not window._quick_presentation.sidebar
+
+
+def test_quick_activity_surface_is_indeterminate_and_clears_cleanly(qtbot):
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+
+    progress = window.findChild(QProgressBar, "quick_activity_progress")
+    assert progress is not None
+    assert progress.isHidden()
+
+    window._set_quick_activity(True, "快速创作 · 第 3 章：正在写作…")
+
+    assert not progress.isHidden()
+    assert progress.minimum() == 0
+    assert progress.maximum() == 0
+    assert window.statusBar().currentMessage() == "快速创作 · 第 3 章：正在写作…"
+
+    window._set_quick_activity(False, "第 3 章处理完成，可返回查看")
+
+    assert progress.isHidden()
+    assert window.statusBar().currentMessage() == "第 3 章处理完成，可返回查看"
+
+    window._set_quick_activity(False)
+
+    assert window.statusBar().currentMessage() == ""
+
+
+def test_quick_story_activity_is_projected_into_the_shell(qtbot):
+    class Signal:
+        def connect(self, callback):
+            self.callback = callback
+
+        def emit(self, *args):
+            self.callback(*args)
+
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    signal = Signal()
+    window._quick_story_view.activity_changed = signal
+    window._connect_view_signals()
+
+    signal.emit(True, "正在生成故事提案…")
+
+    assert not window.findChild(QProgressBar, "quick_activity_progress").isHidden()
+    assert window.statusBar().currentMessage() == "快速创作 · 正在生成故事提案…"
+
+    signal.emit(False, "故事提案已生成")
+
+    assert window.findChild(QProgressBar, "quick_activity_progress").isHidden()
+    assert window.statusBar().currentMessage() == "快速创作 · 故事提案已生成"
+
+
+def test_stale_story_or_scene_activity_cannot_clear_newer_owner(
+    tmp_path, qtbot
+):
+    window = _window(tmp_path, qtbot)
+    window._set_experience_mode("quick")
+    window._workspace_view.set_scene("scene-1", "ch-1")
+    observer = window._scene_workflow_observer("scene-1")
+    progress = window.findChild(QProgressBar, "quick_activity_progress")
+
+    observer.generating(True)
+    window._on_quick_story_activity(True, "正在生成故事提案…")
+    observer.generating(False)
+
+    assert not progress.isHidden()
+    assert window.statusBar().currentMessage() == "快速创作 · 正在生成故事提案…"
+
+    window._on_quick_story_activity(True, "正在生成故事提案…")
+    observer.generating(True)
+    window._on_quick_story_activity(False, "故事提案已生成")
+
+    assert not progress.isHidden()
+    assert "当前章节" in window.statusBar().currentMessage()
+
+
+def test_project_rebind_cancels_old_generation_and_clears_activity(
+    tmp_path, qtbot, monkeypatch
+):
+    first_dir = create_project(tmp_path / "first", Project(title="First"))
+    second_dir = create_project(tmp_path / "second", Project(title="Second"))
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(first_dir)
+    old_application = window._application
+    old_application.scene_workflow.state.active = True
+    cancelled = []
+    monkeypatch.setattr(
+        window._quick_story_view,
+        "cancel_generation",
+        lambda: cancelled.append("story"),
+    )
+    monkeypatch.setattr(
+        old_application.scene_workflow,
+        "cancel",
+        lambda: cancelled.append("scene"),
+    )
+    window._set_quick_activity(True, "快速创作 · 正在写作…")
+
+    window._bind_project_application(second_dir)
+
+    assert "story" in cancelled
+    assert "scene" in cancelled
+    assert window._application is not old_application
+    assert window._quick_activity_progress.isHidden()
+
+
+def test_close_cancels_generation_only_after_dirty_confirmation(
+    tmp_path, qtbot, monkeypatch
+):
+    window = _window(tmp_path, qtbot)
+    window._application.scene_workflow.state.active = True
+    cancelled = []
+    monkeypatch.setattr(
+        window._quick_story_view,
+        "cancel_generation",
+        lambda: cancelled.append("story"),
+    )
+    monkeypatch.setattr(
+        window._application.scene_workflow,
+        "cancel",
+        lambda: cancelled.append("scene"),
+    )
+
+    class Event:
+        accepted = False
+
+        def accept(self):
+            self.accepted = True
+
+        def ignore(self):
+            self.accepted = False
+
+    event = Event()
+    monkeypatch.setattr(window, "_maybe_close_current_project", lambda: False)
+    window.closeEvent(event)
+
+    assert event.accepted is False
+    assert cancelled == []
+
+    monkeypatch.setattr(window, "_maybe_close_current_project", lambda: True)
+    window.closeEvent(event)
+
+    assert event.accepted is True
+    assert cancelled == ["story", "scene"]
 
 
 def test_quick_affordance_is_hidden_without_the_development_flag(qtbot):

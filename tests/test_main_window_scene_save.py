@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from PySide6.QtWidgets import QMessageBox, QProgressBar
 
 from app.storage.models import (
     ChapterOutline,
@@ -18,6 +19,7 @@ from app.storage.project_files import (
     save_volume_outline,
 )
 from app.application.errors import OperationBlockedError
+from app.pipeline.pipeline import AgentTraceEntry
 from app.ui.quick_chapter_view import QuickChapterView
 from app.ui.main_window import MainWindow
 
@@ -760,6 +762,307 @@ def test_late_workflow_callbacks_do_not_replace_new_scene_state(
     assert workspace.quick_plan()["scene_goal"] == ""
     assert not quick.review_section.isVisible()
     assert not quick.memory_section.isVisible()
+
+
+def test_quick_scene_activity_keeps_origin_identity_while_scene_guard_holds(
+    tmp_path, qtbot
+):
+    project_dir = _project(tmp_path)
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    window._set_experience_mode("quick")
+    workspace = window._workspace_view
+    workspace.set_scene("scene-1", "ch-1")
+    observer = window._scene_workflow_observer("scene-1")
+
+    observer.generating(True)
+    observer.trace(
+        [AgentTraceEntry(agent_name="Writer", stage="writer", status="running")]
+    )
+
+    assert window.statusBar().currentMessage() == "快速创作 · 第 1 章：正在写作…"
+
+    workspace.set_scene("scene-2", "ch-2")
+    observer.prose("origin prose")
+    observer.trace(
+        [
+            AgentTraceEntry(
+                agent_name="Reviewer", stage="reviewer", status="running"
+            )
+        ]
+    )
+
+    assert workspace.prose_text() == ""
+    assert window.statusBar().currentMessage() == "快速创作 · 第 1 章：正在审查…"
+
+    observer.generating(False)
+
+    assert window.findChild(QProgressBar, "quick_activity_progress").isHidden()
+    assert "第 1 章" in window.statusBar().currentMessage()
+
+
+def test_quick_scene_activity_reports_failure_after_finishing_while_away(
+    tmp_path, qtbot
+):
+    project_dir = _project(tmp_path)
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    window._set_experience_mode("quick")
+    workspace = window._workspace_view
+    workspace.set_scene("scene-1", "ch-1")
+    observer = window._scene_workflow_observer("scene-1")
+
+    observer.generating(True)
+    workspace.set_scene("scene-2", "ch-2")
+    observer.generating(False)
+    observer.status("生成失败")
+
+    assert window.statusBar().currentMessage() == "第 1 章处理失败，可返回查看"
+
+
+def test_quick_scene_activity_reports_cancellation_after_finishing_while_away(
+    tmp_path, qtbot
+):
+    project_dir = _project(tmp_path)
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    window._set_experience_mode("quick")
+    workspace = window._workspace_view
+    workspace.set_scene("scene-1", "ch-1")
+    observer = window._scene_workflow_observer("scene-1")
+
+    observer.generating(True)
+    workspace.set_scene("scene-2", "ch-2")
+    observer.generating(False)
+    observer.status("已取消")
+
+    assert window.statusBar().currentMessage() == "第 1 章处理已取消，可返回查看"
+
+
+@pytest.mark.asyncio
+async def test_stale_continuation_does_not_render_origin_after_scene_navigation(
+    tmp_path, qtbot, monkeypatch
+):
+    project_dir = _project(tmp_path)
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    workspace = window._workspace_view
+    workspace.set_scene("scene-1", "ch-1")
+    record = SceneGenerationRecord(
+        scene_id="scene-1",
+        revision_id="rev-1",
+        revision_number=1,
+        status="draft",
+        review={"overall_pass": False, "summary": "origin review"},
+        stale_input=True,
+        draft_text="origin prose",
+    )
+    workflow = window._application.scene_workflow
+    workflow.state.scene_id = "scene-1"
+
+    async def continue_stale(_revision_id, observer=None):
+        workspace.set_scene("scene-2", "ch-2")
+        return record
+
+    monkeypatch.setattr(workflow, "continue_stale", continue_stale)
+
+    await window._continue_stale_record(record.revision_id)
+
+    assert "origin review" not in workspace.review_summary
+    assert workspace._status_label.text() != "已复核旧设定，可继续发布或重新生成"
+
+
+def _revision_window(tmp_path, qtbot, *, review, stale_input=False):
+    project_dir = _project(tmp_path)
+    record = SceneGenerationRecord(
+        scene_id="scene-1",
+        revision_id="rev-1",
+        revision_number=1,
+        status="draft",
+        review=review,
+        stale_input=stale_input,
+        draft_text="origin prose",
+    )
+    save_scene_generation_record(project_dir, record)
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(project_dir)
+    window._workspace_view.set_scene("scene-1", "ch-1")
+    window._current_prose_version = "v1"
+    window._show_quick_revision(record)
+    return window, record
+
+
+async def _flush_scheduled_task():
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+
+def _capture_blocked_warning(monkeypatch):
+    warnings = []
+    monkeypatch.setattr(
+        "app.ui.main_window.QMessageBox.warning",
+        lambda *args: warnings.append(args),
+    )
+    return warnings
+
+
+@pytest.mark.asyncio
+async def test_quick_save_reports_a_blocked_operation(
+    tmp_path, qtbot, monkeypatch
+):
+    window, _record = _revision_window(
+        tmp_path, qtbot, review={"overall_pass": True, "summary": "通过"}
+    )
+    warnings = _capture_blocked_warning(monkeypatch)
+
+    async def blocked(*_args, **_kwargs):
+        raise OperationBlockedError("already running")
+
+    monkeypatch.setattr(
+        window._application.scene_workflow, "save_edited_draft", blocked
+    )
+
+    window._on_quick_save()
+    await _flush_scheduled_task()
+
+    assert "已有任务正在运行" in window._workspace_view._status_label.text()
+    assert any("已有任务正在运行" in call[2] for call in warnings)
+
+
+@pytest.mark.asyncio
+async def test_quick_save_reports_an_unexpected_workflow_error(
+    tmp_path, qtbot, monkeypatch
+):
+    window, _record = _revision_window(
+        tmp_path, qtbot, review={"overall_pass": True, "summary": "通过"}
+    )
+    window._set_experience_mode("quick")
+    warnings = _capture_blocked_warning(monkeypatch)
+
+    async def failing(*_args, **_kwargs):
+        raise RuntimeError("storage failed")
+
+    monkeypatch.setattr(
+        window._application.scene_workflow, "save_edited_draft", failing
+    )
+
+    window._on_quick_save()
+    await _flush_scheduled_task()
+
+    assert any("storage failed" in call[2] for call in warnings)
+    assert "处理失败" in window.statusBar().currentMessage()
+
+
+@pytest.mark.asyncio
+async def test_project_rebind_cancels_a_workflow_operation_before_it_starts(
+    tmp_path, qtbot
+):
+    first_dir = _project(tmp_path / "first")
+    second_dir = _project(tmp_path / "second")
+    window = MainWindow(quick_creation_enabled=True)
+    qtbot.addWidget(window)
+    window._bind_project_application(first_dir)
+    old_application = window._application
+    ran = []
+
+    async def queued_operation():
+        ran.append(True)
+
+    task = window._schedule_workflow_task(
+        queued_operation,
+        application=old_application,
+        scene_id="scene-1",
+    )
+    window._bind_project_application(second_dir)
+    await asyncio.sleep(0)
+
+    assert task.cancelled()
+    assert ran == []
+
+
+@pytest.mark.asyncio
+async def test_modified_draft_analysis_reports_a_blocked_operation(
+    tmp_path, qtbot, monkeypatch
+):
+    window, record = _revision_window(
+        tmp_path, qtbot, review={"overall_pass": False, "summary": "需要修改"}
+    )
+    workspace = window._workspace_view
+    workspace.set_prose_text("edited prose")
+    warnings = _capture_blocked_warning(monkeypatch)
+    monkeypatch.setattr(
+        "app.ui.main_window.QMessageBox.question",
+        lambda *_args: QMessageBox.StandardButton.Yes,
+    )
+
+    async def blocked(*_args, **_kwargs):
+        raise OperationBlockedError("already running")
+
+    monkeypatch.setattr(
+        window._application.scene_workflow, "save_edited_draft", blocked
+    )
+
+    window._continue_with_edited_draft(workspace, record)
+    await _flush_scheduled_task()
+
+    assert "已有任务正在运行" in workspace._status_label.text()
+    assert any("已有任务正在运行" in call[2] for call in warnings)
+
+
+@pytest.mark.asyncio
+async def test_continue_review_rejection_reports_and_restores_control(
+    tmp_path, qtbot, monkeypatch
+):
+    window, record = _revision_window(
+        tmp_path, qtbot, review={"overall_pass": False, "summary": "需要修改"}
+    )
+    workflow = window._application.scene_workflow
+    warnings = _capture_blocked_warning(monkeypatch)
+
+    async def blocked(*_args, **_kwargs):
+        raise OperationBlockedError("already running")
+
+    monkeypatch.setattr(workflow, "continue_review", blocked)
+    assert window._workspace_view.continue_review_is_visible is True
+
+    window._on_continue_review_requested()
+    await _flush_scheduled_task()
+
+    assert "已有任务正在运行" in window._workspace_view._status_label.text()
+    assert window._workspace_view.continue_review_is_visible is True
+    assert any("已有任务正在运行" in call[2] for call in warnings)
+
+
+@pytest.mark.asyncio
+async def test_stale_continuation_rejection_reports_and_restores_control(
+    tmp_path, qtbot, monkeypatch
+):
+    window, _record = _revision_window(
+        tmp_path,
+        qtbot,
+        review={"overall_pass": True, "summary": "通过"},
+        stale_input=True,
+    )
+    workflow = window._application.scene_workflow
+    warnings = _capture_blocked_warning(monkeypatch)
+
+    async def blocked(*_args, **_kwargs):
+        raise OperationBlockedError("already running")
+
+    monkeypatch.setattr(workflow, "continue_stale", blocked)
+    assert window._workspace_view.continue_review_is_visible is True
+
+    window._on_continue_review_requested()
+    await _flush_scheduled_task()
+
+    assert "已有任务正在运行" in window._workspace_view._status_label.text()
+    assert window._workspace_view.continue_review_is_visible is True
+    assert any("已有任务正在运行" in call[2] for call in warnings)
 
 
 def test_run_completion_restores_controls_after_browsing_away(

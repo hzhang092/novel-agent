@@ -45,6 +45,7 @@ _BUSY_MESSAGES = {
 
 
 class QuickStoryView(QWidget):
+    activity_changed = Signal(bool, str)
     settings_requested = Signal()
     bootstrap_approved = Signal()
     outline_requested = Signal()
@@ -58,6 +59,7 @@ class QuickStoryView(QWidget):
         self._busy = False
         self._busy_application = None
         self._busy_task = None
+        self._activity_task = None
         self._chips: dict[str, dict[str, QCheckBox]] = {}
         self._custom: dict[str, QLineEdit] = {}
         root_layout = QVBoxLayout(self)
@@ -188,7 +190,7 @@ class QuickStoryView(QWidget):
         self.adjust_button = QPushButton("调整")
         self.another_button = QPushButton("换一个方向")
         self.adopt_button.clicked.connect(
-            lambda: self._start_task(self._adopt_proposal())
+            lambda: self._start_task(self._adopt_proposal(), announce_activity=False)
         )
         self.adjust_button.clicked.connect(
             lambda: self._start_task(self._adjust_proposal())
@@ -428,16 +430,34 @@ class QuickStoryView(QWidget):
         self.apply_bootstrap_patch_button.setEnabled(bootstrap_draft and patch_preview)
         self.cancel_bootstrap_patch_button.setEnabled(bootstrap_draft and patch_preview)
 
-    def _start_task(self, coroutine, *, busy_message: str | None = None) -> None:
+    def _start_task(
+        self,
+        coroutine,
+        *,
+        busy_message: str | None = None,
+        announce_activity: bool = True,
+    ) -> None:
+        if (
+            announce_activity
+            and self._application is not None
+            and self._application.story_designer.run_guard.active_owner == "scene_workflow"
+        ):
+            coroutine.close()
+            self.action_status_label.setText("已有任务正在运行")
+            return
         if self._proposal_task is not None and not self._proposal_task.done():
             coroutine.close()
             return
         name = getattr(getattr(coroutine, "cr_code", None), "co_name", "")
-        self._set_busy(True, busy_message or _BUSY_MESSAGES.get(name, "正在处理…"))
+        busy_message = busy_message or _BUSY_MESSAGES.get(name, "正在处理…")
+        self._set_busy(True, busy_message)
         application = self._application
         task = asyncio.ensure_future(coroutine)
         self._proposal_task = task
         self._busy_task = task
+        self._activity_task = task if announce_activity else None
+        if announce_activity:
+            self.activity_changed.emit(True, busy_message)
         task.add_done_callback(
             lambda completed, bound_application=application: self._task_finished(
                 completed, bound_application
@@ -447,13 +467,22 @@ class QuickStoryView(QWidget):
     def _task_finished(self, task, application) -> None:
         if self._application is not application or self._proposal_task is not task:
             return
+        announced = self._activity_task is task
         self._set_busy(False)
+        if announced:
+            self._activity_task = None
+            self.activity_changed.emit(
+                False, "" if task.cancelled() else self.action_status_label.text()
+            )
 
     def cancel_generation(self) -> None:
         if self._proposal_task is not None and not self._proposal_task.done():
             self._proposal_task.cancel()
         if self._busy_task is self._proposal_task:
             self._set_busy(False)
+        if self._activity_task is not None:
+            self._activity_task = None
+            self.activity_changed.emit(False, "")
 
     def _set_brief(self, brief: StoryBrief) -> None:
         self.premise_edit.setPlainText(brief.premise)
