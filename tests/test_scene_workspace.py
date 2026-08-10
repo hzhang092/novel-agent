@@ -112,6 +112,20 @@ def test_set_scene_preserves_active_generation_status(qtbot):
     assert not workspace._regenerate_btn.isEnabled()
 
 
+def test_quick_can_approve_plan_while_generation_waits(qtbot):
+    workspace = SceneWorkspaceView()
+    qtbot.addWidget(workspace)
+    quick = workspace.findChild(QuickChapterView)
+
+    workspace.set_scene("scene-1", "chapter-1")
+    workspace.set_generating(True)
+    workspace.show_plan_checkpoint(
+        {"scene_id": "scene-1", "scene_goal": "找到出口"}
+    )
+
+    assert quick.start_button.isEnabled()
+
+
 def test_workspace_forwards_embedded_user_actions_once(qtbot):
     workspace = SceneWorkspaceView()
     qtbot.addWidget(workspace)
