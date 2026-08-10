@@ -1,11 +1,24 @@
+import asyncio
+
 import pytest
 from PySide6.QtWidgets import QMessageBox, QProgressBar
 
 import app.ui.main_window as main_window_module
-from app.storage.models import ChapterOutline, Project, SceneOutline, VolumeOutline
+from app.pipeline.pipeline import GenerationResult
+from app.providers.base import MockProvider
+from app.storage.models import (
+    ChapterOutline,
+    Project,
+    SceneOutline,
+    ScenePlan,
+    StoryProposal,
+    VolumeOutline,
+)
 from app.storage.project_files import (
     create_project,
     load_all_volumes,
+    load_planning,
+    load_scene_generation_record,
     load_project,
     save_volume_outline,
 )
@@ -104,6 +117,174 @@ def test_quick_story_activity_is_projected_into_the_shell(qtbot):
 
     assert window.findChild(QProgressBar, "quick_activity_progress").isHidden()
     assert window.statusBar().currentMessage() == "快速创作 · 故事提案已生成"
+
+
+@pytest.mark.asyncio
+async def test_quick_story_proposal_task_survives_navigation(tmp_path, qtbot):
+    started = asyncio.Event()
+    release = asyncio.Event()
+    proposal = StoryProposal(
+        title="导航中的提案",
+        logline="一条线索穿过城市",
+        main_characters=["甲", "乙"],
+        core_conflict="真相与安全冲突",
+        story_promises=["追踪线索", "同伴试探", "公开真相"],
+        ending_direction="主角公开真相",
+    )
+
+    class BlockingProvider(MockProvider):
+        async def generate_structured(self, *args, **kwargs):
+            started.set()
+            await release.wait()
+            return await super().generate_structured(*args, **kwargs)
+
+    window = _window(tmp_path, qtbot)
+    _switch(window, "quick")
+    window._select_destination("story")
+    window._application.story_designer._provider_factory = lambda: BlockingProvider(
+        structured_response=proposal
+    )
+
+    window._quick_story_view.generate_button.click()
+    await started.wait()
+    original_task = window._quick_story_view._proposal_task
+    assert original_task is not None
+    progress = window.findChild(QProgressBar, "quick_activity_progress")
+
+    def assert_generation_persists() -> None:
+        assert window._quick_story_view._proposal_task is original_task
+        assert not original_task.done()
+        assert not original_task.cancelled()
+        assert not progress.isHidden()
+        assert (
+            window.statusBar().currentMessage()
+            == "快速创作 · 正在生成故事提案…"
+        )
+
+    try:
+        assert_generation_persists()
+
+        window._select_destination("outline")
+        assert_generation_persists()
+
+        _switch(window, "deep")
+        assert_generation_persists()
+
+        _switch(window, "quick")
+        assert_generation_persists()
+
+        release.set()
+        await original_task
+        await asyncio.sleep(0)
+
+        planning = load_planning(window._current_project_dir)
+        assert planning.active_draft is not None
+        assert planning.active_draft.proposal.title == proposal.title
+        assert proposal.title in window._quick_story_view.proposal_label.text()
+        assert progress.isHidden()
+        assert window.statusBar().currentMessage() == "快速创作 · 故事提案已生成"
+    finally:
+        release.set()
+        if not original_task.done():
+            await original_task
+
+
+@pytest.mark.asyncio
+async def test_scene_workflow_task_survives_quick_navigation(tmp_path, qtbot):
+    started = asyncio.Event()
+    release = asyncio.Event()
+    plan = ScenePlan(scene_id="scene-1", scene_goal="在旧城发现线索")
+
+    class BlockingProvider(MockProvider):
+        async def generate_structured(self, *args, **kwargs):
+            started.set()
+            await release.wait()
+            return await super().generate_structured(*args, **kwargs)
+
+    class BlockingPipeline:
+        async def generate_stream(
+            self, _project_dir, scene_id, planner, *_args, **_kwargs
+        ):
+            await planner.generate_structured([], ScenePlan)
+            yield None, GenerationResult(scene_id=scene_id, plan=plan, prose="origin draft")
+
+    window = _window(tmp_path, qtbot)
+    save_volume_outline(
+        window._current_project_dir,
+        VolumeOutline(
+            id="volume-1",
+            chapters=[
+                ChapterOutline(
+                    id="chapter-1",
+                    title="第一章",
+                    scenes=[SceneOutline(id="scene-1", title="旧城")],
+                )
+            ],
+        ),
+    )
+    window._quick_outline_view.refresh()
+    _switch(window, "quick")
+    window._select_destination("outline")
+    window._quick_outline_view._card_widgets["chapter-1"]["write"].click()
+    assert window._experience_mode == "quick"
+    assert window._previous_destination == "workspace"
+    assert window._workspace_view.is_showing_scene("scene-1", "chapter-1")
+
+    workflow = window._application.scene_workflow
+    workflow._provider_loader = lambda: (
+        BlockingProvider(structured_response=plan),
+        MockProvider(structured_response=plan),
+        MockProvider(structured_response=plan),
+        MockProvider(structured_response=plan),
+    )
+    workflow._pipeline_factory = BlockingPipeline
+
+    window._workspace_view._quick_chapter.start_button.click()
+    await started.wait()
+    original_task = workflow.task
+    assert original_task is not None
+    progress = window.findChild(QProgressBar, "quick_activity_progress")
+
+    def assert_generation_persists() -> None:
+        assert workflow.task is original_task
+        assert workflow.state.active is True
+        assert not original_task.done()
+        assert not original_task.cancelled()
+        assert not progress.isHidden()
+        assert "快速创作 · 第 1 章：" in window.statusBar().currentMessage()
+
+    try:
+        assert_generation_persists()
+
+        window._select_destination("outline")
+        assert_generation_persists()
+
+        _switch(window, "deep")
+        assert_generation_persists()
+
+        _switch(window, "quick")
+        assert_generation_persists()
+
+        release.set()
+        await original_task
+        await asyncio.sleep(0)
+
+        record = workflow.state.draft_record
+        assert record is not None
+        assert record.scene_id == "scene-1"
+        assert record.source_chapter_id == "chapter-1"
+        assert record.draft_text == "origin draft"
+        saved = load_scene_generation_record(
+            window._current_project_dir, "scene-1", revision_id=record.revision_id
+        )
+        assert saved is not None
+        assert saved.draft_text == "origin draft"
+        assert workflow.state.active is False
+        assert progress.isHidden()
+    finally:
+        release.set()
+        if not original_task.done():
+            await original_task
 
 
 def test_stale_story_or_scene_activity_cannot_clear_newer_owner(
